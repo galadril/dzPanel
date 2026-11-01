@@ -1,0 +1,12 @@
+{
+	"CurrencySign": "€",
+	"Latitude": "12.345678",
+	"Longitude": "98.765432",
+	"TempScale": 1,
+	"TempSign": "C",
+	"WebUserName": "mock-user",
+	"WindScale": 10,
+	"WindSign": "m/s",
+	"status": "OK",
+	"title": "GetConfig"
+}

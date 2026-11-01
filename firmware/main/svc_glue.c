@@ -1,0 +1,165 @@
+#include "svc_glue.h"
+
+#include <stdatomic.h>
+#include <string.h>
+
+#include "boot_health.h"
+#include "dz_transport_esp.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "ru_cfg.h"
+#include "ru_console_esp.h"
+#include "ru_wifi_esp.h"
+
+static const char *TAG = "svc";
+
+#define MODEL_CAP 512
+
+static ru_kv_t *g_kv;
+static dz_service_t *g_svc;
+static dz_transport_t *g_probe_tr;
+static dz_probe_ctx_t g_probe;
+static atomic_bool g_cfg_set, g_wifi_set;
+static bool g_with_service;
+
+dz_service_t *svc_service(void) { return g_svc; }
+bool svc_cfg_set(void) { return atomic_load(&g_cfg_set); }
+bool svc_provisioned(void) { return atomic_load(&g_cfg_set) && atomic_load(&g_wifi_set); }
+
+static void *psram_calloc(size_t n, size_t sz) { return heap_caps_calloc(n, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+
+bool svc_init(ru_kv_t *kv, ru_bus_t *bus, bool with_service) {
+  g_kv = kv;
+  g_with_service = with_service;
+  atomic_store(&g_cfg_set, ru_cfg_is_set(kv));
+  ru_wifi_creds_t wc;
+  atomic_store(&g_wifi_set, ru_wifi_creds_load(kv, &wc) == RU_CFG_OK);
+  ru_wifi_creds_wipe(&wc);
+  g_probe_tr = dz_transport_esp_create(false); /* the RU+CFG connection test must not share the polling transport */
+  if (!with_service) return true;
+
+  dz_service_cfg_t c;
+  memset(&c, 0, sizeof c);
+  c.transport = dz_transport_esp_create(false);
+  c.set_insecure_lan = dz_transport_esp_set_insecure_lan;
+  c.bus = bus;
+  c.entries_cap = MODEL_CAP;
+  c.stage_cap = MODEL_CAP;
+  c.entries = psram_calloc(MODEL_CAP, sizeof(dz_entry_t));
+  c.stage = psram_calloc(MODEL_CAP, sizeof(dz_device_t));
+  c.buf = psram_calloc(1, DZ_SERVICE_MIN_BUF_FULL);
+  c.buf_cap = DZ_SERVICE_MIN_BUF_FULL;
+  if (!c.buf) { /* no PSRAM: favourites only, small internal buffer */
+    c.favorites_only = true;
+    c.buf_cap = DZ_SERVICE_MIN_BUF_FAVS;
+    c.buf = heap_caps_calloc(1, c.buf_cap, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ESP_LOGW(TAG, "no PSRAM buffer: favourites only");
+  }
+  g_svc = psram_calloc(1, sizeof *g_svc);
+  if (!c.transport || !c.entries || !c.stage || !c.buf || !g_svc || !dz_service_init(g_svc, &c)) {
+    ESP_LOGE(TAG, "service init failed");
+    g_svc = NULL;
+    return false;
+  }
+  ESP_LOGI(TAG, "service ready: model %d entries, buffer %u KB%s", MODEL_CAP, (unsigned)(c.buf_cap / 1024),
+           c.favorites_only ? " (favourites only)" : "");
+  return true;
+}
+
+/* Re-read the stored config and hand it to the service. Runs on the console task (RU+CFG "saved") or at boot. */
+static void apply_stored_config(void) {
+  ru_cfg_t c;
+  if (ru_cfg_load(g_kv, &c) == RU_CFG_OK) {
+    atomic_store(&g_cfg_set, true);
+    if (g_svc) {
+      ru_cfg_err_t e = dz_service_configure(g_svc, &c, true);
+      if (e != RU_CFG_OK) ESP_LOGW(TAG, "stored config refused: %s", ru_cfg_err_name(e));
+    }
+  }
+  ru_cfg_wipe(&c);
+}
+
+static void update_improv(void) { ru_console_esp_set_improv(!svc_provisioned()); }
+
+static void on_cfg_saved(void *u) {
+  (void)u;
+  ESP_LOGI(TAG, "configuration saved over the console");
+  apply_stored_config();
+  update_improv();
+}
+
+static void on_wifi_state(void *u, ru_wifi_state_t from, ru_wifi_state_t to) {
+  (void)u;
+  (void)from;
+  if (g_svc) dz_service_set_net_up(g_svc, to == RU_WIFI_CONNECTED);
+}
+static void on_wifi_ap(void *u) { (void)u; ESP_LOGW(TAG, "Wi-Fi setup portal requested: not implemented, use the installer page"); }
+static void on_wifi_provision(void *u, bool ok) {
+  (void)u;
+  if (ok) atomic_store(&g_wifi_set, true);
+  ru_console_esp_wifi_result(ok);
+  update_improv();
+}
+
+static bool wifi_up_cb(void *u) { (void)u; return ru_wifi_esp_connected(); }
+static bool improv_connect(void *u, const char *ssid, const char *pass) { (void)u; return ru_wifi_esp_try_new(ssid, pass); }
+/* RU+CFG "wifi" block: blocking join (<= 20 s), saved only on got-IP, else the previous credentials return. */
+static ru_wifi_apply_t cfgline_wifi_apply(void *u, const char *ssid, const char *pass, uint32_t timeout_ms) {
+  (void)u;
+  ru_wifi_apply_t r = ru_wifi_esp_apply_wait(ssid, pass, timeout_ms);
+  if (r == RU_WIFI_APPLY_OK) {
+    atomic_store(&g_wifi_set, true);
+    update_improv();
+    ESP_LOGI(TAG, "Wi-Fi saved over the console");
+  } else ESP_LOGW(TAG, "Wi-Fi from the console failed (%d)", (int)r); /* never the credentials */
+  return r;
+}
+static size_t improv_scan(void *u, ru_improv_net_t *out, size_t max) { (void)u; return ru_wifi_esp_scan(out, max); }
+static bool improv_connected(void *u) { (void)u; return ru_wifi_esp_connected(); }
+
+void svc_start(void) {
+  ru_wifi_esp_cfg_t wc;
+  memset(&wc, 0, sizeof wc);
+  wc.kv = g_kv;
+  wc.on_state = on_wifi_state;
+  wc.on_ap_requested = on_wifi_ap;
+  wc.on_provision_result = on_wifi_provision;
+  if (!ru_wifi_esp_start(&wc)) ESP_LOGE(TAG, "Wi-Fi start failed");
+
+  g_probe.transport = g_probe_tr;
+  g_probe.set_insecure = dz_transport_esp_set_insecure_lan;
+  g_probe.wifi_up = wifi_up_cb;
+  ru_console_esp_cfg_t cc;
+  memset(&cc, 0, sizeof cc);
+  cc.kv = g_kv;
+  cc.cfgline.test = dz_service_cfgline_test;
+  cc.cfgline.saved = on_cfg_saved;
+  cc.cfgline.user = &g_probe; /* test() receives this; saved() and wifi_apply() ignore it */
+  cc.cfgline.wifi_apply = cfgline_wifi_apply;
+  cc.improv.wifi_connect = improv_connect;
+  cc.improv.wifi_scan = improv_scan;
+  cc.improv.wifi_connected = improv_connected;
+  cc.improv.fw_name = "RoundOS";
+  cc.improv.fw_version = "0.0.1";
+  cc.improv.chip = "ESP32-S3";
+  cc.improv.device_name = "RoundOS";
+  cc.improv_enabled = !svc_provisioned(); /* only while unprovisioned (docs/research/flashing.md) */
+  cc.improv_authorized = true; /* REVIEW: no physical authorisation step yet; USB access is already physical access */
+  if (!ru_console_esp_start(&cc)) ESP_LOGE(TAG, "console start failed");
+
+  if (g_svc) {
+    if (!dz_service_start(g_svc)) ESP_LOGE(TAG, "service task failed");
+    apply_stored_config();
+  }
+}
+
+void svc_factory_reset(void) {
+  if (g_svc) dz_service_clear_config(g_svc);
+  (void)ru_cfg_clear(g_kv);
+  ru_wifi_esp_forget();
+  (void)ru_wifi_creds_clear(g_kv);
+  atomic_store(&g_cfg_set, false);
+  atomic_store(&g_wifi_set, false);
+  bh_clear();
+  ESP_LOGW(TAG, "factory reset done");
+}

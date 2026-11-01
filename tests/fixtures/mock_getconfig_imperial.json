@@ -1,0 +1,12 @@
+{
+	"CurrencySign": "$",
+	"Latitude": "12.345678",
+	"Longitude": "98.765432",
+	"TempScale": 1,
+	"TempSign": "F",
+	"WebUserName": "mock-user",
+	"WindScale": 22.369,
+	"WindSign": "mph",
+	"status": "OK",
+	"title": "GetConfig"
+}

@@ -1,0 +1,292 @@
+#include "apps_demo.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "ru_theme.h"
+
+static char *slurp(const char *path, size_t *n) {
+  FILE *fp = fopen(path, "rb");
+  if (!fp) return NULL;
+  fseek(fp, 0, SEEK_END);
+  long len = ftell(fp);
+  fseek(fp, 0, SEEK_SET);
+  char *b = malloc((size_t)len + 1);
+  if (b && fread(b, 1, (size_t)len, fp) != (size_t)len) { free(b); b = NULL; }
+  if (b) { b[len] = 0; *n = (size_t)len; }
+  fclose(fp);
+  return b;
+}
+
+static bool replace_once(char **buf, size_t *n, const char *from, const char *to) {
+  char *p = strstr(*buf, from);
+  if (!p) return false;
+  size_t fl = strlen(from), tl = strlen(to);
+  char *out = malloc(*n + tl + 1);
+  memcpy(out, *buf, (size_t)(p - *buf));
+  memcpy(out + (p - *buf), to, tl);
+  strcpy(out + (p - *buf) + tl, p + fl);
+  free(*buf);
+  *buf = out;
+  *n = *n - fl + tl;
+  return true;
+}
+
+/* Load a fixture file, apply up to two textual Status tweaks (test data only), commit it to the model. */
+static bool apply_file(appfx_t *f, const char *dir, const char *name, dz_commit_t mode, const char *from1, const char *to1,
+                       const char *from2, const char *to2) {
+  char path[512];
+  snprintf(path, sizeof path, "%s/%s", dir, name);
+  size_t n = 0;
+  char *b = slurp(path, &n);
+  if (!b) return false;
+  bool ok = true;
+  if (from1) ok = replace_once(&b, &n, from1, to1);
+  if (ok && from2) ok = replace_once(&b, &n, from2, to2);
+  int changed = 0;
+  ok = ok && dz_model_apply(&f->model, b, n, mode, f->T, NULL, &changed) == DZ_OK;
+  free(b);
+  return ok;
+}
+
+bool appfx_apply_scenes(appfx_t *f, const char *json) {
+  return dz_model_apply(&f->model, json, strlen(json), DZ_COMMIT_FULL_SCENES, f->T, NULL, NULL) == DZ_OK;
+}
+
+bool appfx_load(appfx_t *f, const char *dir, appfx_set_t set, uint32_t ttl_ms) {
+  memset(f, 0, sizeof *f);
+  f->ent = calloc(APPFX_CAP, sizeof *f->ent);
+  f->stage = calloc(APPFX_CAP, sizeof *f->stage);
+  f->rbuf = calloc(1, 4096);
+  f->T = 100000;
+  if (!f->ent || !f->stage || !f->rbuf) return false;
+  dz_model_cfg_t mc = { .ttl_ms = ttl_ms, .old_update_s = UINT32_MAX };
+  if (!dz_model_init(&f->model, f->ent, APPFX_CAP, f->stage, APPFX_CAP, &mc)) return false;
+  f->tr = dz_transport_socket_create();
+  static char base[] = "http://127.0.0.1:1";
+  dz_client_cfg_t cfg = { .base_url = base, .token = "fixture-token-not-a-secret", .transport = f->tr, .model = &f->model,
+                          .buf = f->rbuf, .buf_cap = 4096 };
+  if (!f->tr || !dz_client_init(&f->client, &cfg)) return false;
+  switch (set) {
+    case APPFX_REAL:
+      return apply_file(f, dir, "real_getdevices.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL) &&
+             apply_file(f, dir, "real_getscenes.json", DZ_COMMIT_FULL_SCENES, NULL, NULL, NULL, NULL);
+    case APPFX_MOCK:
+      return apply_file(f, dir, "mock_getdevices.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL) &&
+             apply_file(f, dir, "mock_getscenes.json", DZ_COMMIT_FULL_SCENES, NULL, NULL, NULL, NULL);
+    case APPFX_MOCK_MIXED:
+      /* the mock's two groups: "Away" On, "All Off" Mixed */
+      return apply_file(f, dir, "mock_getdevices.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL) &&
+             apply_file(f, dir, "mock_getscenes.json", DZ_COMMIT_FULL_SCENES,
+                        "\"Name\":\"Away\",\"Type\":\"Group\",\"Status\":\"Off\",\"Data\":\"Off\"",
+                        "\"Name\":\"Away\",\"Type\":\"Group\",\"Status\":\"On\",\"Data\":\"On\"",
+                        "\"Name\":\"All Off\",\"Type\":\"Group\",\"Status\":\"Off\",\"Data\":\"Off\"",
+                        "\"Name\":\"All Off\",\"Type\":\"Group\",\"Status\":\"Mixed\",\"Data\":\"Mixed\"");
+    case APPFX_CLIMATE_METRIC:
+    case APPFX_CLIMATE_IMPERIAL:
+    case APPFX_CLIMATE_NOUNITS: {
+      bool imp = set == APPFX_CLIMATE_IMPERIAL;
+      if (!apply_file(f, dir, imp ? "mock_climate_imperial.json" : "mock_climate_metric.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL))
+        return false;
+      if (set != APPFX_CLIMATE_NOUNITS) {
+        char path[512];
+        size_t n = 0;
+        snprintf(path, sizeof path, "%s/%s", dir, imp ? "mock_getconfig_imperial.json" : "mock_getconfig_metric.json");
+        char *c = slurp(path, &n);
+        dz_units_t u;
+        if (!c || !dz_units_parse(c, n, &u)) { free(c); return false; }
+        free(c);
+        dz_model_set_units(&f->model, &u);
+      }
+      return true;
+    }
+    case APPFX_EMPTY:
+    default: return true;
+  }
+}
+
+void appfx_unload(appfx_t *f) {
+  if (f->model.mu) dz_model_deinit(&f->model);
+  if (f->tr) dz_transport_destroy(f->tr);
+  free(f->ent);
+  free(f->stage);
+  free(f->rbuf);
+  memset(f, 0, sizeof *f);
+}
+
+/* ------------------------------------------------------------------ screens */
+
+const char *const apps_demo_names[] = {
+  "home", "home_connecting", "home_offline", "home_token", "home_stale", "home_empty",
+  "devices", "scenes", "scenes_mixed", "energy", "energy_counter", "weather", "settings", "settings_conn", "settings_bright",
+  "settings_about",
+  "climate_overview", "climate_temp", "climate_temp_hum_baro", "climate_hum", "climate_wind", "climate_rain", "climate_uv",
+  "climate_lux", "climate_air", "climate_value", "climate_text", "climate_unseen", "climate_page_setpoint", "climate_page_mode",
+  "climate_temp_f", "climate_wind_f", "climate_nounits", "climate_stale",
+  "detail_climate_wind", "detail_thermo6", "detail_setpoint_plan", "detail_setpoint_nonow", "detail_radiator", "detail_evohome",
+  "detail_mode", "detail_setpoint_f", "detail_setpoint_nounits",
+  "confirm_setpoint", "confirm_mode",
+  "detail_onoff", "detail_dimmer", "detail_selector", "detail_blinds", "detail_thermo", "detail_lock", "detail_push", "detail_info",
+  "confirm_scene", "confirm_group_mixed", "confirm_lock",
+  "fb_pending", "fb_confirmed", "fb_unconfirmed", "fb_failed",
+};
+const int apps_demo_count = (int)(sizeof apps_demo_names / sizeof apps_demo_names[0]);
+
+int appfx_climate_index(appfx_t *f, const char *idx) {
+  int k = 0;
+  size_t total = dz_model_count(&f->model);
+  for (size_t i = 0; i < total; i++) {
+    dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
+    if (!dz_model_at(&f->model, i, &d, &v, &st, &sc, f->T) || sc) continue;
+    if (!(d.cap == DZ_CAP_TEMP || d.cap == DZ_CAP_WEATHER || d.cap == DZ_CAP_SENSOR || d.cap == DZ_CAP_THERMOSTAT || d.cap == DZ_CAP_MODE)) continue;
+    if (!strcmp(d.idx, idx)) return k;
+    k++;
+  }
+  return -1;
+}
+
+bool appfx_find(appfx_t *f, dz_cap_t cap, int state, char *idx, bool *scene) {
+  size_t total = dz_model_count(&f->model);
+  for (size_t i = 0; i < total; i++) {
+    dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
+    if (!dz_model_at(&f->model, i, &d, &v, &st, &sc, f->T) || d.cap != cap || d.is_protected) continue;
+    if (state >= 0 && (int)dz_device_state(&d) != state) continue;
+    snprintf(idx, 12, "%s", d.idx);
+    if (scene) *scene = sc;
+    return true;
+  }
+  return false;
+}
+
+static void click_at(int x, int y) {
+  sim_pointer(x, y, true);
+  sim_advance(80);
+  sim_pointer(x, y, false);
+  sim_advance(80);
+}
+
+static void hold_at(int x, int y, uint32_t ms) {
+  sim_pointer(x, y, true);
+  sim_advance(ms);
+  sim_pointer(x, y, false);
+  sim_advance(100);
+}
+
+static appfx_set_t set_for(const char *n) {
+  if (!strcmp(n, "climate_temp_f") || !strcmp(n, "climate_wind_f") || !strcmp(n, "detail_setpoint_f")) return APPFX_CLIMATE_IMPERIAL;
+  if (!strcmp(n, "climate_nounits") || !strcmp(n, "detail_setpoint_nounits")) return APPFX_CLIMATE_NOUNITS;
+  if (!strncmp(n, "climate_", 8) || !strcmp(n, "detail_climate_wind") || !strcmp(n, "detail_thermo6") || !strncmp(n, "detail_setpoint", 15) ||
+      !strcmp(n, "detail_radiator") || !strcmp(n, "detail_evohome") || !strcmp(n, "detail_mode") || !strcmp(n, "confirm_setpoint") ||
+      !strcmp(n, "confirm_mode"))
+    return APPFX_CLIMATE_METRIC;
+  if (!strcmp(n, "scenes_mixed") || !strncmp(n, "confirm_group", 13) || !strncmp(n, "fb_", 3)) return APPFX_MOCK_MIXED;
+  if (!strncmp(n, "detail_", 7) && strcmp(n, "detail_info") != 0) return APPFX_MOCK;
+  if (!strcmp(n, "confirm_scene") || !strcmp(n, "confirm_lock")) return APPFX_MOCK;
+  if (!strcmp(n, "home_empty") || !strcmp(n, "home_connecting")) return APPFX_EMPTY;
+  return APPFX_REAL;
+}
+
+ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
+  bool known = false;
+  for (int i = 0; i < apps_demo_count; i++) if (!strcmp(n, apps_demo_names[i])) known = true;
+  if (!known) return NULL;
+  bool stale = !strcmp(n, "home_stale") || !strcmp(n, "climate_stale");
+  if (!appfx_load(f, dir, set_for(n), stale ? 300000u : 600000u)) return NULL;
+  ru_dzapp_t *a = ru_dzapp_create(&f->model, &f->client, true);
+  if (!a) return NULL;
+  /* "stale": the model was last confirmed 7 minutes before the UI looks at it */
+  f->T += stale ? 420000u : 1000u;
+  ru_dzapp_set_conn(a, !strcmp(n, "home_connecting") ? DZ_CS_CONNECTING : !strcmp(n, "home_offline") ? DZ_CS_OFFLINE
+                       : !strcmp(n, "home_token") ? DZ_CS_TOKEN_REJECTED : DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f->T);
+  int c = ru_theme_geom()->diameter / 2;
+  char idx[12];
+  bool sc = false;
+  ru_section_t sec = RU_SEC_HOME;
+  if (!strcmp(n, "devices")) sec = RU_SEC_DEVICES;
+  else if (!strncmp(n, "scenes", 6) || !strncmp(n, "fb_", 3)) sec = RU_SEC_SCENES;
+  else if (!strncmp(n, "energy", 6)) sec = RU_SEC_ENERGY;
+  else if (!strcmp(n, "weather") || !strncmp(n, "climate_", 8)) sec = RU_SEC_WEATHER;
+  else if (!strncmp(n, "settings", 8)) sec = RU_SEC_SETTINGS;
+  ru_dzapp_show_section(a, sec);
+
+  if (!strcmp(n, "energy_counter")) {
+    /* the energy device that has no power reading: its hero is the day total with the unit Domoticz reports */
+    int k = 0;
+    size_t total = dz_model_count(&f->model);
+    for (size_t i = 0; i < total; i++) {
+      dz_device_t d; ru_val_t v; ru_val_state_t st; bool s2;
+      if (!dz_model_at(&f->model, i, &d, &v, &st, &s2, f->T) || s2 || d.cap != DZ_CAP_ENERGY) continue;
+      if (!(d.has_usage || d.has_usage_deliv || d.has_today)) continue;
+      if (!d.has_usage && !d.has_usage_deliv && d.has_today) { ru_dzapp_select(a, RU_SEC_ENERGY, k); break; }
+      k++;
+    }
+  } else if (!strncmp(n, "climate_", 8)) {
+    static const struct { const char *name, *idx; } pick[] = {
+      {"climate_temp", "100"}, {"climate_temp_hum_baro", "103"}, {"climate_hum", "101"}, {"climate_wind", "104"},
+      {"climate_rain", "105"}, {"climate_uv", "106"}, {"climate_lux", "107"}, {"climate_air", "108"}, {"climate_value", "112"},
+      {"climate_text", "113"}, {"climate_unseen", "116"}, {"climate_page_setpoint", "118"}, {"climate_page_mode", "125"},
+      {"climate_temp_f", "103"}, {"climate_wind_f", "104"}, {"climate_nounits", "104"}, {"climate_stale", "100"}};
+    if (!strcmp(n, "climate_overview")) ru_dzapp_select(a, RU_SEC_WEATHER, -1);
+    for (size_t k = 0; k < sizeof pick / sizeof pick[0]; k++)
+      if (!strcmp(n, pick[k].name)) ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(f, pick[k].idx));
+  } else if (!strncmp(n, "detail_", 7) && (strstr(n, "thermo6") || strstr(n, "setpoint") || strstr(n, "radiator") || strstr(n, "evohome") ||
+                                           strstr(n, "mode") || strstr(n, "climate_wind"))) {
+    static const struct { const char *name, *idx; } det[] = {
+      {"detail_climate_wind", "104"}, {"detail_thermo6", "117"}, {"detail_setpoint_plan", "118"}, {"detail_setpoint_nonow", "121"},
+      {"detail_radiator", "123"}, {"detail_evohome", "124"}, {"detail_mode", "125"}, {"detail_setpoint_f", "118"},
+      {"detail_setpoint_nounits", "118"}};
+    for (size_t k = 0; k < sizeof det / sizeof det[0]; k++) if (!strcmp(n, det[k].name)) ru_dzapp_open(a, det[k].idx, false);
+  } else if (!strcmp(n, "confirm_setpoint") || !strcmp(n, "confirm_mode")) {
+    ru_dzapp_open(a, !strcmp(n, "confirm_mode") ? "125" : "118", false);
+    sim_render();
+    if (!strcmp(n, "confirm_setpoint")) click_at(c + ru_u(14), c + ru_u(24)); /* the + button: a setpoint always asks for a hold */
+    else click_at(c + ru_u(0), c - ru_u(30)); /* an upper selector segment */
+  } else if (!strcmp(n, "settings_conn")) ru_dzapp_open_sub(a, RU_SUB_CONNECTION);
+  else if (!strcmp(n, "settings_bright")) ru_dzapp_open_sub(a, RU_SUB_BRIGHTNESS);
+  else if (!strcmp(n, "settings_about")) ru_dzapp_open_sub(a, RU_SUB_ABOUT);
+  else if (!strcmp(n, "detail_onoff") && appfx_find(f, DZ_CAP_ONOFF, -1, idx, &sc)) ru_dzapp_open(a, idx, false);
+  else if (!strcmp(n, "detail_dimmer") && appfx_find(f, DZ_CAP_DIMMER, -1, idx, &sc)) ru_dzapp_open(a, idx, false);
+  else if (!strcmp(n, "detail_selector") && appfx_find(f, DZ_CAP_SELECTOR, -1, idx, &sc)) ru_dzapp_open(a, idx, false);
+  else if (!strcmp(n, "detail_blinds") && appfx_find(f, DZ_CAP_BLINDS, -1, idx, &sc)) ru_dzapp_open(a, idx, false);
+  else if (!strcmp(n, "detail_thermo") && appfx_find(f, DZ_CAP_THERMOSTAT, -1, idx, &sc)) ru_dzapp_open(a, idx, false);
+  else if (!strcmp(n, "detail_lock") && appfx_find(f, DZ_CAP_LOCK, -1, idx, &sc)) ru_dzapp_open(a, idx, false);
+  else if (!strcmp(n, "detail_push") && appfx_find(f, DZ_CAP_PUSH, -1, idx, &sc)) ru_dzapp_open(a, idx, false);
+  else if (!strcmp(n, "detail_info") && appfx_find(f, DZ_CAP_TEMP, -1, idx, &sc)) ru_dzapp_open(a, idx, false);
+  else if (!strcmp(n, "confirm_scene") && appfx_find(f, DZ_CAP_SCENE, -1, idx, &sc)) ru_dzapp_open(a, idx, true);
+  else if (!strcmp(n, "confirm_group_mixed") && appfx_find(f, DZ_CAP_GROUP, DZ_STATE_MIXED, idx, &sc)) ru_dzapp_open(a, idx, true);
+  else if (!strcmp(n, "confirm_lock") && appfx_find(f, DZ_CAP_LOCK, -1, idx, &sc)) {
+    ru_dzapp_open(a, idx, false);
+    sim_render();
+    click_at(c, c + ru_u(14)); /* the LOCK / UNLOCK button: a lock always asks for a hold */
+  } else if (!strncmp(n, "fb_", 3)) {
+    dz_cmd_result_t r;
+    memset(&r, 0, sizeof r);
+    if (!strcmp(n, "fb_pending")) {
+      if (appfx_find(f, DZ_CAP_GROUP, DZ_STATE_ON, idx, &sc)) ru_dzapp_open(a, idx, true);
+      hold_at(c, c + ru_u(13), 1600); /* a full hold: the request is queued, nothing has answered yet */
+    } else {
+      appfx_find(f, DZ_CAP_GROUP, DZ_STATE_MIXED, idx, &sc);
+      snprintf(r.idx, sizeof r.idx, "%s", idx);
+      if (!strcmp(n, "fb_confirmed")) r.outcome = DZ_OUT_CONFIRMED;
+      else if (!strcmp(n, "fb_unconfirmed")) { r.outcome = DZ_OUT_UNCONFIRMED; r.have_after = true; strcpy(r.after.status, "Mixed"); r.after.cap = DZ_CAP_GROUP; }
+      else { r.outcome = DZ_OUT_FAILED; r.fail = DZ_FAIL_TRANSPORT; }
+      ru_dzapp_inject_result(a, &r);
+    }
+  }
+  ru_dzapp_ui_tick(a, f->T);
+  return a;
+}
+
+int apps_demo_shot(sim_t *s, const char *dir, const char *name, const char *path) {
+  appfx_t f;
+  ru_dzapp_t *a = apps_demo_show(&f, dir, name);
+  if (!a) { appfx_unload(&f); fprintf(stderr, "cannot build apps screen '%s'\n", name); return 2; }
+  sim_render();
+  int rc = sim_save_png(s, path, true) ? 0 : 1;
+  if (!rc) printf("wrote %s\n", path);
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+  return rc;
+}

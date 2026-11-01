@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>RoundOS Installer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>RoundOS <span>for Domoticz</span></h1>
+  <p class="lead">Install from your browser in about two minutes. Nothing is uploaded: the page runs locally and talks to your device over USB.</p>
+
+  <section id="s-board">
+    <h2><b>1</b> Pick your board</h2>
+    <div id="boards" class="cards" role="radiogroup" aria-label="Board"></div>
+    <label>Channel
+      <select id="channel"><option value="stable">Stable</option><option value="nightly">Nightly (may break)</option></select>
+    </label>
+    <p id="version-info" class="muted" aria-live="polite">Loading versions…</p>
+  </section>
+
+  <section id="s-install">
+    <h2><b>2</b> Install</h2>
+    <p>Plug the board in with a USB data cable. If it is not found, hold <kbd>BOOT</kbd> while plugging it in.</p>
+    <div id="install-slot">
+      <!-- The button is created by app.js once a version is chosen. -->
+    </div>
+    <div id="unsupported" hidden>
+      <p><strong>This browser cannot flash devices.</strong> Use Chrome or Edge on a computer, or flash from the command line:</p>
+      <pre id="esptool-cmd"></pre>
+      <p><a id="bin-link" href="#" download>Download the firmware</a> <span class="muted" id="sha"></span></p>
+    </div>
+    <p class="muted">A reinstall asks before erasing, so your Wi-Fi and Domoticz settings are kept unless you choose to erase.</p>
+  </section>
+
+  <section id="s-config">
+    <h2><b>3</b> Connect to Wi-Fi and Domoticz</h2>
+    <p>Tell the device your Wi-Fi and where Domoticz is. Fill in both the first time; later you can send only the part that changed. <strong>The Wi-Fi password and the token travel over the USB cable to the device only.</strong> They are not sent to any server, not stored by this page, and cleared from the page after a successful send.</p>
+    <form id="cfg" autocomplete="off">
+      <label>Wi-Fi network name (2.4 GHz)
+        <input id="wifi-ssid" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64">
+      </label>
+      <label>Wi-Fi password
+        <input id="wifi-pass" type="password" autocomplete="off" spellcheck="false" maxlength="80">
+      </label>
+      <label class="check"><input id="wifi-show" type="checkbox"> Show the password</label>
+      <label class="check" id="wifi-open-row" hidden>
+        <input id="wifi-open" type="checkbox"> This is an open network without a password.
+      </label>
+      <label>Domoticz address
+        <input id="dz-url" type="text" inputmode="url" placeholder="192.168.1.5:8080 or https://domoticz.example.org" spellcheck="false">
+      </label>
+      <label>Access token
+        <input id="dz-token" type="password" autocomplete="off" spellcheck="false">
+      </label>
+      <p id="token-info" class="muted" aria-live="polite"></p>
+      <label class="check" id="insecure-row" hidden>
+        <input id="dz-insecure" type="checkbox"> I understand that on plain http the token travels unencrypted over my home network.
+      </label>
+      <ul id="cfg-problems" class="problems" aria-live="polite"></ul>
+      <button id="send" type="submit">Send to device</button>
+      <p id="send-status" class="muted" aria-live="polite"></p>
+    </form>
+    <details>
+      <summary>How do I get an access token?</summary>
+      <ol>
+        <li>In Domoticz open <em>Setup</em> → <em>More Options</em> → <em>Access Tokens</em> (admin only).</li>
+        <li>Create a token. Choose <strong>Viewer</strong> if the display should only show things, or <strong>User</strong> if it may also switch lights and scenes.</li>
+        <li>Copy it right away: Domoticz shows it only once.</li>
+      </ol>
+      <p class="muted">Avoid Admin tokens. You can delete the token in Domoticz at any time to cut the device off.</p>
+    </details>
+  </section>
+
+  <footer class="muted">No analytics, no cookies, no accounts. <span id="build-info"></span></footer>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

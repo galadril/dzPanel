@@ -1,0 +1,22 @@
+/* The Domoticz apps as ru_app_t descriptors: Home, Devices, Scenes, Energy, Weather, Settings. They share one
+ * ru_dzapp_t (one model, one command layer, one feedback line) and differ in which section they show. */
+#pragma once
+#include "ru_app.h"
+#include "ru_dzapp.h"
+#include "ru_runtime.h"
+
+#define RU_APP_ID_HOME "org.roundos.home"
+#define RU_APP_ID_DEVICES "org.roundos.devices"
+#define RU_APP_ID_SCENES "org.roundos.scenes"
+#define RU_APP_ID_ENERGY "org.roundos.energy"
+#define RU_APP_ID_WEATHER "org.roundos.weather"
+#define RU_APP_ID_SETTINGS "org.roundos.settings"
+
+/* Binds the shared state and registers the six apps (Home as the runtime's home). */
+ru_err_t ru_apps_register(ru_runtime_t *rt, ru_dzapp_t *shared);
+/* The descriptor of a section, NULL if out of range. */
+const ru_app_t *ru_apps_descriptor(ru_section_t s);
+/* Scenes, Energy and Weather are hidden by the launcher when this is false (ru_app_t has no such field yet). */
+bool ru_apps_available(ru_section_t s);
+/* Forget the shared state (call after ru_runtime_shutdown and before ru_dzapp_destroy). */
+void ru_apps_unbind(void);

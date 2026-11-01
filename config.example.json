@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "domoticz": {
+    "url": "http://192.168.1.5:8080",
+    "token": "PASTE-A-DOMOTICZ-ACCESS-TOKEN-HERE",
+    "insecure_lan": true
+  }
+}

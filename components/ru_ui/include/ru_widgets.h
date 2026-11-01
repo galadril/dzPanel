@@ -1,0 +1,107 @@
+/* Halo widgets. Plain values only (ru_val_t, ints, strings): no Domoticz types.
+ * Every widget is an lv_obj_t* owned by its parent; deleting the object frees its private data.
+ * Callbacks run in the LVGL thread. Strings are copied. Call ru_theme_init() first. */
+#pragma once
+#include "lvgl.h"
+#include "ru_data.h"
+#include "ru_theme.h"
+
+typedef void (*ru_tap_cb_t)(lv_obj_t *w, void *ud);
+typedef void (*ru_bool_cb_t)(lv_obj_t *w, bool on, void *ud);
+typedef void (*ru_int_cb_t)(lv_obj_t *w, int value, bool final, void *ud);       /* final = finger lifted */
+typedef void (*ru_float_cb_t)(lv_obj_t *w, float value, bool final, void *ud);
+
+/* ---- value tile: label left, value right. OK / STALE (dim + border + warn glyph) / UNKNOWN ("--", never 0) ---- */
+lv_obj_t *ru_value_tile_create(lv_obj_t *parent, int w, int h, const char *label);
+void ru_value_tile_set(lv_obj_t *tile, const ru_val_t *v, uint32_t now_ms);
+/* Non-numeric states such as "ON"/"OFF". Freshness is given explicitly. */
+void ru_value_tile_set_text(lv_obj_t *tile, const char *text, ru_val_state_t st);
+void ru_value_tile_set_color(lv_obj_t *tile, lv_color_t ok_color);  /* colour of the value while OK */
+ru_val_state_t ru_value_tile_state(const lv_obj_t *tile);
+void ru_value_tile_on_tap(lv_obj_t *tile, ru_tap_cb_t cb, void *ud);
+
+/* ---- ring gauge: value 0..1 across min..max, centre text, caption below it. d = outer diameter px ---- */
+lv_obj_t *ru_ring_gauge_create(lv_obj_t *parent, int d, const char *caption);
+void ru_ring_gauge_set(lv_obj_t *g, const ru_val_t *v, float min, float max, uint32_t now_ms);
+void ru_ring_gauge_set_color(lv_obj_t *g, lv_color_t c);
+/* Shows caller-formatted text (any unit) with the ring filled to frac (0..1). frac < 0: text only, ring unlit (the value
+ * cannot be scaled). st UNKNOWN: "--". The widget itself never decides a unit. */
+void ru_ring_gauge_set_display(lv_obj_t *g, const char *text, float frac, ru_val_state_t st);
+
+/* ---- status rim: hairline ring at the screen edge, status dot at 1 o'clock, optional bead ---- */
+typedef enum { RU_RIM_OK, RU_RIM_STALE, RU_RIM_ERROR, RU_RIM_OFFLINE } ru_rim_state_t;
+lv_obj_t *ru_status_rim_create(lv_obj_t *parent);
+void ru_status_rim_set_state(lv_obj_t *rim, ru_rim_state_t s);
+void ru_status_rim_set_color(lv_obj_t *rim, lv_color_t hairline);
+void ru_status_rim_set_bead(lv_obj_t *rim, bool visible, float deg_from_top);
+
+/* ---- dimmer arc: draggable 270 degree arc, 0..max, hero number and caption in the middle ---- */
+lv_obj_t *ru_dimmer_create(lv_obj_t *parent, int d, int max, const char *caption);
+void ru_dimmer_set(lv_obj_t *w, int value);   /* programmatic, no callback */
+int ru_dimmer_get(const lv_obj_t *w);
+void ru_dimmer_set_unknown(lv_obj_t *w);      /* shows "--" and an unlit ring */
+void ru_dimmer_on_change(lv_obj_t *w, ru_int_cb_t cb, void *ud);
+
+/* ---- on/off toggle: big power button ---- */
+typedef enum { RU_ONOFF_OFF, RU_ONOFF_ON, RU_ONOFF_UNKNOWN } ru_onoff_t;
+lv_obj_t *ru_toggle_create(lv_obj_t *parent, int d);
+void ru_toggle_set(lv_obj_t *w, ru_onoff_t s);  /* programmatic, no callback */
+ru_onoff_t ru_toggle_get(const lv_obj_t *w);
+void ru_toggle_on_change(lv_obj_t *w, ru_bool_cb_t cb, void *ud);  /* asked state; widget does not flip itself on UNKNOWN */
+
+/* ---- selector wheel: names around a 270 degree arc; tap or drag to pick ---- */
+lv_obj_t *ru_selector_create(lv_obj_t *parent, int d, const char *const *names, int n);
+void ru_selector_set(lv_obj_t *w, int index);  /* programmatic, no callback */
+int ru_selector_get(const lv_obj_t *w);
+void ru_selector_on_change(lv_obj_t *w, ru_int_cb_t cb, void *ud);
+lv_obj_t *ru_selector_centre(lv_obj_t *w);     /* transparent container in the middle for icons */
+
+/* ---- blinds: window with slats (0 = open, 100 = closed), up / stop / down ---- */
+typedef enum { RU_BLINDS_UP, RU_BLINDS_STOP, RU_BLINDS_DOWN } ru_blinds_cmd_t;
+typedef void (*ru_blinds_cb_t)(lv_obj_t *w, ru_blinds_cmd_t cmd, void *ud);
+lv_obj_t *ru_blinds_create(lv_obj_t *parent, int w, int h);
+void ru_blinds_set(lv_obj_t *w, const ru_val_t *closed_pct, uint32_t now_ms);
+void ru_blinds_on_cmd(lv_obj_t *w, ru_blinds_cb_t cb, void *ud);
+
+/* ---- hold-to-confirm: press and hold for hold_ms; releasing early cancels ---- */
+typedef enum { RU_HOLD_CONFIRMED, RU_HOLD_CANCELLED } ru_hold_event_t;
+typedef void (*ru_hold_cb_t)(lv_obj_t *w, ru_hold_event_t ev, void *ud);
+lv_obj_t *ru_hold_confirm_create(lv_obj_t *parent, int d, const char *text, uint32_t hold_ms);
+void ru_hold_confirm_set_progress(lv_obj_t *w, int permille);  /* for screenshots and tests */
+int ru_hold_confirm_progress(const lv_obj_t *w);
+void ru_hold_confirm_on_event(lv_obj_t *w, ru_hold_cb_t cb, void *ud);
+
+/* ---- scene button: rounded tile with colour dot, name and kind ("SCENE", "GROUP") ---- */
+lv_obj_t *ru_scene_button_create(lv_obj_t *parent, int w, int h, const char *name, const char *kind, lv_color_t dot);
+void ru_scene_button_on_tap(lv_obj_t *w, ru_tap_cb_t cb, void *ud);
+
+/* ---- thermostat dial: setpoint arc min..max with step, current-temperature bead, - and + buttons ---- */
+lv_obj_t *ru_thermostat_create(lv_obj_t *parent, int d, float min, float max, float step);
+void ru_thermostat_set_setpoint(lv_obj_t *w, float sp);                         /* programmatic, no callback */
+void ru_thermostat_set_current(lv_obj_t *w, const ru_val_t *cur, uint32_t now_ms);
+void ru_thermostat_set_unit(lv_obj_t *w, const char *unit);   /* text after the numbers: "\xC2\xB0C", "%", "" (bare). Default: a bare degree sign */
+void ru_thermostat_set_readonly(lv_obj_t *w, bool ro);         /* hides - and +, ignores the arc: a setpoint that cannot be changed */
+void ru_thermostat_set_mode(lv_obj_t *w, const char *text, lv_color_t color);   /* e.g. "HEATING" */
+float ru_thermostat_get_setpoint(const lv_obj_t *w);
+void ru_thermostat_on_change(lv_obj_t *w, ru_float_cb_t cb, void *ud);
+
+/* ---- icons drawn from primitives ---- */
+lv_obj_t *ru_icon_power(lv_obj_t *parent, int size, lv_color_t c);
+lv_obj_t *ru_icon_fan(lv_obj_t *parent, int size, lv_color_t c);
+lv_obj_t *ru_icon_dot(lv_obj_t *parent, int size, lv_color_t c);
+
+/* ---- state tile (Scenes and Groups, apps): a rounded tile with a state indicator, a name and a state line.
+ * The indicator differs by SHAPE, not only colour: UNKNOWN dashed ring + "-", OFF hollow ring, ON filled disc,
+ * MIXED ring with the left half filled, PUSH (a Scene: no state) ring with a centre core, NONE no indicator
+ * (the tile then shows a value in its place, see ru_state_tile_set_value). ---- */
+typedef enum { RU_DOT_UNKNOWN, RU_DOT_OFF, RU_DOT_ON, RU_DOT_MIXED, RU_DOT_PUSH, RU_DOT_NONE } ru_dot_state_t;
+lv_obj_t *ru_state_dot_create(lv_obj_t *parent, int d);
+void ru_state_dot_set(lv_obj_t *dot, ru_dot_state_t s, lv_color_t color);
+lv_obj_t *ru_state_tile_create(lv_obj_t *parent, int w, int h, const char *name);
+/* sub = the state line ("ON", "OFF", "MIXED", "SCENE", "ACTIVATED", "--"). fresh dims a STALE tile. */
+void ru_state_tile_set(lv_obj_t *tile, ru_dot_state_t s, const char *sub, ru_val_state_t fresh);
+ru_dot_state_t ru_state_tile_dot(const lv_obj_t *tile);
+const char *ru_state_tile_sub(const lv_obj_t *tile);
+/* The big text shown instead of the indicator when the state is RU_DOT_NONE (sensor values). */
+void ru_state_tile_set_value(lv_obj_t *tile, const char *text);
+void ru_state_tile_on_tap(lv_obj_t *tile, ru_tap_cb_t cb, void *ud);

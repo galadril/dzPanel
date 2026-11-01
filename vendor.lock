@@ -1,0 +1,6 @@
+# Third-party sources used for reading and for the host simulator. NOT checked in (see .gitignore).
+# Recreate with tools/fetch_vendor.sh. Format: <dir> <git url> <full commit> <licence> <purpose>
+vendor/lvgl/src                           https://github.com/lvgl/lvgl.git                                    c016f72d4c125098287be5e83c0f1abed4706ee5  MIT         host simulator (v9.4.0, SAME version the firmware gets from the Waveshare BSP); firmware itself uses the IDF component manager
+vendor/domoticz                           https://github.com/domoticz/domoticz                                489a8266d663b3f5d0b60786f732b38263827085  GPL-3.0     READ ONLY reference for the API. Never copy code from it (GPL)
+vendor/ESP32-S3-Touch-AMOLED-1.75         https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75        e4344e70c2fa78a13e8a06566507f1ba8af6672a  Apache-2.0  board reference: pins, drivers, examples
+vendor/ESP32-S3-Touch-AMOLED-2.16         https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-2.16        225a62bff11b5d0a0b607873860d39485a9a9685  Apache-2.0  board reference: pins, drivers, examples

@@ -1,0 +1,13 @@
+build/
+sdkconfig
+secrets*
+*.local.*
+vendor/
+site/vendor/
+*.o
+*.a
+__pycache__/
+firmware/managed_components/
+firmware/sdkconfig.old
+dist/
+/.vs

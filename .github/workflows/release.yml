@@ -1,0 +1,173 @@
+# Release pipeline. NOT YET RUN on GitHub: every script it calls was run locally (tools/version.py, publish_site.sh,
+# check_site.mjs, make_manifest.py); the workflow glue, the action versions and the container tag are unverified.
+# What it does: tag vX.Y.Z (must equal the VERSION file) -> stable release; every night (if there are new commits) or on
+# demand -> nightly. Both build the firmware, build the installer component, publish to the gh-pages branch (the
+# installer site) and, for stable, create a GitHub Release with the images and checksums. See docs/releasing.md.
+name: release
+on:
+  push:
+    tags: ['v*']
+  schedule:
+    - cron: '17 3 * * *'        # nightly, 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'nightly (stable releases come from tags only)'
+        type: choice
+        options: [nightly]
+        default: nightly
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      channel: ${{ steps.v.outputs.channel }}
+      skip: ${{ steps.v.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          skip=false
+          if [ "$REF_TYPE" = "tag" ]; then
+            channel=stable
+            # a release must come from the default branch's history, and the tag must equal VERSION
+            git fetch --no-tags origin main
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::tag $REF_NAME is not on main"; exit 1; }
+            version=$(python3 -I tools/version.py --channel stable --tag "$REF_NAME")
+          else
+            channel=nightly
+            version=$(python3 -I tools/version.py --channel nightly)
+            if [ "$EVENT" = "schedule" ] && [ -z "$(git log --since='25 hours ago' --format=%H -1)" ]; then
+              skip=true   # nothing new since the last night
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "### $channel $version (skip=$skip)" >> "$GITHUB_STEP_SUMMARY"
+
+  firmware:
+    needs: [plan, ci]
+    if: needs.plan.outputs.skip != 'true'
+    strategy:
+      matrix:
+        board: [amoled-175]     # amoled-216 joins when its board profile exists
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.6      # unverified tag
+    env:
+      ROUNDOS_VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build and merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . "$IDF_PATH/export.sh"
+          cd firmware
+          IDF_TARGET=esp32s3 idf.py -B ../build build
+          idf.py -B ../build merge-bin
+          cd ..
+          mkdir -p out
+          cp build/merged-binary.bin "out/roundos-${{ matrix.board }}-${ROUNDOS_VERSION}-merged.bin"
+          cp build/roundos.elf       "out/roundos-${{ matrix.board }}-${ROUNDOS_VERSION}.elf"
+          (cd out && sha256sum * > SHA256SUMS)
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.board }}
+          path: out/
+          if-no-files-found: error
+
+  installer:
+    # the ESP Web Tools component, built from a pinned commit (tools/vendor_esp_web_tools.sh)
+    needs: [plan, ci]
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: tools/vendor_esp_web_tools.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp-web-tools
+          path: site/vendor/esp-web-tools/
+          if-no-files-found: error
+
+  publish:
+    needs: [plan, firmware, installer]
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # push gh-pages, create the release
+    concurrency:
+      group: publish-gh-pages  # one publisher at a time: two would race on the index
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-*
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: esp-web-tools
+          path: vendor
+      - name: check out the published site (gh-pages), or start it
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch --depth 1 origin gh-pages
+            git worktree add site-out FETCH_HEAD
+            git -C site-out checkout -B gh-pages
+          else
+            git worktree add --detach site-out
+            git -C site-out checkout --orphan gh-pages
+            git -C site-out rm -rf . >/dev/null 2>&1 || true
+          fi
+      - name: add every board's build and audit the tree
+        run: |
+          set -euo pipefail
+          for d in artifacts/firmware-*; do
+            board="${d#artifacts/firmware-}"
+            tools/publish_site.sh --site site-out --board "$board" --channel "$CHANNEL" --version "$VERSION" \
+              --merged "$d/roundos-${board}-${VERSION}-merged.bin" --vendor vendor --keep 5 --date "$(date -u +%F)"
+          done
+          touch site-out/.nojekyll
+      - name: publish to gh-pages
+        run: |
+          set -euo pipefail
+          cd site-out
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo "nothing to publish"; exit 0; }
+          git commit -m "publish $CHANNEL $VERSION"
+          git push origin HEAD:gh-pages
+      - name: GitHub Release (stable only)
+        if: needs.plan.outputs.channel == 'stable'
+        run: |
+          set -euo pipefail
+          pre=""; case "$VERSION" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" artifacts/firmware-*/* $pre \
+            --title "RoundOS $VERSION" --generate-notes --verify-tag
