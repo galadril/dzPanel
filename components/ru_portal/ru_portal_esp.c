@@ -34,7 +34,7 @@ static struct {
   EventGroupHandle_t evt;
   httpd_handle_t httpd;
   esp_netif_t *ap;
-  volatile bool dns_stop, quit;
+  volatile bool dns_stop, quit, join_busy;
   TaskHandle_t sup;
   uint8_t ip[4];
   ru_portal_net_t nets[RU_PORTAL_MAX_NETS];
@@ -53,19 +53,14 @@ static size_t op_scan(void *u, ru_portal_net_t *out, size_t max) {
 static bool op_join(void *u, const char *ssid, const char *pass, uint32_t timeout_ms) {
   (void)u;
   ru_mutex_unlock(S.mu);
-  bool ok = false;
-  if (ru_wifi_esp_try_new(ssid, pass)) {
-    uint32_t t0 = ru_now_ms();
-    while ((uint32_t)(ru_now_ms() - t0) < timeout_ms) {
-      ru_wifi_state_t st = ru_wifi_esp_state();
-      if (st == RU_WIFI_CONNECTED) { ok = true; break; }
-      if (st == RU_WIFI_AP_REQUESTED) break; /* the manager gave up */
-      vTaskDelay(pdMS_TO_TICKS(250));
-    }
-  }
+  /* apply_wait reports the exact outcome: a wrong password ends in FAILED and the manager then reverts to the OLD network,
+   * whose CONNECTED must not be read as success of the new one. Busy = another attempt (USB, Improv) is pending. */
+  ru_wifi_apply_t r = ru_wifi_esp_apply_wait(ssid, pass, timeout_ms);
+  S.join_busy = r == RU_WIFI_APPLY_BUSY;
   ru_mutex_lock(S.mu);
-  return ok;
+  return r == RU_WIFI_APPLY_OK;
 }
+static bool op_busy(void *u) { (void)u; return S.join_busy; }
 static void op_log(void *u, const char *m) { (void)u; ESP_LOGI(TAG, "%s", m); }
 
 static void snap_refresh_locked(void) { /* S.mu held */
@@ -135,7 +130,45 @@ static bool is_form_ct(httpd_req_t *req) {
 
 #define BODY_DEADLINE_MS 5000 /* whole body, not per read: slowloris */
 
+/* Local (destination) address of the request socket as dotted quad; v4-mapped IPv6 is unmapped, anything else gives "". */
+static void req_local_ip(httpd_req_t *req, char *out, size_t cap) {
+  struct sockaddr_storage ss;
+  socklen_t sl = sizeof ss;
+  const uint8_t *b = NULL;
+  static const uint8_t mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+  int fd = httpd_req_to_sockfd(req);
+  out[0] = 0;
+  if (fd < 0 || getsockname(fd, (struct sockaddr *)&ss, &sl) != 0) return;
+  if (ss.ss_family == AF_INET) b = (const uint8_t *)&((struct sockaddr_in *)&ss)->sin_addr.s_addr;
+  else if (ss.ss_family == AF_INET6 && !memcmp(((struct sockaddr_in6 *)&ss)->sin6_addr.s6_addr, mapped, 12))
+    b = ((struct sockaddr_in6 *)&ss)->sin6_addr.s6_addr + 12;
+  if (b) snprintf(out, cap, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+}
+
+/* The portal must answer only on the AP address and only under that name (ru_portal_guard, tested on the host). */
+static bool guard_ok(httpd_req_t *req, esp_err_t *rc) {
+  char local[24], host[48];
+  const char *h = NULL;
+  size_t hl = httpd_req_get_hdr_value_len(req, "Host");
+  if (hl >= sizeof host) h = "-"; /* too long to be ours */
+  else if (hl > 0 && httpd_req_get_hdr_value_str(req, "Host", host, sizeof host) == ESP_OK) h = host;
+  req_local_ip(req, local, sizeof local);
+  switch (ru_portal_guard(S.P.cfg.ap_ip, local, h, req->method == HTTP_POST)) {
+    case RU_GUARD_ALLOW: return true;
+    case RU_GUARD_REDIRECT:
+      httpd_resp_set_status(req, status_line(302));
+      common_headers(req);
+      httpd_resp_set_hdr(req, "Location", S.P.url);
+      *rc = httpd_resp_send(req, NULL, 0);
+      return false;
+    case RU_GUARD_BAD_REQUEST: *rc = send_plain(req, 400); return false;
+    default: *rc = send_plain(req, 403); return false;
+  }
+}
+
 static esp_err_t h_any(httpd_req_t *req) {
+  esp_err_t grc = ESP_OK;
+  if (!guard_ok(req, &grc)) return grc;
   if (req->method != HTTP_GET && req->method != HTTP_POST) return send_plain(req, 405);
   if (req->content_len > RU_HTTP_BODY_MAX) return send_plain(req, 413);
   if (req->method == HTTP_GET && req->content_len != 0) return send_plain(req, 400);
@@ -221,7 +254,7 @@ static void dns_task(void *arg) {
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
     a.sin_port = htons(53);
-    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    memcpy(&a.sin_addr.s_addr, S.ip, 4); /* the AP address only: never the home-network interface */
     struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     if (bind(s, (struct sockaddr *)&a, sizeof a) == 0) {
@@ -330,6 +363,7 @@ bool ru_portal_esp_init(const ru_portal_esp_cfg_t *cfg) {
   ops.random = op_random;
   ops.scan = op_scan;
   ops.wifi_join = op_join;
+  ops.wifi_busy = op_busy;
   ops.cfg = cfg->test;
   ops.log = op_log;
   ru_portal_init(&S.P, &cfg->cfg, &ops, cfg->kv);

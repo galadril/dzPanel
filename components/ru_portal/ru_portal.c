@@ -34,7 +34,7 @@ static void log_(const ru_portal_t *p, const char *m) { if (p->ops.log) p->ops.l
 /* ---------------- error texts (fixed strings; nothing from the user) ---------------- */
 typedef enum {
   E_NONE = 0, E_CSRF, E_INPUT, E_JOIN, E_NEEDS_ACK, E_BAD_URL, E_BAD_TOKEN, E_TOO_LONG, E_UNREACHABLE, E_NOT_DOMOTICZ,
-  E_TLS, E_REJECTED, E_NO_WIFI, E_STORE, E_VERSION
+  E_TLS, E_REJECTED, E_NO_WIFI, E_STORE, E_VERSION, E_BUSY
 } err_t;
 static const char *err_text(err_t e) {
   switch (e) {
@@ -53,6 +53,7 @@ static const char *err_text(err_t e) {
     case E_NO_WIFI: return "The device is not connected to Wi-Fi yet. Go back to step 1.";
     case E_STORE: return "The settings could not be saved. Try again.";
     case E_VERSION: return "This firmware cannot read these settings.";
+    case E_BUSY: return "The device is still busy with another Wi-Fi attempt (for example from the USB installer). Wait a moment and try again.";
   }
   return "";
 }
@@ -335,9 +336,10 @@ static void post_wifi(ru_portal_t *p, const ru_portal_req_t *rq, ru_portal_resp_
   ru_form_err_t c = ru_form_get(rq->body, rq->body_len, "pass", pass, sizeof pass);
   if (c == RU_FORM_NOT_FOUND) pass[0] = 0;
   else if (c != RU_FORM_OK) e = E_INPUT;
-  if (e == E_NONE && (!ssid_ok(ssid) || !ru_wifi_creds_valid(ssid, pass))) e = E_INPUT;
+  if (e == E_NONE && (!ssid_ok(ssid) || !ru_wifi_ssid_check(ssid) || !ru_wifi_pass_check(pass))) e = E_INPUT; /* same rules as the USB path */
   if (e == E_NONE) {
-    if (!p->ops.wifi_join || !p->ops.wifi_join(p->ops.user, ssid, pass, p->cfg.join_timeout_ms)) e = E_JOIN;
+    if (!p->ops.wifi_join || !p->ops.wifi_join(p->ops.user, ssid, pass, p->cfg.join_timeout_ms))
+      e = p->ops.wifi_busy && p->ops.wifi_busy(p->ops.user) ? E_BUSY : E_JOIN;
   }
   ru_secure_zero(pass, sizeof pass);
   if (p->step == RU_PORTAL_OFF) { /* stopped while the (slow) join ran */
@@ -348,7 +350,7 @@ static void post_wifi(ru_portal_t *p, const ru_portal_req_t *rq, ru_portal_resp_
   }
   if (e != E_NONE) {
     ru_secure_zero(ssid, sizeof ssid);
-    fail(p);
+    if (e != E_BUSY) fail(p); /* busy is not the user's mistake: no lockout strike */
     if (p->locked) send_locked(r); else send_wifi(p, r, e);
     return;
   }

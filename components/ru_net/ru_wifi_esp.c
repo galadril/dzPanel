@@ -19,6 +19,7 @@ static struct {
   ru_mutex_t *mu;
   ru_wifi_creds_t pending; /* SECRET while an Improv attempt is running */
   bool pending_on;
+  ru_wifi_attempt_t att; /* busy rule and ticket (pure, tested in tests/test_net.c) */
   bool revert;
   bool quiet;       /* a blocking ru_wifi_esp_apply_wait is waiting: report through W.result, not on_provision_result */
   int result;       /* 0 pending, 1 joined and saved, 2 joined but not saved, 3 failed */
@@ -44,7 +45,7 @@ static void op_connect(void *u) {
   wc.sta.pmf_cfg.required = false;
   ru_wifi_creds_wipe(&c);
   esp_err_t e = esp_wifi_set_config(WIFI_IF_STA, &wc);
-  memset(&wc, 0, sizeof wc);
+  ru_secure_zero(&wc, sizeof wc);
   if (e == ESP_OK) e = esp_wifi_connect();
   if (e != ESP_OK && e != ESP_ERR_WIFI_CONN) ESP_LOGW(TAG, "connect start failed: %s", esp_err_to_name(e));
 }
@@ -58,6 +59,7 @@ static void op_state(void *u, ru_wifi_state_t from, ru_wifi_state_t to) {
   (void)u;
   W.connected = to == RU_WIFI_CONNECTED;
   ESP_LOGI(TAG, "wifi %s -> %s", ru_wifi_state_name(from), ru_wifi_state_name(to));
+  ru_wifi_attempt_on_state(&W.att, to);
   if (W.pending_on) {
     if (to == RU_WIFI_CONNECTED) {
       bool saved = ru_wifi_creds_save(W.cfg.kv, W.pending.ssid, W.pending.pass) == RU_CFG_OK;
@@ -177,6 +179,8 @@ size_t ru_wifi_esp_scan(ru_improv_net_t *out, size_t max) {
 bool ru_wifi_esp_try_new(const char *ssid, const char *pass) {
   if (!W.started || !ru_wifi_creds_valid(ssid, pass)) return false;
   ru_mutex_lock(W.mu);
+  uint32_t ticket;
+  if (W.pending_on || !ru_wifi_attempt_begin(&W.att, &ticket)) { ru_mutex_unlock(W.mu); return false; } /* busy */
   snprintf(W.pending.ssid, sizeof W.pending.ssid, "%s", ssid);
   snprintf(W.pending.pass, sizeof W.pending.pass, "%s", pass);
   W.pending_on = true;
@@ -199,7 +203,8 @@ static ru_wifi_apply_t map_reason(int r) {
 ru_wifi_apply_t ru_wifi_esp_apply_wait(const char *ssid, const char *pass, uint32_t timeout_ms) {
   if (!W.started || !ru_wifi_creds_valid(ssid, pass)) return RU_WIFI_APPLY_FAILED;
   ru_mutex_lock(W.mu);
-  if (W.pending_on) { ru_mutex_unlock(W.mu); return RU_WIFI_APPLY_FAILED; }
+  uint32_t ticket;
+  if (W.pending_on || !ru_wifi_attempt_begin(&W.att, &ticket)) { ru_mutex_unlock(W.mu); return RU_WIFI_APPLY_BUSY; }
   snprintf(W.pending.ssid, sizeof W.pending.ssid, "%s", ssid);
   snprintf(W.pending.pass, sizeof W.pending.pass, "%s", pass);
   W.pending_on = true;
@@ -221,6 +226,7 @@ ru_wifi_apply_t ru_wifi_esp_apply_wait(const char *ssid, const char *pass, uint3
   if (!W.result) { /* budget used up (the SM's own 15 s timeout normally fires first): give up and restore the old credentials */
     ru_wifi_creds_wipe(&W.pending);
     W.pending_on = false;
+    ru_wifi_attempt_abort(&W.att, ticket);
     W.revert = true;
     W.result = 3;
     W.fail_reason = -1;

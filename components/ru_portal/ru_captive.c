@@ -1,4 +1,5 @@
 #include "ru_captive.h"
+#include "ru_cfg.h" /* ru_secure_zero */
 
 #include <string.h>
 
@@ -119,7 +120,7 @@ bool ru_qr_wifi_payload(const char *ssid, const char *password, char *out, size_
   wesc(&w, ssid);
   if (pl) { ws(&w, ";P:"); wesc(&w, password); }
   ws(&w, ";;");
-  if (!w.ok) { memset(out, 0, cap); return false; }
+  if (!w.ok) { ru_secure_zero(out, cap); return false; }
   out[w.n] = 0;
   return true;
 }
@@ -130,10 +131,10 @@ bool ru_gen_password(ru_rand_fn rnd, void *user, unsigned len, char *out, size_t
   out[0] = 0;
   if (!rnd || len < RU_PW_MIN || len > RU_PW_MAX || cap < (size_t)len + 1) return false;
   uint8_t r[RU_PW_MAX];
-  if (!rnd(user, r, len)) { memset(r, 0, sizeof r); return false; }
+  if (!rnd(user, r, len)) { ru_secure_zero(r, sizeof r); return false; }
   for (unsigned i = 0; i < len; i++) out[i] = RU_PW_ALPHABET[r[i] & 31];
   out[len] = 0;
-  memset(r, 0, sizeof r);
+  ru_secure_zero(r, sizeof r);
   return true;
 }
 bool ru_gen_ap_ssid(ru_rand_fn rnd, void *user, char *out, size_t cap) {
@@ -152,11 +153,11 @@ bool ru_gen_hex(ru_rand_fn rnd, void *user, unsigned n, char *out, size_t cap) {
   out[0] = 0;
   if (!rnd || n == 0 || n > 32 || cap < 2 * (size_t)n + 1) return false;
   uint8_t r[32];
-  if (!rnd(user, r, n)) { memset(r, 0, sizeof r); return false; }
+  if (!rnd(user, r, n)) { ru_secure_zero(r, sizeof r); return false; }
   static const char hx[] = "0123456789abcdef";
   for (unsigned i = 0; i < n; i++) { out[2 * i] = hx[r[i] >> 4]; out[2 * i + 1] = hx[r[i] & 15]; }
   out[2 * n] = 0;
-  memset(r, 0, sizeof r);
+  ru_secure_zero(r, sizeof r);
   return true;
 }
 
@@ -166,4 +167,14 @@ bool ru_ct_streq(const char *a, const char *b) {
   size_t n = la < lb ? la : lb;
   for (size_t i = 0; i < n; i++) d |= (unsigned char)(a[i] ^ b[i]);
   return d == 0;
+}
+
+/* ---------------- request guard ---------------- */
+ru_guard_t ru_portal_guard(const char *ap_ip, const char *local_ip, const char *host, bool is_post) {
+  if (!ap_ip || !ap_ip[0] || !local_ip || strcmp(local_ip, ap_ip) != 0) return RU_GUARD_FORBIDDEN;
+  if (!host || !host[0]) return RU_GUARD_BAD_REQUEST;
+  size_t n = strlen(ap_ip);
+  bool ok = strncmp(host, ap_ip, n) == 0 && (host[n] == 0 || strcmp(host + n, ":80") == 0);
+  if (ok) return RU_GUARD_ALLOW;
+  return is_post ? RU_GUARD_BAD_REQUEST : RU_GUARD_REDIRECT;
 }

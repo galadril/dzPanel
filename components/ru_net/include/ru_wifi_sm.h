@@ -56,3 +56,15 @@ void ru_wifi_sm_event(ru_wifi_sm_t *sm, ru_wifi_event_t ev, int arg, uint32_t no
 void ru_wifi_sm_tick(ru_wifi_sm_t *sm, uint32_t now_ms);
 uint32_t ru_wifi_sm_ms_until_due(const ru_wifi_sm_t *sm, uint32_t now_ms); /* UINT32_MAX = nothing scheduled */
 const char *ru_wifi_state_name(ru_wifi_state_t s);
+
+/* ---- one credentials attempt at a time (USB RU+CFG, Improv, portal all share the radio) ----
+ * Rules: begin() is refused (busy) while an attempt is PENDING; the first terminal state the SM reports for the attempt
+ * (CONNECTED = ok, FAILED or AP_REQUESTED = failed) is FINAL: the later CONNECTED of the REVERT to the old network must
+ * never be read as success of the new one; a result belongs to the ticket that began the attempt, so a waiter holding an
+ * older ticket never sees a newer attempt's outcome (poll with a stale ticket returns RU_WIFI_ATT_IDLE). */
+typedef enum { RU_WIFI_ATT_IDLE = 0, RU_WIFI_ATT_PENDING, RU_WIFI_ATT_OK, RU_WIFI_ATT_FAILED } ru_wifi_att_state_t;
+typedef struct { ru_wifi_att_state_t st; uint32_t ticket; } ru_wifi_attempt_t;
+bool ru_wifi_attempt_begin(ru_wifi_attempt_t *a, uint32_t *ticket); /* false = busy, nothing changed */
+void ru_wifi_attempt_on_state(ru_wifi_attempt_t *a, ru_wifi_state_t to); /* feed every SM state change */
+ru_wifi_att_state_t ru_wifi_attempt_poll(const ru_wifi_attempt_t *a, uint32_t ticket); /* IDLE for a stale ticket */
+void ru_wifi_attempt_abort(ru_wifi_attempt_t *a, uint32_t ticket); /* waiter's budget ran out: PENDING -> FAILED */

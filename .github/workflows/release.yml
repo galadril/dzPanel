@@ -103,7 +103,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: tools/vendor_esp_web_tools.sh
+      - run: bash tools/vendor_esp_web_tools.sh
       - uses: actions/upload-artifact@v4
         with:
           name: esp-web-tools
@@ -150,7 +150,7 @@ jobs:
           set -euo pipefail
           for d in artifacts/firmware-*; do
             board="${d#artifacts/firmware-}"
-            tools/publish_site.sh --site site-out --board "$board" --channel "$CHANNEL" --version "$VERSION" \
+            bash tools/publish_site.sh --site site-out --board "$board" --channel "$CHANNEL" --version "$VERSION" \
               --merged "$d/roundos-${board}-${VERSION}-merged.bin" --vendor vendor --keep 5 --date "$(date -u +%F)"
           done
           touch site-out/.nojekyll

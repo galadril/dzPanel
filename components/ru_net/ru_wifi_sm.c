@@ -114,3 +114,25 @@ uint32_t ru_wifi_sm_ms_until_due(const ru_wifi_sm_t *sm, uint32_t now) {
   int32_t d = (int32_t)(sm->due_ms - now);
   return d > 0 ? (uint32_t)d : 0;
 }
+
+bool ru_wifi_attempt_begin(ru_wifi_attempt_t *a, uint32_t *ticket) {
+  if (a->st == RU_WIFI_ATT_PENDING) return false;
+  a->ticket++;
+  a->st = RU_WIFI_ATT_PENDING;
+  if (ticket) *ticket = a->ticket;
+  return true;
+}
+
+void ru_wifi_attempt_on_state(ru_wifi_attempt_t *a, ru_wifi_state_t to) {
+  if (a->st != RU_WIFI_ATT_PENDING) return; /* final already: the revert's CONNECTED is not ours */
+  if (to == RU_WIFI_CONNECTED) a->st = RU_WIFI_ATT_OK;
+  else if (to == RU_WIFI_FAILED || to == RU_WIFI_AP_REQUESTED) a->st = RU_WIFI_ATT_FAILED;
+}
+
+ru_wifi_att_state_t ru_wifi_attempt_poll(const ru_wifi_attempt_t *a, uint32_t ticket) {
+  return a->ticket == ticket ? a->st : RU_WIFI_ATT_IDLE;
+}
+
+void ru_wifi_attempt_abort(ru_wifi_attempt_t *a, uint32_t ticket) {
+  if (a->ticket == ticket && a->st == RU_WIFI_ATT_PENDING) a->st = RU_WIFI_ATT_FAILED;
+}

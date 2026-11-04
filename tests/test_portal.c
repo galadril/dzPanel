@@ -908,6 +908,100 @@ static void test_portal_fuzz(void) {
   CHECK(!strstr(LOG, "TOKENMARKER"));
 }
 
+/* ============================ review findings: guard, wifi validation, busy ============================ */
+static void test_guard(void) {
+  const char *ap = "192.168.4.1";
+  /* good */
+  CHECK(ru_portal_guard(ap, "192.168.4.1", "192.168.4.1", false) == RU_GUARD_ALLOW);
+  CHECK(ru_portal_guard(ap, "192.168.4.1", "192.168.4.1", true) == RU_GUARD_ALLOW);
+  CHECK(ru_portal_guard(ap, "192.168.4.1", "192.168.4.1:80", true) == RU_GUARD_ALLOW);
+  /* request that arrived on the home-network address: refused whatever Host says */
+  const char *locals[] = {"192.168.1.20", "10.0.0.5", "127.0.0.1", "0.0.0.0", "", "192.168.4.2", "192.168.4.10", "192.168.4.1.", " 192.168.4.1",
+                          "::ffff:192.168.4.1", "[::ffff:192.168.4.1]", "::1", "192.168.4.1:80", "192.168.004.001"};
+  for (size_t i = 0; i < sizeof locals / sizeof *locals; i++) {
+    CHECK(ru_portal_guard(ap, locals[i], "192.168.4.1", false) == RU_GUARD_FORBIDDEN);
+    CHECK(ru_portal_guard(ap, locals[i], "192.168.1.20", true) == RU_GUARD_FORBIDDEN);
+  }
+  CHECK(ru_portal_guard(ap, NULL, "192.168.4.1", false) == RU_GUARD_FORBIDDEN);
+  CHECK(ru_portal_guard(NULL, "192.168.4.1", "192.168.4.1", false) == RU_GUARD_FORBIDDEN);
+  CHECK(ru_portal_guard("", "", "", false) == RU_GUARD_FORBIDDEN);
+  /* missing Host */
+  CHECK(ru_portal_guard(ap, "192.168.4.1", NULL, false) == RU_GUARD_BAD_REQUEST);
+  CHECK(ru_portal_guard(ap, "192.168.4.1", "", true) == RU_GUARD_BAD_REQUEST);
+  /* wrong Host, port variants, rebinding names, mapped forms: never ALLOW; GET is redirected, POST refused */
+  const char *hosts[] = {"evil.example", "192.168.4.1.evil.example", "evil.example:80", "192.168.4.1:8080", "192.168.4.1:", "192.168.4.1:0080", "192.168.4.1:80:80",
+                         "192.168.4.1.", "192.168.4.10", "192.168.4.11", "192.168.4.", " 192.168.4.1", "192.168.4.1 ", "192.168.4.1\t", "192.168.4.1@evil.example",
+                         "evil.example@192.168.4.1", "evil.example#192.168.4.1", "evil.example/192.168.4.1", "[::ffff:192.168.4.1]", "[::ffff:c0a8:401]", "::ffff:192.168.4.1",
+                         "localhost", "127.0.0.1", "192.168.1.20", "0xc0a80401", "3232236545", "192.168.004.001", "192.168.4.1,evil.example", "192.168.4.1%00.evil.example",
+                         "connectivitycheck.gstatic.com", "-", "192.168.4.1\r\nX: y", "192.168.4.1:80 ", "192.168.4.1:800"};
+  for (size_t i = 0; i < sizeof hosts / sizeof *hosts; i++) {
+    CHECK(ru_portal_guard(ap, "192.168.4.1", hosts[i], false) == RU_GUARD_REDIRECT);
+    CHECK(ru_portal_guard(ap, "192.168.4.1", hosts[i], true) == RU_GUARD_BAD_REQUEST);
+  }
+  /* a custom AP address works the same way */
+  CHECK(ru_portal_guard("10.1.2.1", "10.1.2.1", "10.1.2.1", false) == RU_GUARD_ALLOW && ru_portal_guard("10.1.2.1", "10.1.2.1", "192.168.4.1", false) == RU_GUARD_REDIRECT);
+}
+
+static bool busy_flag;
+static bool cb_busy(void *u) { (void)u; return busy_flag; }
+static void test_wifi_validation_and_busy(void) {
+  char csrf[64];
+  /* portal validates exactly like the USB path: 64 non-hex, non-ASCII, control bytes and bad SSIDs never reach the join */
+  char p64[80];
+  memset(p64, 'z', 64); p64[64] = 0;
+  const char *bad[] = {p64, "p%C3%A4ssw%C3%B6rd1", "%FF%FE%FD%FC%FB%FA%F9%F8", "pass%01word", "pass%7Fword"};
+  ru_portal_cfg_t cfg0 = {0};
+  cfg0.max_failures = 50;
+  setup(&cfg0);
+  started();
+  req(RU_HTTP_GET, "/", NULL, 1, 2000);
+  page_csrf(csrf, sizeof csrf);
+  for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
+    post_wifi(csrf, "Home", "", bad[i], 1, 2100 + (uint32_t)i);
+    CHECK(RS.status == 200 && strstr(BODY, "not valid") && join_calls == 0);
+  }
+  post_wifi(csrf, "%C3%28bad", "", WIFIPW, 1, 2200); /* invalid UTF-8 in the SSID */
+  CHECK(RS.status == 200 && strstr(BODY, "not valid") && join_calls == 0);
+  /* a real 64-hex PSK and an ASCII passphrase still pass */
+  char hex[80];
+  memset(hex, 'a', 64); hex[64] = 0;
+  post_wifi(csrf, "Home", "", hex, 1, 2300);
+  CHECK(RS.status == 303 && join_calls == 1);
+  /* the same inputs on the USB path */
+  {
+    ru_cfgline_ops_t ops = {0};
+    char r[RU_CFGLINE_REPLY_MAX], j[200];
+    ru_kv_mem_t kv;
+    ru_kv_mem_init(&kv);
+    snprintf(j, sizeof j, "{\"v\":1,\"wifi\":{\"ssid\":\"Home\",\"password\":\"%s\"}}", p64);
+    ru_cfgline_handle(&kv.base, &ops, j, strlen(j), r, sizeof r);
+    CHECK(!strcmp(r, "RU+CFG ERR bad_wifi"));
+    snprintf(j, sizeof j, "{\"v\":1,\"wifi\":{\"ssid\":\"Home\",\"password\":\"p\xc3\xa4ssw\xc3\xb6rd1\"}}");
+    ru_cfgline_handle(&kv.base, &ops, j, strlen(j), r, sizeof r);
+    CHECK(!strcmp(r, "RU+CFG ERR bad_wifi"));
+  }
+  /* busy: a refused join says so, is not a lockout strike, and a later attempt can still succeed */
+  ru_portal_cfg_t cfg = {0};
+  cfg.max_failures = 2;
+  setup(&cfg);
+  P.ops.wifi_busy = cb_busy;
+  started();
+  req(RU_HTTP_GET, "/", NULL, 1, 2000);
+  page_csrf(csrf, sizeof csrf);
+  join_ok = false;
+  busy_flag = true;
+  for (int i = 0; i < 4; i++) {
+    post_wifi(csrf, "Home", "", WIFIPW, 1, 2100 + (uint32_t)i);
+    CHECK(RS.status == 200 && strstr(BODY, "still busy") && !strstr(BODY, "could not join") && !P.locked);
+  }
+  busy_flag = false;
+  post_wifi(csrf, "Home", "", WIFIPW, 1, 2200);
+  CHECK(RS.status == 200 && strstr(BODY, "could not join") && P.failures == 1); /* an ordinary failure still counts */
+  join_ok = true;
+  post_wifi(csrf, "Home", "", WIFIPW, 1, 2300);
+  CHECK(RS.status == 303);
+}
+
 int main(void) {
   test_http_basic();
   test_http_truncation();
@@ -929,5 +1023,7 @@ int main(void) {
   test_probes_and_status();
   test_full_scan_page_fits();
   test_portal_fuzz();
+  test_guard();
+  test_wifi_validation_and_busy();
   MT_DONE();
 }

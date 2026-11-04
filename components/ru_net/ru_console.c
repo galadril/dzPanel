@@ -29,6 +29,7 @@ static void byte(ru_console_t *c, uint8_t b) {
         }
         return;
       case S_IMPROV: {
+        if (!c->improv) { c->st = S_IDLE; continue; } /* detached mid-packet: this byte starts over in IDLE */
         ru_improv_feed_t r = ru_improv_feed(c->improv, b);
         if (r == RU_IMPROV_MORE) return;
         c->st = S_IDLE;

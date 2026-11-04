@@ -15,7 +15,7 @@ t('version order', () => {
 });
 
 const sha = 'a'.repeat(64);
-const E = (o) => ({ board: 'amoled-175', channel: 'stable', version: '1.0.0', manifest: 'fw/m.json', file: 'fw/a-merged.bin', sha256: sha, size: 1, ...o });
+const E = (o) => ({ board: 'amoled-175', channel: 'stable', version: '1.0.0', manifest: 'firmware/amoled-175/stable/1.0.0/manifest.json', file: 'firmware/amoled-175/stable/1.0.0/a-merged.bin', sha256: sha, size: 1, ...o });
 t('pick latest per board and channel', () => {
   const doc = { schema: 1, builds: [E({ version: '1.0.0' }), E({ version: '1.1.0' }), E({ version: '2.0.0', channel: 'nightly' }), E({ version: '9.0.0', board: 'amoled-216' })] };
   assert.equal(pickBuild(doc, 'amoled-175', 'stable').version, '1.1.0');
@@ -31,6 +31,20 @@ t('versions.json cannot redirect the flasher off-site', () => {
   assert.equal(validateVersions({ schema: 1, builds: [E({ sha256: 'xyz' })] }).ok, false);
   assert.equal(validateVersions({ schema: 2, builds: [] }).ok, false);
   assert.equal(validateVersions(null).ok, false);
+});
+
+t('same-origin bypass strings are refused', () => {
+  const bypass = ['/\\evil.example/fw.bin', '\\\\evil.example/x', ' //evil.example/x', '/\t/evil.example/x', '\n//evil.example/x', '/\n/evil.example/x',
+    '\\/evil.example/x', '/\\/evil.example/x', '//evil.example/x', 'firmware/\\evil.example/x', 'firmware/amoled-175/stable/1.0.0/..%2f..%2fx.bin',
+    '%2e%2e/%2e%2e/x', 'firmware/%2e%2e/%2e%2e/x.bin', 'firmware/amoled-175/stable/%2e%2e/x.bin', 'firmware/amoled-175/stable/1.0.0/%2e%2e', 'firmware/amoled-175/stable/1.0.0/a.bin\t',
+    ' firmware/amoled-175/stable/1.0.0/a.bin', 'firmware/amoled-175/stable/1.0.0/a.bin?x=1', 'firmware/amoled-175/stable/1.0.0/a.bin#x', 'firmware/amoled-175/stable/1.0.0/../../../x.bin',
+    '/firmware/amoled-175/stable/1.0.0/a.bin', 'http:evil.example/x', 'HTTPS://evil.example/x', 'fw/a.bin', 'firmware/amoled-175/beta/1.0.0/a.bin', 'firmware/amoled-216/stable/1.0.0/a.bin', ''];
+  for (const bad of bypass) for (const k of ['file', 'manifest'])
+    assert.equal(validateVersions({ schema: 1, builds: [E({ [k]: bad })] }).ok, false, JSON.stringify(bad));
+  assert.equal(validateVersions({ schema: 1, builds: [E({ file: 5 })] }).ok, false);
+  // the accepted shape resolves to the page origin under any base
+  for (const base of ['https://installer.invalid/', 'http://localhost/'])
+    assert.equal(new URL(E().file, base).origin, new URL(base).origin);
 });
 
 t('esptool fallback command', () => {
@@ -168,6 +182,7 @@ t('wifi replies: fixed text, never raw device text', () => {
   assert.match(d('RU+CFG ERR bad_wifi'), /Wi-Fi details as invalid/);
   assert.match(d('RU+CFG ERR wifi_failed'), /could not join/);
   assert.match(d('RU+CFG ERR wifi_failed no_ap'), /could not find/);
+  assert.match(d('RU+CFG ERR wifi_failed busy'), /busy with another/);
   assert.match(d('RU+CFG ERR wifi_failed auth'), /password is probably wrong/);
   assert.match(d('RU+CFG ERR wifi_failed timeout'), /address/);
   assert.match(d('RU+CFG ERR token_rejected wifi_saved'), /^The Wi-Fi network was joined and saved\. Domoticz rejected/);

@@ -1,6 +1,6 @@
 // DOM glue for the installer. All logic that can be tested lives in lib.js.
 // Rules: textContent only (never innerHTML), same-origin fetches only, the token never reaches a log or status line.
-import { BOARDS, validateVersions, pickBuild, esptoolCommand, validateSetup, inspectToken, buildCfgLine, parseCfgReply, describeReply } from './lib.js';
+import { BOARDS, validateVersions, sameOriginPath, pickBuild, esptoolCommand, validateSetup, inspectToken, buildCfgLine, parseCfgReply, describeReply } from './lib.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { board: BOARDS[0].id, channel: 'stable', versions: null, build: null };
@@ -31,6 +31,7 @@ async function loadVersions() {
   try {
     const r = await fetch('versions.json', { cache: 'no-cache', credentials: 'omit' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (r.url && new URL(r.url).origin !== location.origin) throw new Error('unexpected redirect'); // same origin only
     const doc = await r.json();
     const v = validateVersions(doc);
     if (!v.ok) throw new Error(v.error);
@@ -53,6 +54,12 @@ function update() {
     return;
   }
   const b = state.build;
+  // belt and braces: refuse to link or flash anything that does not resolve to this origin
+  if (![b.manifest, b.file].every((p) => sameOriginPath(p) && new URL(p, location.href).origin === location.origin)) {
+    state.build = null;
+    $('version-info').textContent = 'The version list points outside this site. Refusing to offer it.';
+    return;
+  }
   $('version-info').textContent = `Version ${b.version}${b.date ? ` (${b.date})` : ''}, ${(b.size / 1048576).toFixed(1)} MB`;
   $('sha').textContent = `SHA-256 ${b.sha256}`;
   $('bin-link').href = b.file;

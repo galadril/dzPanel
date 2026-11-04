@@ -44,6 +44,9 @@ typedef struct {
   ru_cfgline_ops_t cfg;                  /* .test = connection test (dz_service_cfgline_test), .saved optional */
   void (*log)(void *user, const char *msg); /* optional; fixed strings only, never any user data */
   void *user;                            /* passed to every callback except cfg.* (those use cfg.user) */
+  /* Optional, added last. Asked right after wifi_join returned false: true = it refused because another Wi-Fi attempt is
+   * pending (nothing was tried), so the page says "busy" instead of "check the password" and no strike is counted. */
+  bool (*wifi_busy)(void *user);
 } ru_portal_ops_t;
 
 typedef struct { /* zero fields mean the default in brackets */

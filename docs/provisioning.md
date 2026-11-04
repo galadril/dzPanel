@@ -77,7 +77,7 @@ device -> RU+CFG ERR <code> [detail]\n
 | `token_rejected` | HTTP 401 or 403 |
 | `no_wifi` | Wi-Fi not set up yet (send the `wifi` block, or use Improv) |
 | `bad_wifi` | The `wifi` block is invalid (missing or empty `ssid`, missing `password`, rules below). Rejected before any network use |
-| `wifi_failed` | The device could not join the network within about 20 s; nothing was changed and the previous Wi-Fi (if any) is back. Detail `no_ap` (network not found), `auth` (rejected, usually a wrong password) or `timeout` (no address in time) when the driver reports it; no detail otherwise. The Domoticz part was not attempted |
+| `wifi_failed` | The device could not join the network within about 20 s; nothing was changed and the previous Wi-Fi (if any) is back. Detail `no_ap` (network not found), `auth` (rejected, usually a wrong password) or `timeout` (no address in time) or `busy` (another join, e.g. from the setup page, is still running; nothing was started) when the driver reports it; no detail otherwise. The Domoticz part was not attempted |
 | `store` | The settings were valid but could not be written to storage |
 
 ### Optional `wifi` block (version 1, backward compatible)
@@ -97,7 +97,7 @@ Replies with a Wi-Fi block:
 |---|---|
 | `RU+CFG OK wifi_saved` | `wifi` alone, joined and saved |
 | `RU+CFG OK wifi_saved saved [info]` / `RU+CFG OK wifi_saved saved untested` | both, everything worked (or `force` saved an unreachable server) |
-| `RU+CFG ERR wifi_failed [no_ap\|auth\|timeout]` | the join failed; Domoticz not attempted, nothing saved |
+| `RU+CFG ERR wifi_failed [no_ap\|auth\|timeout\|busy]` | the join failed; Domoticz not attempted, nothing saved |
 | `RU+CFG ERR <domoticz code> [detail] wifi_saved` | Wi-Fi worked and **stays saved** (it worked), the Domoticz step failed with that existing code; the trailing `wifi_saved` says so |
 | `RU+CFG ERR store` | the join worked but the credentials could not be stored (Wi-Fi not kept) |
 

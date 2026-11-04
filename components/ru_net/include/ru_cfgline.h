@@ -37,7 +37,8 @@ typedef enum {
   RU_WIFI_APPLY_AUTH,   /* rejected: wrong password or security mode */
   RU_WIFI_APPLY_TIMEOUT,/* no answer within the budget */
   RU_WIFI_APPLY_FAILED, /* joined nothing, reason unknown (also: no Wi-Fi driver) */
-  RU_WIFI_APPLY_STORE   /* joined, but the credentials could not be stored */
+  RU_WIFI_APPLY_STORE,  /* joined, but the credentials could not be stored */
+  RU_WIFI_APPLY_BUSY    /* another attempt is still running: nothing was started, nothing changed */
 } ru_wifi_apply_t;
 
 typedef struct {

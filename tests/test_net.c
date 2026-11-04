@@ -212,7 +212,7 @@ static void test_cfgline_wifi(void) {
   /* Wi-Fi failures: exact codes, details only where the driver knows, Domoticz untouched, nothing saved */
   struct { ru_wifi_apply_t w; const char *want; } wc[] = {
       {RU_WIFI_APPLY_NO_AP, "RU+CFG ERR wifi_failed no_ap"}, {RU_WIFI_APPLY_AUTH, "RU+CFG ERR wifi_failed auth"},
-      {RU_WIFI_APPLY_TIMEOUT, "RU+CFG ERR wifi_failed timeout"}, {RU_WIFI_APPLY_FAILED, "RU+CFG ERR wifi_failed"},
+      {RU_WIFI_APPLY_TIMEOUT, "RU+CFG ERR wifi_failed timeout"}, {RU_WIFI_APPLY_BUSY, "RU+CFG ERR wifi_failed busy"}, {RU_WIFI_APPLY_FAILED, "RU+CFG ERR wifi_failed"},
       {RU_WIFI_APPLY_STORE, "RU+CFG ERR store"}};
   for (size_t i = 0; i < sizeof wc / sizeof *wc; i++) {
     for (int both = 0; both < 2; both++) {
@@ -802,6 +802,104 @@ static void test_wifi(void) {
   CHECK(sm.state == RU_WIFI_IDLE);
 }
 
+/* review findings 3 and 4: detaching improv mid-packet must not crash; secrets must not linger in the Improv buffer */
+static size_t wifi_pkt(uint8_t *o, const char *ssid, const char *pass) {
+  uint8_t d[200];
+  size_t sl = strlen(ssid), pl = strlen(pass), k = 0;
+  d[k++] = (uint8_t)sl; memcpy(d + k, ssid, sl); k += sl;
+  d[k++] = (uint8_t)pl; memcpy(d + k, pass, pl); k += pl;
+  return rpc(o, 1, d, k);
+}
+static void test_review_3_4(void) {
+  uint8_t pk[300];
+  /* 3: improv pointer cleared in the middle of a packet (what console_task did) */
+  con_setup();
+  cfs("IMP");
+  CON.improv = NULL;
+  cfs("R");
+  CHECK(nlines == 0);
+  cfs("RU+CFG {\"a\":1}\n"); /* a line still parses after the detach */
+  CHECK(nlines == 1 && !strcmp(lines[0], "{\"a\":1}"));
+  con_setup();
+  cfs("IMPROV\x01");
+  CON.improv = NULL;
+  cfs("\x03RU+CFG {\"b\":2}\n");
+  CHECK(nlines == 1 && !strcmp(lines[0], "{\"b\":2}"));
+  /* detached then re-attached: the stale partial packet was dropped by the console, a fresh packet works */
+  CON.improv = &CIM;
+  ru_improv_reset(&CIM);
+  { size_t n = rpc(pk, 2, NULL, 0); int d = 0, nm = 0; E.frames = 0; feed_all(&CIM, pk, n, &d, &nm); CHECK(d == 1 && E.frames == 1); }
+
+  /* 4: after a set-wifi packet, no copy of the password stays anywhere in the improv struct */
+  static const char PW[] = "hunter2-Secret-PW-9";
+  ru_improv_t im;
+  imp_setup(&im, true);
+  { size_t n = wifi_pkt(pk, "HomeNet", PW); int d = 0, nm = 0; feed_all(&im, pk, n, &d, &nm); CHECK(d == 1 && E.connects == 1 && !strcmp(E.pass, PW)); }
+  CHECK(!memmem(&im, sizeof im, PW, 8) && !memmem(&im, sizeof im, "HomeNet", 7));
+  /* bad checksum packet carrying a password is wiped too */
+  imp_setup(&im, true);
+  { size_t n = wifi_pkt(pk, "HomeNet", PW); pk[n - 1] ^= 0x55; int d = 0, nm = 0; feed_all(&im, pk, n, &d, &nm); CHECK(d == 1 && E.connects == 0); }
+  CHECK(!memmem(&im, sizeof im, PW, 8));
+  /* parse failure (embedded NUL in the password) */
+  imp_setup(&im, true);
+  { char bad[] = "hunter2\0tail-Secret"; uint8_t d[64]; size_t k = 0; d[k++] = 4; memcpy(d + k, "Home", 4); k += 4; d[k++] = (uint8_t)(sizeof bad - 1); memcpy(d + k, bad, sizeof bad - 1); k += sizeof bad - 1;
+    size_t n = rpc(pk, 1, d, k); int dn = 0, nm = 0; feed_all(&im, pk, n, &dn, &nm); CHECK(dn == 1 && E.connects == 0); }
+  CHECK(!memmem(&im, sizeof im, "tail-Secret", 8));
+  /* idle timeout drops a partial set-wifi packet: its bytes are wiped */
+  imp_setup(&im, true);
+  { size_t n = wifi_pkt(pk, "HomeNet", PW); int d = 0, nm = 0; feed_all(&im, pk, n - 3, &d, &nm); CHECK(d == 0 && memmem(&im, sizeof im, PW, 8)); }
+  ru_improv_reset(&im);
+  CHECK(!memmem(&im, sizeof im, PW, 8));
+  /* RU+CFG line through the console: line buffer zero afterwards */
+  con_setup();
+  cfs("RU+CFG {\"token\":\"TOKTOKTOKTOK\"}\n");
+  { bool z = true; for (size_t i = 0; i < sizeof CON.line; i++) if (CON.line[i]) z = false; CHECK(nlines == 1 && z); }
+}
+
+/* review finding 2: one attempt at a time; a wrong password then the revert is a failure, never a success */
+static ru_wifi_attempt_t ATT;
+static void att_state(void *u, ru_wifi_state_t from, ru_wifi_state_t to) { (void)u; (void)from; ru_wifi_attempt_on_state(&ATT, to); }
+static void att_nop(void *u) { (void)u; }
+static void test_wifi_attempt(void) {
+  ru_wifi_sm_t sm;
+  ru_wifi_sm_cfg_t c = {0};
+  ru_wifi_sm_ops_t o = {att_nop, att_nop, att_nop, att_state, NULL};
+  ru_wifi_sm_init(&sm, &c, &o);
+  memset(&ATT, 0, sizeof ATT);
+  ru_wifi_sm_start(&sm, true, 0);
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CONNECTED, 0, 10); /* old network up */
+  uint32_t t1 = 0, t2 = 0;
+  CHECK(ru_wifi_attempt_begin(&ATT, &t1));
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CREDS, 0, 100); /* new credentials: CONNECTING */
+  CHECK(ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_PENDING);
+  /* a second attempt while one is pending is refused and changes nothing */
+  CHECK(!ru_wifi_attempt_begin(&ATT, &t2) && ATT.ticket == t1 && ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_PENDING);
+  /* wrong password: one failure -> FAILED */
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_DISCONNECTED, 15, 2000);
+  CHECK(sm.state == RU_WIFI_FAILED && ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_FAILED);
+  /* the manager reverts to the OLD network, which connects: that is NOT the new network's success */
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CREDS, 0, 2100);
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CONNECTED, 0, 2500);
+  CHECK(sm.state == RU_WIFI_CONNECTED && ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_FAILED);
+  /* a new attempt after the first finished gets a new ticket; the first waiter never sees the second's result */
+  CHECK(ru_wifi_attempt_begin(&ATT, &t2) && t2 != t1);
+  CHECK(ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_IDLE && ru_wifi_attempt_poll(&ATT, t2) == RU_WIFI_ATT_PENDING);
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CREDS, 0, 3000);
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CONNECTED, 0, 3500);
+  CHECK(ru_wifi_attempt_poll(&ATT, t2) == RU_WIFI_ATT_OK && ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_IDLE);
+  /* abort with a stale ticket does nothing; with the live ticket it fails a pending attempt only */
+  uint32_t t3;
+  CHECK(ru_wifi_attempt_begin(&ATT, &t3));
+  ru_wifi_attempt_abort(&ATT, t2);
+  CHECK(ru_wifi_attempt_poll(&ATT, t3) == RU_WIFI_ATT_PENDING);
+  ru_wifi_attempt_abort(&ATT, t3);
+  CHECK(ru_wifi_attempt_poll(&ATT, t3) == RU_WIFI_ATT_FAILED);
+  /* the SM's own AP_REQUESTED also ends a pending attempt as failed */
+  CHECK(ru_wifi_attempt_begin(&ATT, &t3));
+  ru_wifi_attempt_on_state(&ATT, RU_WIFI_AP_REQUESTED);
+  CHECK(ru_wifi_attempt_poll(&ATT, t3) == RU_WIFI_ATT_FAILED);
+}
+
 int main(void) {
   test_cfgline();
   test_cfgline_fuzz();
@@ -809,6 +907,8 @@ int main(void) {
   test_cfgline_wifi_fuzz();
   test_improv();
   test_console();
+  test_review_3_4();
   test_wifi();
+  test_wifi_attempt();
   MT_DONE();
 }

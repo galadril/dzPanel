@@ -11,3 +11,8 @@ firmware/managed_components/
 firmware/sdkconfig.old
 dist/
 /.vs
+
+# Claude Code personal files (added by claudebox)
+.claude/settings.local.json
+CLAUDE.local.md
+.claude/worktrees/

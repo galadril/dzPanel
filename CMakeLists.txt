@@ -84,7 +84,7 @@ add_test(NAME dz_model COMMAND test_dz_model)
 add_test(NAME dz_client COMMAND test_dz_client)
 add_test(NAME dz_cmd COMMAND test_dz_cmd)
 # integration: starts the Node mock on a private port, runs the C test against it, stops the mock
-add_test(NAME dz_mock COMMAND ${CMAKE_SOURCE_DIR}/tests/run_with_mock.sh $<TARGET_FILE:test_dz_mock>)
+add_test(NAME dz_mock COMMAND bash ${CMAKE_SOURCE_DIR}/tests/run_with_mock.sh $<TARGET_FILE:test_dz_mock>)
 add_test(NAME mock_js COMMAND node ${CMAKE_SOURCE_DIR}/sim/mock/test_mock.js)
 add_executable(dz_live_check tests/dz_live_check.c)
 target_link_libraries(dz_live_check int_domoticz ru_data ru_core)
@@ -115,7 +115,7 @@ add_test(NAME dz_service COMMAND test_dz_service)
 add_executable(test_dz_service_mock tests/test_dz_service_mock.c)
 target_include_directories(test_dz_service_mock PRIVATE tests)
 target_link_libraries(test_dz_service_mock int_domoticz ru_data ru_core ru_cfg)
-add_test(NAME dz_service_mock COMMAND ${CMAKE_SOURCE_DIR}/tests/run_with_mock.sh $<TARGET_FILE:test_dz_service_mock>)
+add_test(NAME dz_service_mock COMMAND bash ${CMAKE_SOURCE_DIR}/tests/run_with_mock.sh $<TARGET_FILE:test_dz_service_mock>)
 # ===== END fw-net agent =====
 
 # ===== BEGIN Apps agent (ru_apps_core: command feedback + view model, host-tested without LVGL) =====

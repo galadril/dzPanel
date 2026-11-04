@@ -24,7 +24,7 @@ RoundOS has no cloud service, no account and no telemetry. This page says what s
 
 - A static page. It runs in your browser and talks to your device over USB (Web Serial).
 - The Domoticz address and token you type go **straight to the device over the USB cable**. They are not sent to any server, not stored by the page, and the token field is cleared after sending.
-- It fetches firmware and version files from its own origin only (`versions.json` cannot point it at another host). It loads no analytics, fonts or scripts from a CDN.
+- It fetches firmware and version files from its own origin only (`versions.json` can only name `firmware/<board>/<channel>/<version>/<file>` paths, checked by the page and by the release tooling, so it cannot point it at another host). It loads no analytics, fonts or scripts from a CDN.
 - Token rights are read locally in the browser to warn about Admin tokens. The signature is not checked there.
 
 ## In this repository

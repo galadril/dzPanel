@@ -340,7 +340,7 @@ static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *con
     off += (size_t)w;
   }
   close(in[1]);
-  memset(cfg, 0, sizeof cfg);
+  for (volatile char *z = cfg; z < cfg + sizeof cfg; z++) *z = 0; /* held the token: non-elidable wipe */
 
   /* body followed by "\n<code>"; keep the last 8 bytes aside */
   sink_t sink = {buf, cap, 0, 0};

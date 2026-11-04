@@ -34,6 +34,7 @@ static const char *wifi_detail(ru_wifi_apply_t w) {
     case RU_WIFI_APPLY_NO_AP: return "no_ap";
     case RU_WIFI_APPLY_AUTH: return "auth";
     case RU_WIFI_APPLY_TIMEOUT: return "timeout";
+    case RU_WIFI_APPLY_BUSY: return "busy";
     default: return NULL;
   }
 }

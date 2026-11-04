@@ -35,6 +35,20 @@ export function compareVersions(a, b) {
   return 0;
 }
 
+// The layout tools/make_manifest.py writes: firmware/<board>/<channel>/<version>/<file>. Matching the raw string
+// (no backslash, tab, space, "%", ".." or scheme can match) AND resolving it like a browser does, against two bases,
+// so a parser difference cannot turn a "path" into another host.
+const PATH_RE = /^firmware\/[a-z0-9-]+\/(stable|nightly)\/[0-9A-Za-z.+-]+\/[A-Za-z0-9._-]+$/;
+export function sameOriginPath(p) {
+  if (typeof p !== 'string' || !PATH_RE.test(p) || p.split('/').some((s) => s === '.' || s === '..')) return false;
+  for (const base of ['https://installer.invalid/', 'http://localhost/']) {
+    let u;
+    try { u = new URL(p, base); } catch { return false; }
+    if (u.origin !== new URL(base).origin || u.pathname !== `/${p}` || u.search || u.hash) return false;
+  }
+  return true;
+}
+
 // versions.json: { schema: 1, builds: [{board, channel, version, manifest, file, sha256, size, date}] }
 export function validateVersions(doc) {
   if (!doc || doc.schema !== 1 || !Array.isArray(doc.builds)) return { ok: false, error: 'unsupported versions.json' };
@@ -43,7 +57,7 @@ export function validateVersions(doc) {
     if (!CHANNELS.includes(b.channel) || !parseVersion(b.version)) return { ok: false, error: 'bad entry in versions.json' };
     // same-origin only: never let a metadata file point the flasher at another host
     for (const p of [b.manifest, b.file]) {
-      if (typeof p !== 'string' || /^[a-z][a-z0-9+.-]*:|^\/\/|\.\./i.test(p)) return { ok: false, error: 'unsafe path in versions.json' };
+      if (!sameOriginPath(p) || !p.startsWith(`firmware/${b.board}/${b.channel}/${b.version}/`)) return { ok: false, error: 'unsafe path in versions.json' };
     }
     if (!/^[0-9a-f]{64}$/.test(b.sha256 || '')) return { ok: false, error: 'bad sha256 in versions.json' };
   }
@@ -208,6 +222,7 @@ export function describeReply(r) {
     case 'bad_wifi': return 'The device refused the Wi-Fi details as invalid. Check the network name (at most 32 bytes) and the password (8 to 63 characters, or 64 hex digits).';
     case 'wifi_failed':
       if (/\bno_ap\b/.test(detail)) return 'The device could not find that Wi-Fi network. Check the name and that it is in range. Only 2.4 GHz networks work.';
+      if (/\bbusy\b/.test(detail)) return 'The device is still busy with another Wi-Fi attempt. Wait a moment and try again.';
       if (/\bauth\b/.test(detail)) return 'The Wi-Fi network refused the connection. The password is probably wrong.';
       if (/\btimeout\b/.test(detail)) return 'The device did not get an address from the Wi-Fi network in time. Try again, closer to the router.';
       return 'The device could not join that Wi-Fi network. Check the name and the password. Nothing was changed.';

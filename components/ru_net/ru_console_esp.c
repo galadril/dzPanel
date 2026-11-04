@@ -70,6 +70,7 @@ static void console_task(void *arg) {
         ru_console_feed(&C.con, buf, (size_t)n, now);
         C.con.improv = keep;
       } else ru_console_feed(&C.con, buf, (size_t)n, now);
+      ru_secure_zero(buf, sizeof buf); /* the tail of an RU+CFG line (token) sits here */
     }
     ru_console_tick(&C.con, now);
     int r = C.wifi_result;

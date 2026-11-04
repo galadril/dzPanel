@@ -1,5 +1,6 @@
 #include <string.h>
 
+#include "ru_cfg.h" /* ru_secure_zero */
 #include "ru_kv.h"
 
 bool ru_kv_name_ok(const char *n) {
@@ -83,14 +84,14 @@ static ru_kv_err_t m_erase_key(ru_kv_t *kv, const char *ns, const char *key) {
   if (!ru_kv_name_ok(ns) || !ru_kv_name_ok(key)) return RU_KV_INVALID;
   ru_kv_mem_entry_t *e = find(self(kv), ns, key);
   if (!e) return RU_KV_NOT_FOUND;
-  memset(e, 0, sizeof *e);
+  ru_secure_zero(e, sizeof *e);
   return RU_KV_OK;
 }
 static ru_kv_err_t m_erase_ns(ru_kv_t *kv, const char *ns) {
   if (!ru_kv_name_ok(ns)) return RU_KV_INVALID;
   ru_kv_mem_t *m = self(kv);
   for (int i = 0; i < RU_KV_MEM_MAX_ENTRIES; i++)
-    if (m->e[i].used && !strcmp(m->e[i].ns, ns)) memset(&m->e[i], 0, sizeof m->e[i]);
+    if (m->e[i].used && !strcmp(m->e[i].ns, ns)) ru_secure_zero(&m->e[i], sizeof m->e[i]);
   return RU_KV_OK;
 }
 

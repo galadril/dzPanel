@@ -26,11 +26,11 @@ ru_wifi_state_t ru_wifi_esp_state(void);
 /* Blocking scan (a few seconds), strongest first, de-duplicated by SSID. For Improv ops.wifi_scan. */
 size_t ru_wifi_esp_scan(ru_improv_net_t *out, size_t max);
 /* Try new credentials (Improv set-wifi). Saved only after an IP is obtained; on failure the previous credentials are
- * restored. The outcome is reported through on_provision_result. false = could not start. */
+ * restored. The outcome is reported through on_provision_result. false = could not start, or busy (another attempt is pending). */
 bool ru_wifi_esp_try_new(const char *ssid, const char *pass);
 /* Blocking variant for the RU+CFG line (ru_cfgline_ops_t.wifi_apply): same rules (saved only after an IP, else the previous
  * credentials come back) but the result is returned, not delivered through on_provision_result. Waits at most timeout_ms.
- * Failure reasons come from the driver's disconnect reason; unknown ones map to RU_WIFI_APPLY_FAILED. */
+ * Failure reasons come from the driver's disconnect reason; unknown ones map to RU_WIFI_APPLY_FAILED. RU_WIFI_APPLY_BUSY when another attempt is pending. */
 ru_wifi_apply_t ru_wifi_esp_apply_wait(const char *ssid, const char *pass, uint32_t timeout_ms);
 /* Credentials arrived another way (portal): same as try_new but without the result callback semantics. */
 void ru_wifi_esp_retry(void);  /* user asked to try again / leave AP_REQUESTED */

@@ -20,6 +20,13 @@ jobs:
       - run: cmake --build build -j4
       - run: ctest --test-dir build --output-on-failure
 
+  script-modes:
+    # shell scripts must be committed as mode 100755 (a Windows checkout hides a missing exec bit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git ls-files -s '*.sh' | awk '$1 != "100755"{print; bad=1} END{exit bad}'
+
   site:
     runs-on: ubuntu-latest
     steps:
@@ -36,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
-      - run: tools/fetch_vendor.sh
+      - run: bash tools/fetch_vendor.sh
       - run: cmake -S . -B build-sim -DRU_BUILD_SIM=ON
       - run: cmake --build build-sim -j4
       - run: ctest --test-dir build-sim --output-on-failure

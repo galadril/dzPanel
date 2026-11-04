@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ru_cfg.h" /* ru_secure_zero */
+
 enum { T_STATE = 1, T_ERROR = 2, T_RPC = 3, T_RESULT = 4 };
 enum { C_WIFI = 1, C_STATE = 2, C_INFO = 3, C_SCAN = 4 };
 
@@ -116,11 +118,17 @@ static void cmd_wifi(ru_improv_t *im, const uint8_t *p, size_t n) {
   char ssid[RU_IMPROV_SSID_MAX + 1], pass[RU_IMPROV_PASS_MAX + 1];
   if (!im->authorized) { send_error(im, RU_IMPROV_ERR_NOT_AUTHORIZED); return; }
   if (im->state == RU_IMPROV_STATE_PROVISIONING) { send_error(im, RU_IMPROV_ERR_INVALID_RPC); return; }
-  if (!parse_wifi(p, n, ssid, pass)) { send_error(im, RU_IMPROV_ERR_INVALID_RPC); return; }
+  if (!parse_wifi(p, n, ssid, pass)) {
+    ru_secure_zero(ssid, sizeof ssid);
+    ru_secure_zero(pass, sizeof pass);
+    send_error(im, RU_IMPROV_ERR_INVALID_RPC);
+    return;
+  }
   im->state = RU_IMPROV_STATE_PROVISIONING;
   send_state(im);
   bool started = im->ops.wifi_connect && im->ops.wifi_connect(im->ops.user, ssid, pass);
-  memset(pass, 0, sizeof pass);
+  ru_secure_zero(pass, sizeof pass);
+  ru_secure_zero(ssid, sizeof ssid);
   if (!started) ru_improv_wifi_result(im, false);
 }
 
@@ -158,7 +166,10 @@ static void dispatch(ru_improv_t *im) {
   if (had_error && im->errs == errs_before) send_error(im, RU_IMPROV_ERR_NONE);
 }
 
-void ru_improv_reset(ru_improv_t *im) { im->pos = 0; }
+void ru_improv_reset(ru_improv_t *im) {
+  ru_secure_zero(im->buf, sizeof im->buf); /* a partial set-wifi packet may hold the password */
+  im->pos = 0;
+}
 bool ru_improv_in_packet(const ru_improv_t *im) { return im->pos > 0; }
 
 ru_improv_feed_t ru_improv_feed(ru_improv_t *im, uint8_t b) {
@@ -178,6 +189,7 @@ ru_improv_feed_t ru_improv_feed(ru_improv_t *im, uint8_t b) {
   bool ok = sum == im->buf[total - 1];
   if (ok) dispatch(im);
   else { im->bad_packets++; send_error(im, RU_IMPROV_ERR_INVALID_RPC); }
+  ru_secure_zero(im->buf, sizeof im->buf); /* the packet held the raw Wi-Fi password */
   im->pos = 0;
   return RU_IMPROV_DONE;
 }
