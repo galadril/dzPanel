@@ -960,6 +960,7 @@ typedef struct {
   lv_obj_t *hero, *now, *mode, *row, *bead, *btn[2];
   char unit[12];
   float min, max, step;
+  float cur; /* the shown setpoint: exact as given (66.2 stays 66.2), on the step grid only after a drag */
   int steps;
   ru_float_cb_t cb;
   void *ud;
@@ -967,10 +968,10 @@ typedef struct {
 
 static float thermo_value(const thermo_t *t, int i) { return t->min + (float)i * t->step; }
 
-static void thermo_text(thermo_t *t, int i) {
+static void thermo_text(thermo_t *t, float v) {
   char buf[24];
   bool attach = !t->unit[0] || t->unit[0] == '%' || (unsigned char)t->unit[0] == 0xC2;
-  snprintf(buf, sizeof buf, attach ? "%.1f%s" : "%.1f %s", (double)thermo_value(t, i), t->unit);
+  snprintf(buf, sizeof buf, attach ? "%.1f%s" : "%.1f %s", (double)v, t->unit);
   lv_label_set_text(t->hero, buf);
 }
 
@@ -981,21 +982,21 @@ static void thermo_arc(lv_event_t *e) {
   int v = lv_arc_get_value(arc);
   if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
     for (int k = 0; k < GLOW_N; k++) lv_arc_set_value(t->ring.glow[k], v);
-    thermo_text(t, v);
-    if (t->cb) t->cb(box, thermo_value(t, v), false, t->ud);
-  } else if (t->cb) t->cb(box, thermo_value(t, v), true, t->ud);
+    t->cur = thermo_value(t, v);
+    thermo_text(t, t->cur);
+    if (t->cb) t->cb(box, t->cur, false, t->ud);
+  } else if (t->cb) t->cb(box, t->cur, true, t->ud);
 }
 
 static void thermo_btn(lv_event_t *e) {
   lv_obj_t *btn = lv_event_get_target(e);
   lv_obj_t *box = lv_obj_get_parent(btn);
   thermo_t *t = wd_get(box);
-  int v = lv_arc_get_value(t->ring.arc) + (int)(intptr_t)lv_event_get_user_data(e);
-  if (v < 0) v = 0;
-  if (v > t->steps) v = t->steps;
-  ring_set(&t->ring, v);
-  thermo_text(t, v);
-  if (t->cb) t->cb(box, thermo_value(t, v), true, t->ud);
+  float nv = clampf(t->cur + (float)(intptr_t)lv_event_get_user_data(e) * t->step, t->min, t->max);
+  ring_set(&t->ring, (int)lroundf((nv - t->min) / t->step));
+  t->cur = nv;
+  thermo_text(t, nv);
+  if (t->cb) t->cb(box, nv, true, t->ud);
 }
 
 static void thermo_place_bead(thermo_t *t, float cur) {
@@ -1059,14 +1060,14 @@ lv_obj_t *ru_thermostat_create(lv_obj_t *parent, int d, float min, float max, fl
 
 void ru_thermostat_set_setpoint(lv_obj_t *box, float sp) {
   thermo_t *t = wd_get(box);
-  int i = (int)lroundf((clampf(sp, t->min, t->max) - t->min) / t->step);
-  ring_set(&t->ring, i);
-  thermo_text(t, i);
+  t->cur = clampf(sp, t->min, t->max);
+  ring_set(&t->ring, (int)lroundf((t->cur - t->min) / t->step));
+  thermo_text(t, t->cur);
 }
 
 float ru_thermostat_get_setpoint(const lv_obj_t *box) {
   thermo_t *t = wd_get(box);
-  return thermo_value(t, lv_arc_get_value(t->ring.arc));
+  return t->cur;
 }
 
 void ru_thermostat_set_current(lv_obj_t *box, const ru_val_t *cur, uint32_t now_ms) {
@@ -1209,6 +1210,7 @@ lv_obj_t *ru_state_tile_create(lv_obj_t *parent, int w, int h, const char *name)
   s->name = ru_label_new(o, name, ru_font_body(), t->text, w / 2, h * 60 / 100);
   lv_label_set_long_mode(s->name, LV_LABEL_LONG_DOT);
   lv_obj_set_width(s->name, w - ru_u(2));
+  lv_obj_set_height(s->name, lv_font_get_line_height(ru_font_body())); /* one line: cut with dots, never a second line over the sub text */
   lv_obj_set_style_text_align(s->name, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(s->name, LV_ALIGN_CENTER, 0, h * 60 / 100 - h / 2);
   s->sub = ru_label_new(o, "--", ru_font_small(), t->text_dim, w / 2, h * 83 / 100);
@@ -1243,7 +1245,13 @@ void ru_state_tile_set_value(lv_obj_t *o, const char *text) {
   stile_t *s = wd_get(o);
   lv_label_set_text(s->val, text);
   /* long values (text sensors) drop to the body font so they fit the tile */
-  lv_obj_set_style_text_font(s->val, strlen(text) > 5 ? ru_font_body() : ru_font_title(), 0);
+  const lv_font_t *f = strlen(text) > 5 ? ru_font_body() : ru_font_title();
+  int room = lv_obj_get_width(o) - ru_u(2); /* same as the label width set at creation */
+  lv_point_t sz;
+  lv_text_get_size(&sz, text, f, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  if (sz.x > room) f = ru_font_small(); /* two readings ("19.8°C  45%") on one line */
+  lv_obj_set_style_text_font(s->val, f, 0);
+  lv_obj_set_height(s->val, lv_font_get_line_height(f)); /* one line: LONG_DOT cuts with dots instead of wrapping over the name */
   lv_obj_align(s->val, LV_ALIGN_CENTER, 0, lv_obj_get_height(o) * 28 / 100 - lv_obj_get_height(o) / 2);
 }
 

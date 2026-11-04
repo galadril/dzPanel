@@ -33,6 +33,9 @@ static bool replace_once(char **buf, size_t *n, const char *from, const char *to
   return true;
 }
 
+/* NOUNITS only: an install that reports no unit anywhere (no getconfig, and the devices carry no vunit either). */
+static bool g_strip_vunit;
+
 /* Load a fixture file, apply up to two textual Status tweaks (test data only), commit it to the model. */
 static bool apply_file(appfx_t *f, const char *dir, const char *name, dz_commit_t mode, const char *from1, const char *to1,
                        const char *from2, const char *to2) {
@@ -44,6 +47,7 @@ static bool apply_file(appfx_t *f, const char *dir, const char *name, dz_commit_
   bool ok = true;
   if (from1) ok = replace_once(&b, &n, from1, to1);
   if (ok && from2) ok = replace_once(&b, &n, from2, to2);
+  while (ok && g_strip_vunit && replace_once(&b, &n, "\"vunit\"", "\"xunit\"")) {}
   int changed = 0;
   ok = ok && dz_model_apply(&f->model, b, n, mode, f->T, NULL, &changed) == DZ_OK;
   free(b);
@@ -87,8 +91,10 @@ bool appfx_load(appfx_t *f, const char *dir, appfx_set_t set, uint32_t ttl_ms) {
     case APPFX_CLIMATE_IMPERIAL:
     case APPFX_CLIMATE_NOUNITS: {
       bool imp = set == APPFX_CLIMATE_IMPERIAL;
-      if (!apply_file(f, dir, imp ? "mock_climate_imperial.json" : "mock_climate_metric.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL))
-        return false;
+      g_strip_vunit = set == APPFX_CLIMATE_NOUNITS;
+      bool loaded = apply_file(f, dir, imp ? "mock_climate_imperial.json" : "mock_climate_metric.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL);
+      g_strip_vunit = false;
+      if (!loaded) return false;
       if (set != APPFX_CLIMATE_NOUNITS) {
         char path[512];
         size_t n = 0;
@@ -121,7 +127,7 @@ const char *const apps_demo_names[] = {
   "home", "home_connecting", "home_offline", "home_token", "home_stale", "home_empty",
   "devices", "scenes", "scenes_mixed", "energy", "energy_counter", "weather", "settings", "settings_conn", "settings_bright",
   "settings_about",
-  "climate_overview", "climate_temp", "climate_temp_hum_baro", "climate_hum", "climate_wind", "climate_rain", "climate_uv",
+  "home_climate", "home_climate_f", "climate_overview", "climate_temp", "climate_temp_hum_baro", "climate_hum", "climate_wind", "climate_rain", "climate_uv",
   "climate_lux", "climate_air", "climate_value", "climate_text", "climate_unseen", "climate_page_setpoint", "climate_page_mode",
   "climate_temp_f", "climate_wind_f", "climate_nounits", "climate_stale",
   "detail_climate_wind", "detail_thermo6", "detail_setpoint_plan", "detail_setpoint_nonow", "detail_radiator", "detail_evohome",
@@ -174,9 +180,9 @@ static void hold_at(int x, int y, uint32_t ms) {
 }
 
 static appfx_set_t set_for(const char *n) {
-  if (!strcmp(n, "climate_temp_f") || !strcmp(n, "climate_wind_f") || !strcmp(n, "detail_setpoint_f")) return APPFX_CLIMATE_IMPERIAL;
+  if (!strcmp(n, "home_climate_f") || !strcmp(n, "climate_temp_f") || !strcmp(n, "climate_wind_f") || !strcmp(n, "detail_setpoint_f")) return APPFX_CLIMATE_IMPERIAL;
   if (!strcmp(n, "climate_nounits") || !strcmp(n, "detail_setpoint_nounits")) return APPFX_CLIMATE_NOUNITS;
-  if (!strncmp(n, "climate_", 8) || !strcmp(n, "detail_climate_wind") || !strcmp(n, "detail_thermo6") || !strncmp(n, "detail_setpoint", 15) ||
+  if (!strcmp(n, "home_climate") || !strncmp(n, "climate_", 8) || !strcmp(n, "detail_climate_wind") || !strcmp(n, "detail_thermo6") || !strncmp(n, "detail_setpoint", 15) ||
       !strcmp(n, "detail_radiator") || !strcmp(n, "detail_evohome") || !strcmp(n, "detail_mode") || !strcmp(n, "confirm_setpoint") ||
       !strcmp(n, "confirm_mode"))
     return APPFX_CLIMATE_METRIC;

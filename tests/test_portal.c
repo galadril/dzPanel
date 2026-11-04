@@ -926,8 +926,29 @@ static void test_guard(void) {
   CHECK(ru_portal_guard(NULL, "192.168.4.1", "192.168.4.1", false) == RU_GUARD_FORBIDDEN);
   CHECK(ru_portal_guard("", "", "", false) == RU_GUARD_FORBIDDEN);
   /* missing Host */
-  CHECK(ru_portal_guard(ap, "192.168.4.1", NULL, false) == RU_GUARD_BAD_REQUEST);
+  /* GET without Host (HTTP/1.0 captive probes) is redirected, no longer 400; POST without Host stays 400; wrong local address stays 403 */
+  CHECK(ru_portal_guard(ap, "192.168.4.1", NULL, false) == RU_GUARD_REDIRECT);
+  CHECK(ru_portal_guard(ap, "192.168.4.1", "", false) == RU_GUARD_REDIRECT);
   CHECK(ru_portal_guard(ap, "192.168.4.1", "", true) == RU_GUARD_BAD_REQUEST);
+  CHECK(ru_portal_guard(ap, "192.168.4.1", NULL, true) == RU_GUARD_BAD_REQUEST);
+  CHECK(ru_portal_guard(ap, "192.168.1.20", NULL, false) == RU_GUARD_FORBIDDEN);
+  CHECK(ru_portal_guard(ap, "192.168.1.20", "", true) == RU_GUARD_FORBIDDEN);
+  /* glue address helpers */
+  { char o[24]; const uint8_t v4[4] = {192, 168, 4, 1};
+    uint8_t m[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 10, 1, 2, 1}; uint8_t n6[16] = {0}; n6[15] = 1; uint8_t cp[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xfe, 1, 2, 3, 4};
+    ru_portal_local_text(4, v4, o, sizeof o); CHECK(!strcmp(o, "192.168.4.1"));
+    ru_portal_local_text(6, m, o, sizeof o); CHECK(!strcmp(o, "10.1.2.1"));
+    ru_portal_local_text(6, n6, o, sizeof o); CHECK(o[0] == 0);
+    ru_portal_local_text(6, cp, o, sizeof o); CHECK(o[0] == 0);
+    ru_portal_local_text(2, v4, o, sizeof o); CHECK(o[0] == 0);
+    ru_portal_local_text(4, NULL, o, sizeof o); CHECK(o[0] == 0);
+    char tiny[8]; ru_portal_local_text(4, v4, tiny, sizeof tiny); CHECK(strlen(tiny) < sizeof tiny);
+    CHECK(!strcmp(ru_portal_host_arg(100, 48, "x"), "-") && !strcmp(ru_portal_host_arg(48, 48, "x"), "-"));
+    CHECK(!strcmp(ru_portal_host_arg(11, 48, "192.168.4.1"), "192.168.4.1"));
+    CHECK(ru_portal_host_arg(0, 48, "") == NULL && ru_portal_host_arg(5, 48, "") == NULL && ru_portal_host_arg(5, 48, NULL) == NULL);
+    /* an over-long Host is foreign: GET redirects, POST refused (not treated as missing) */
+    CHECK(ru_portal_guard(ap, "192.168.4.1", ru_portal_host_arg(60, 48, ""), true) == RU_GUARD_BAD_REQUEST);
+  }
   /* wrong Host, port variants, rebinding names, mapped forms: never ALLOW; GET is redirected, POST refused */
   const char *hosts[] = {"evil.example", "192.168.4.1.evil.example", "evil.example:80", "192.168.4.1:8080", "192.168.4.1:", "192.168.4.1:0080", "192.168.4.1:80:80",
                          "192.168.4.1.", "192.168.4.10", "192.168.4.11", "192.168.4.", " 192.168.4.1", "192.168.4.1 ", "192.168.4.1\t", "192.168.4.1@evil.example",

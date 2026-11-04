@@ -64,6 +64,9 @@ static void console_task(void *arg) {
     uint32_t now = ru_now_ms();
     if (n > 0) {
       if (!C.improv_on) {
+        /* Parser state is only ever touched by this task (feed, tick, wifi_result and the ops all run here;
+         * ru_console_esp_set_improv only flips the volatile flag), so the wipe below cannot race. */
+        if (ru_improv_in_packet(&C.improv)) ru_improv_reset(&C.improv);
         /* Improv disabled: hide 'I' from the demux by feeding through a console without improv attached */
         ru_improv_t *keep = C.con.improv;
         C.con.improv = NULL;
@@ -72,6 +75,7 @@ static void console_task(void *arg) {
       } else ru_console_feed(&C.con, buf, (size_t)n, now);
       ru_secure_zero(buf, sizeof buf); /* the tail of an RU+CFG line (token) sits here */
     }
+    if (!C.improv_on && ru_improv_in_packet(&C.improv)) ru_improv_reset(&C.improv); /* detached with no more input */
     ru_console_tick(&C.con, now);
     int r = C.wifi_result;
     if (r) { C.wifi_result = 0; ru_improv_wifi_result(&C.improv, r == 1); }

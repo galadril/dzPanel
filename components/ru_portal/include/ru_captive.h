@@ -52,14 +52,19 @@ bool ru_gen_hex(ru_rand_fn rnd, void *user, unsigned n, char *out, size_t cap);
  * The glue reads the LOCAL address of the request socket (getsockname; a v4-mapped IPv6 address is converted to dotted
  * quad first, any other family is passed as "") and the Host header, and acts on this pure decision:
  *   FORBIDDEN    local_ip is not exactly ap_ip (any other interface, "", NULL, "::ffff:..." text): answer 403 and close
- *   BAD_REQUEST  Host missing/empty, or a foreign Host on a POST: 400, nothing processed
- *   REDIRECT     GET with a foreign Host (captive-portal probes such as connectivitycheck.gstatic.com resolve to us):
+ *   BAD_REQUEST  a POST with a missing/empty or foreign Host: 400, nothing processed
+ *   REDIRECT     GET with a foreign, missing or empty Host (captive-portal probes such as connectivitycheck.gstatic.com
+ *                resolve to us; HTTP/1.0 probes send no Host at all):
  *                302 to http://<ap_ip>/ with no body; no page, form or CSRF token is ever served under a foreign name
  *   ALLOW        Host is exactly ap_ip, or ap_ip with ":80"
  * Comparison is exact and case-sensitive on dotted quads: trailing dot, spaces, userinfo, other ports, bracketed IPv6 and
  * names that merely contain the address are all "foreign". */
 typedef enum { RU_GUARD_ALLOW = 0, RU_GUARD_REDIRECT, RU_GUARD_BAD_REQUEST, RU_GUARD_FORBIDDEN } ru_guard_t;
 ru_guard_t ru_portal_guard(const char *ap_ip, const char *local_ip, const char *host, bool is_post);
+/* Glue helpers. local_text: family 4 = addr points at 4 bytes, 6 = 16 bytes (only ::ffff:a.b.c.d is unmapped); anything else
+ * gives "". host_arg: the Host value to pass to the guard: "-" if hdr_len >= cap, the value if non-empty, else NULL (missing). */
+void ru_portal_local_text(int family, const uint8_t *addr, char *out, size_t cap);
+const char *ru_portal_host_arg(size_t hdr_len, size_t cap, const char *value);
 
 /* Constant-time equality of two C strings (length leaks, content does not). */
 bool ru_ct_streq(const char *a, const char *b);

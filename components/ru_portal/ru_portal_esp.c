@@ -106,52 +106,19 @@ static uint32_t peer_id(httpd_req_t *req) {
   struct sockaddr_storage ss;
   socklen_t sl = sizeof ss;
   int fd = httpd_req_to_sockfd(req);
-  if (fd < 0 || getpeername(fd, (struct sockaddr *)&ss, &sl) != 0) return 0;
-  if (ss.ss_family == AF_INET) return ((struct sockaddr_in *)&ss)->sin_addr.s_addr;
-  if (ss.ss_family == AF_INET6) { /* v4-mapped: the last four bytes */
-    uint32_t v;
-    memcpy(&v, ((struct sockaddr_in6 *)&ss)->sin6_addr.s6_addr + 12, 4);
-    return v;
-  }
-  return 0;
-}
-static bool is_form_ct(httpd_req_t *req) {
-  char v[64];
-  if (httpd_req_get_hdr_value_str(req, "Content-Type", v, sizeof v) != ESP_OK) return false;
-  static const char ft[] = "application/x-www-form-urlencoded";
-  if (strlen(v) < sizeof ft - 1) return false;
-  for (size_t i = 0; i < sizeof ft - 1; i++) {
-    char c = v[i];
-    if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
-    if (c != ft[i]) return false;
-  }
-  return v[sizeof ft - 1] == 0 || v[sizeof ft - 1] == ';' || v[sizeof ft - 1] == ' ';
-}
-
-#define BODY_DEADLINE_MS 5000 /* whole body, not per read: slowloris */
-
-/* Local (destination) address of the request socket as dotted quad; v4-mapped IPv6 is unmapped, anything else gives "". */
-static void req_local_ip(httpd_req_t *req, char *out, size_t cap) {
-  struct sockaddr_storage ss;
-  socklen_t sl = sizeof ss;
-  const uint8_t *b = NULL;
-  static const uint8_t mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
-  int fd = httpd_req_to_sockfd(req);
   out[0] = 0;
   if (fd < 0 || getsockname(fd, (struct sockaddr *)&ss, &sl) != 0) return;
-  if (ss.ss_family == AF_INET) b = (const uint8_t *)&((struct sockaddr_in *)&ss)->sin_addr.s_addr;
-  else if (ss.ss_family == AF_INET6 && !memcmp(((struct sockaddr_in6 *)&ss)->sin6_addr.s6_addr, mapped, 12))
-    b = ((struct sockaddr_in6 *)&ss)->sin6_addr.s6_addr + 12;
-  if (b) snprintf(out, cap, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+  if (ss.ss_family == AF_INET) ru_portal_local_text(4, (const uint8_t *)&((struct sockaddr_in *)&ss)->sin_addr.s_addr, out, cap);
+  else if (ss.ss_family == AF_INET6) ru_portal_local_text(6, ((struct sockaddr_in6 *)&ss)->sin6_addr.s6_addr, out, cap);
 }
 
 /* The portal must answer only on the AP address and only under that name (ru_portal_guard, tested on the host). */
 static bool guard_ok(httpd_req_t *req, esp_err_t *rc) {
   char local[24], host[48];
-  const char *h = NULL;
   size_t hl = httpd_req_get_hdr_value_len(req, "Host");
-  if (hl >= sizeof host) h = "-"; /* too long to be ours */
-  else if (hl > 0 && httpd_req_get_hdr_value_str(req, "Host", host, sizeof host) == ESP_OK) h = host;
+  host[0] = 0;
+  if (hl > 0 && hl < sizeof host && httpd_req_get_hdr_value_str(req, "Host", host, sizeof host) != ESP_OK) host[0] = 0;
+  const char *h = ru_portal_host_arg(hl, sizeof host, host);
   req_local_ip(req, local, sizeof local);
   switch (ru_portal_guard(S.P.cfg.ap_ip, local, h, req->method == HTTP_POST)) {
     case RU_GUARD_ALLOW: return true;

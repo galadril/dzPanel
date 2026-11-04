@@ -191,7 +191,7 @@ void ru_cl_build(const dz_device_t *d, const ru_cl_units_t *u, ru_cl_view_t *v) 
       upper(w, sizeof w, d->hum_status);
       if (h) {
         ru_cl_text(h, u, t, sizeof t);
-        if (w[0]) { char c[48]; snprintf(c, sizeof c, "%s  %s", t, w); add_line(v, "HUMIDITY %s", c, "", false); }
+        if (w[0]) { char c[64]; snprintf(c, sizeof c, "%s  %s", t, w); add_line(v, "HUMIDITY %s", c, "", false); }
         else add_line(v, "HUMIDITY %s", t, "", false);
       }
       char fc[24] = "";

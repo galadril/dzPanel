@@ -12,6 +12,8 @@
 
 static const char *TAG = "ru_wifi";
 
+#define TRY_NEW_BUDGET_MS 45000 /* an Improv attempt never stays pending longer than this */
+
 static struct {
   bool started;
   ru_wifi_esp_cfg_t cfg;
@@ -19,6 +21,7 @@ static struct {
   ru_mutex_t *mu;
   ru_wifi_creds_t pending; /* SECRET while an Improv attempt is running */
   bool pending_on;
+  uint32_t ticket; /* ticket of the pending attempt */
   ru_wifi_attempt_t att; /* busy rule and ticket (pure, tested in tests/test_net.c) */
   bool revert;
   bool quiet;       /* a blocking ru_wifi_esp_apply_wait is waiting: report through W.result, not on_provision_result */
@@ -27,6 +30,17 @@ static struct {
   bool connected;
   volatile bool stop;
 } W;
+
+/* Give up the pending attempt (W.mu held): wipe the password, fail the ticket, report once. revert = restore old creds. */
+static void pending_fail(bool revert, int reason) {
+  ru_wifi_creds_wipe(&W.pending);
+  W.pending_on = false;
+  ru_wifi_attempt_abort(&W.att, W.ticket);
+  W.revert = revert; /* re-enter the SM from the task, not from its own callback */
+  W.fail_reason = reason;
+  if (W.quiet) W.result = 3;
+  else if (W.cfg.on_provision_result) W.cfg.on_provision_result(W.cfg.user, false);
+}
 
 /* ---- SM ops (always called with W.mu held) ---- */
 static void op_connect(void *u) {
@@ -68,12 +82,9 @@ static void op_state(void *u, ru_wifi_state_t from, ru_wifi_state_t to) {
       if (W.quiet) W.result = saved ? 1 : 2;
       else if (W.cfg.on_provision_result) W.cfg.on_provision_result(W.cfg.user, saved);
     } else if (to == RU_WIFI_FAILED || to == RU_WIFI_AP_REQUESTED) {
-      ru_wifi_creds_wipe(&W.pending);
-      W.pending_on = false;
-      W.revert = true; /* re-enter the SM from the task, not from its own callback */
-      W.fail_reason = W.sm.last_reason;
-      if (W.quiet) W.result = 3;
-      else if (W.cfg.on_provision_result) W.cfg.on_provision_result(W.cfg.user, false);
+      pending_fail(true, W.sm.last_reason);
+    } else if (to == RU_WIFI_IDLE) { /* credentials cleared under the attempt: nothing to revert to */
+      pending_fail(false, -1);
     }
   }
   if (W.cfg.on_state) W.cfg.on_state(W.cfg.user, from, to);
@@ -99,6 +110,10 @@ static void mgr_task(void *arg) {
   while (!W.stop) {
     ru_mutex_lock(W.mu);
     uint32_t now = ru_now_ms();
+    if (W.pending_on && !W.quiet && ru_wifi_attempt_expired(&W.att, now)) { /* Improv attempt out of time */
+      ESP_LOGW(TAG, "new credentials: attempt timed out");
+      pending_fail(true, -1);
+    }
     if (W.revert) {
       W.revert = false;
       ru_wifi_creds_t c;
@@ -180,7 +195,8 @@ bool ru_wifi_esp_try_new(const char *ssid, const char *pass) {
   if (!W.started || !ru_wifi_creds_valid(ssid, pass)) return false;
   ru_mutex_lock(W.mu);
   uint32_t ticket;
-  if (W.pending_on || !ru_wifi_attempt_begin(&W.att, &ticket)) { ru_mutex_unlock(W.mu); return false; } /* busy */
+  if (W.pending_on || !ru_wifi_attempt_begin_until(&W.att, &ticket, ru_now_ms(), TRY_NEW_BUDGET_MS)) { ru_mutex_unlock(W.mu); return false; } /* busy */
+  W.ticket = ticket;
   snprintf(W.pending.ssid, sizeof W.pending.ssid, "%s", ssid);
   snprintf(W.pending.pass, sizeof W.pending.pass, "%s", pass);
   W.pending_on = true;
@@ -205,6 +221,7 @@ ru_wifi_apply_t ru_wifi_esp_apply_wait(const char *ssid, const char *pass, uint3
   ru_mutex_lock(W.mu);
   uint32_t ticket;
   if (W.pending_on || !ru_wifi_attempt_begin(&W.att, &ticket)) { ru_mutex_unlock(W.mu); return RU_WIFI_APPLY_BUSY; }
+  W.ticket = ticket;
   snprintf(W.pending.ssid, sizeof W.pending.ssid, "%s", ssid);
   snprintf(W.pending.pass, sizeof W.pending.pass, "%s", pass);
   W.pending_on = true;
@@ -224,12 +241,7 @@ ru_wifi_apply_t ru_wifi_esp_apply_wait(const char *ssid, const char *pass, uint3
   }
   ru_mutex_lock(W.mu);
   if (!W.result) { /* budget used up (the SM's own 15 s timeout normally fires first): give up and restore the old credentials */
-    ru_wifi_creds_wipe(&W.pending);
-    W.pending_on = false;
-    ru_wifi_attempt_abort(&W.att, ticket);
-    W.revert = true;
-    W.result = 3;
-    W.fail_reason = -1;
+    pending_fail(true, -1); /* quiet: sets W.result = 3 */
   }
   r = W.result;
   int reason = W.fail_reason;
@@ -252,6 +264,8 @@ void ru_wifi_esp_forget(void) {
   if (!W.started) return;
   ru_mutex_lock(W.mu);
   (void)ru_wifi_creds_clear(W.cfg.kv);
+  if (W.pending_on) pending_fail(false, -1); /* wipes W.pending, aborts the ticket; the SM's IDLE would also */
+  else ru_secure_zero(&W.pending, sizeof W.pending);
   ru_wifi_sm_event(&W.sm, RU_WIFI_EV_CREDS_CLEARED, 0, ru_now_ms());
   ru_mutex_unlock(W.mu);
 }

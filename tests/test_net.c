@@ -900,7 +900,94 @@ static void test_wifi_attempt(void) {
   CHECK(ru_wifi_attempt_poll(&ATT, t3) == RU_WIFI_ATT_FAILED);
 }
 
+/* review: a pending Improv attempt must never be stranded (factory reset under it, or no result ever) */
+static void test_wifi_pending_stranding(void) {
+  ru_wifi_sm_t sm;
+  ru_wifi_sm_cfg_t c = {0};
+  ru_wifi_sm_ops_t o = {att_nop, att_nop, att_nop, att_state, NULL};
+  uint32_t t1, t2;
+  /* begin -> pending -> CREDS_CLEARED (IDLE, as ru_wifi_esp_forget does) -> a new begin is accepted */
+  ru_wifi_sm_init(&sm, &c, &o);
+  memset(&ATT, 0, sizeof ATT);
+  ru_wifi_sm_start(&sm, true, 0);
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CONNECTED, 0, 10);
+  CHECK(ru_wifi_attempt_begin(&ATT, &t1));
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CREDS, 0, 100);
+  CHECK(ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_PENDING);
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CREDS_CLEARED, 0, 200);
+  CHECK(sm.state == RU_WIFI_IDLE);
+  CHECK(ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_FAILED); /* never success, never stuck pending */
+  CHECK(ru_wifi_attempt_begin(&ATT, &t2) && t2 != t1);
+  CHECK(ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_IDLE);
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CREDS, 0, 300);
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CONNECTED, 0, 400);
+  CHECK(ru_wifi_attempt_poll(&ATT, t2) == RU_WIFI_ATT_OK);
+  /* deadline: a timed attempt that no SM state ever ends is expired by the caller and the next begin is accepted */
+  memset(&ATT, 0, sizeof ATT);
+  CHECK(ru_wifi_attempt_begin_until(&ATT, &t1, 1000, 45000));
+  CHECK(!ru_wifi_attempt_begin_until(&ATT, &t2, 1001, 45000)); /* busy */
+  CHECK(!ru_wifi_attempt_expired(&ATT, 1000 + 44999));
+  CHECK(ru_wifi_attempt_expired(&ATT, 1000 + 45000));
+  ru_wifi_attempt_abort(&ATT, t1);
+  CHECK(!ru_wifi_attempt_expired(&ATT, 1000 + 45000) && ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_FAILED);
+  CHECK(ru_wifi_attempt_begin_until(&ATT, &t2, 50000, 45000) && t2 != t1);
+  /* clock wrap */
+  memset(&ATT, 0, sizeof ATT);
+  CHECK(ru_wifi_attempt_begin_until(&ATT, &t1, UINT32_MAX - 100, 45000));
+  CHECK(!ru_wifi_attempt_expired(&ATT, 100) && ru_wifi_attempt_expired(&ATT, 45000));
+  /* an untimed attempt (apply_wait, which has its own budget) never reports expiry; a finished one neither */
+  memset(&ATT, 0, sizeof ATT);
+  CHECK(ru_wifi_attempt_begin(&ATT, &t1) && !ru_wifi_attempt_expired(&ATT, UINT32_MAX / 2));
+  CHECK(ru_wifi_attempt_begin_until(&ATT, &t2, 0, 10) == false);
+  ru_wifi_attempt_on_state(&ATT, RU_WIFI_CONNECTED);
+  CHECK(ru_wifi_attempt_begin_until(&ATT, &t2, 0, 10));
+  ru_wifi_attempt_on_state(&ATT, RU_WIFI_CONNECTED);
+  CHECK(!ru_wifi_attempt_expired(&ATT, 1000));
+  /* the real SM with the real deadline: no event ever arrives besides the SM's own 15 s timeout, which ends it as FAILED */
+  ru_wifi_sm_init(&sm, &c, &o);
+  memset(&ATT, 0, sizeof ATT);
+  ru_wifi_sm_start(&sm, false, 0);
+  CHECK(ru_wifi_attempt_begin_until(&ATT, &t1, 0, 45000));
+  ru_wifi_sm_event(&sm, RU_WIFI_EV_CREDS, 0, 0);
+  ru_wifi_sm_tick(&sm, 15000);
+  CHECK(ru_wifi_attempt_poll(&ATT, t1) == RU_WIFI_ATT_FAILED);
+}
+
+/* review: a detach in the middle of an Improv packet wipes the parser buffer (a set-wifi password) */
+static int marker_in(const void *m, size_t n, const char *mark) { return memmem(m, n, mark, strlen(mark)) != NULL; }
+static void test_console_detach_wipe(void) {
+  uint8_t pk[300], d[64];
+  const char *pw = "PASSWORDMARKER";
+  size_t pl = strlen(pw), n = 0;
+  d[0] = 0x01; /* set wifi */
+  d[1] = (uint8_t)(1 + 4 + 1 + pl);
+  d[2] = 4; memcpy(d + 3, "ssid", 4);
+  d[7] = (uint8_t)pl; memcpy(d + 8, pw, pl);
+  n = mk(pk, 3, d, 8 + pl);
+  /* console drops to IDLE because improv is detached mid-packet */
+  con_setup();
+  cf(pk, n - 1); /* prefix only, password already buffered */
+  CHECK(ru_improv_in_packet(&CIM) && marker_in(&CIM, sizeof CIM, pw));
+  ru_improv_t *keep = CON.improv;
+  CON.improv = NULL; /* what ru_console_esp does around a feed while improv is disabled */
+  cfs("x");
+  CON.improv = keep;
+  CHECK(!marker_in(&CIM, sizeof CIM, pw) && !ru_improv_in_packet(&CIM));
+  /* the wipe is also what ru_improv_reset gives the glue when it sees improv_on false */
+  con_setup();
+  cf(pk, n - 1);
+  ru_improv_reset(&CIM);
+  CHECK(!marker_in(&CIM, sizeof CIM, pw));
+  /* normal operation is unchanged: a full packet after a detach still parses */
+  con_setup();
+  cf(pk, n - 1); CON.improv = NULL; cfs("x"); CON.improv = keep;
+  size_t m = rpc(pk, 2, NULL, 0); cf(pk, m);
+  CHECK(E.frames >= 1);
+}
+
 int main(void) {
+  test_wifi_pending_stranding();
+  test_console_detach_wipe();
   test_cfgline();
   test_cfgline_fuzz();
   test_cfgline_wifi();

@@ -172,6 +172,25 @@ lv_obj_t *ru_climate_overview(lv_obj_t *s, const char *title, const ru_cl_item_t
   for (int i = 0; i < n; i++) {
     lv_obj_t *tile = ru_value_tile_create(list, w, ru_u(12), items[i].name);
     ru_value_tile_set_text(tile, items[i].value, items[i].known ? items[i].st : RU_VAL_UNKNOWN);
+    /* a long value ("19.8°C  45%") must never run over the name: smaller value font when the name would get less than
+     * half of the row, then the name is cut with dots to the room that is left. */
+    lv_obj_t *nm = lv_obj_get_child(tile, 0), *val = lv_obj_get_child(tile, 1);
+    if (nm && val) {
+      const char *vt = lv_label_get_text(val);
+      int pad = ru_u(12) / 2 - ru_u(1), inner = w - 2 * pad, gap = ru_u(2);
+      lv_point_t sz;
+      lv_text_get_size(&sz, vt, ru_font_title(), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      if (inner - sz.x - gap < inner / 2) {
+        lv_obj_set_style_text_font(val, ru_font_body(), 0);
+        lv_text_get_size(&sz, vt, ru_font_body(), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      }
+      int avail = inner - sz.x - gap;
+      if (avail < ru_u(8)) avail = ru_u(8);
+      lv_label_set_long_mode(nm, LV_LABEL_LONG_MODE_DOTS);
+      lv_obj_set_width(nm, avail);
+      lv_obj_set_height(nm, lv_font_get_line_height(ru_font_body()));
+      lv_obj_align(nm, LV_ALIGN_LEFT_MID, pad, 0);
+    }
     if (tiles_out && i < tiles_cap) tiles_out[i] = tile;
   }
   return list;

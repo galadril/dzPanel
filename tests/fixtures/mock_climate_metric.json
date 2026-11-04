@@ -637,7 +637,7 @@
 			"HaveSetPoint": true,
 			"HaveTimeout": false,
 			"LastUpdate": "2026-11-01 12:00:00",
-			"Name": "Heating Zone",
+			"Name": "Zone Controller",
 			"PlanID": "0",
 			"PlanIDs": [
 				0

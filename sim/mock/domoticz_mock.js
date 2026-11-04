@@ -121,7 +121,7 @@ const makeClimate = () => [
   base(121, 'Two Sensor Setpoint', 'Setpoint', 'SetPoint', { SetPoint: '20.0', Data: '20.0', HaveSetPoint: true, min: 5, max: 30, step: 0.5, vunit: '°C', ...pl(8) }),
   base(122, 'Wind Plan Setpoint', 'Setpoint', 'SetPoint', { SetPoint: '18.0', Data: '18.0', HaveSetPoint: true, min: 5, max: 30, step: 0.5, vunit: '°C', ...pl(9) }),
   base(123, 'Radiator Valve', 'Radiator 1', 'Smartwares', { SetPoint: '20.0', Data: '20.0', HaveSetPoint: true, ...pl(7) }),
-  base(124, 'Heating Zone', 'Heating', 'Zone', { Temp: 19.5, SetPoint: 20.0, Status: 'Auto', Data: '19.5 C, (20.0 C), Auto', HaveSetPoint: true, ...pl(0) }),
+  base(124, 'Zone Controller', 'Heating', 'Zone', { Temp: 19.5, SetPoint: 20.0, Status: 'Auto', Data: '19.5 C, (20.0 C), Auto', HaveSetPoint: true, ...pl(0) }),
   base(125, 'Mode Device', 'General', 'Thermostat Mode', { SwitchTypeVal: 0, Mode: 1, Modes: '0;Off;1;Heat;2;Cool;', Data: 'Heat', TypeImg: 'mode', ...pl(0) }),
 ];
 const F = (c) => Math.round((c * 9 / 5 + 32) * 10) / 10;

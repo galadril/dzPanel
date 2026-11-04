@@ -9,6 +9,7 @@ void ru_console_init(ru_console_t *c, const ru_console_ops_t *ops, ru_improv_t *
   memset(c, 0, sizeof *c);
   c->ops = *ops;
   c->improv = improv;
+  c->improv_owned = improv;
 }
 
 static void wipe_line(ru_console_t *c) {
@@ -29,7 +30,12 @@ static void byte(ru_console_t *c, uint8_t b) {
         }
         return;
       case S_IMPROV: {
-        if (!c->improv) { c->st = S_IDLE; continue; } /* detached mid-packet: this byte starts over in IDLE */
+        if (!c->improv) { /* detached mid-packet: drop the buffered bytes (may be a password) */
+          if (c->improv_owned) ru_improv_reset(c->improv_owned);
+          c->packets_dropped++;
+          c->st = S_IDLE;
+          continue;
+        } /* detached mid-packet: this byte starts over in IDLE */
         ru_improv_feed_t r = ru_improv_feed(c->improv, b);
         if (r == RU_IMPROV_MORE) return;
         c->st = S_IDLE;

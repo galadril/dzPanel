@@ -34,7 +34,8 @@ typedef struct {
 
 typedef struct {
   ru_console_ops_t ops;
-  ru_improv_t *improv; /* may be NULL */
+  ru_improv_t *improv; /* may be NULL (detached: bytes go to the CFG demux only) */
+  ru_improv_t *improv_owned; /* the parser given to init: wiped when a packet is cut off by a detach */
   int st;
   size_t pos;
   uint32_t last_ms;

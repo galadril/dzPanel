@@ -1,6 +1,7 @@
 #include "ru_captive.h"
 #include "ru_cfg.h" /* ru_secure_zero */
 
+#include <stdio.h>
 #include <string.h>
 
 /* ---------------- DNS ---------------- */
@@ -172,9 +173,26 @@ bool ru_ct_streq(const char *a, const char *b) {
 /* ---------------- request guard ---------------- */
 ru_guard_t ru_portal_guard(const char *ap_ip, const char *local_ip, const char *host, bool is_post) {
   if (!ap_ip || !ap_ip[0] || !local_ip || strcmp(local_ip, ap_ip) != 0) return RU_GUARD_FORBIDDEN;
-  if (!host || !host[0]) return RU_GUARD_BAD_REQUEST;
+  if (!host || !host[0]) return is_post ? RU_GUARD_BAD_REQUEST : RU_GUARD_REDIRECT; /* HTTP/1.0 captive probes send no Host */
   size_t n = strlen(ap_ip);
   bool ok = strncmp(host, ap_ip, n) == 0 && (host[n] == 0 || strcmp(host + n, ":80") == 0);
   if (ok) return RU_GUARD_ALLOW;
   return is_post ? RU_GUARD_BAD_REQUEST : RU_GUARD_REDIRECT;
+}
+
+/* Pure helpers for the glue's address handling (ru_portal_esp.c), so the rules are host-tested. */
+void ru_portal_local_text(int family, const uint8_t *addr, char *out, size_t cap) {
+  static const uint8_t mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+  const uint8_t *b = NULL;
+  if (!out || !cap) return;
+  out[0] = 0;
+  if (!addr) return;
+  if (family == 4) b = addr;
+  else if (family == 6 && !memcmp(addr, mapped, 12)) b = addr + 12;
+  if (b) snprintf(out, cap, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+}
+const char *ru_portal_host_arg(size_t hdr_len, size_t cap, const char *value) {
+  if (hdr_len >= cap) return "-"; /* too long to be ours: foreign, never "missing" */
+  if (hdr_len > 0 && value && value[0]) return value;
+  return NULL;
 }

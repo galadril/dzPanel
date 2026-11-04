@@ -30,7 +30,7 @@ void ru_cl_text(const dz_reading_t *r, const ru_cl_units_t *u, char *out, size_t
 typedef enum { RU_CLP_NONE, RU_CLP_TEMP, RU_CLP_HUM, RU_CLP_WIND, RU_CLP_RAIN, RU_CLP_UV, RU_CLP_AIR, RU_CLP_VALUE, RU_CLP_TEXT, RU_CLP_SETPOINT } ru_cl_page_t;
 ru_cl_page_t ru_cl_page_of(const dz_device_t *d);
 
-typedef struct { char text[48]; bool warn; } ru_cl_line_t;
+typedef struct { char text[96]; bool warn; } ru_cl_line_t; /* 96: holds any two composed fragments without truncation */
 #define RU_CL_LINES 3
 
 typedef struct {

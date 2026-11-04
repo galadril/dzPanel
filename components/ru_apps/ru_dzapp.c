@@ -809,6 +809,22 @@ static lv_obj_t *build_weather(ru_dzapp_t *a) {
       items[i].st = ss;
     }
     ru_climate_overview(s, "CLIMATE", items, m, tiles, MAX_ROWS);
+    /* the headline under the title: the room temperature (the same device the home hero uses), only when there is one */
+    for (int i = 0; i < n; i++) {
+      dz_device_t hd;
+      ru_val_t hv;
+      ru_val_state_t hs;
+      sec_find(a, RU_SEC_WEATHER, i, &hd, &hv, &hs);
+      if (!dz_dev_room_temp(&hd) || hd.cap == DZ_CAP_THERMOSTAT) continue;
+      ru_cl_view_t hc;
+      ru_cl_build(&hd, &cu, &hc);
+      if (hc.known && hc.hero[0]) {
+        char head[40];
+        snprintf(head, sizeof head, "TEMP %s", hc.hero);
+        label_u(s, head, ru_font_small(), hs == RU_VAL_STALE ? t->stale : t->text_dim, 0, -34.5f);
+      }
+      break;
+    }
     ru_climate_next_zone(s, cb_cycle_weather, a);
     a->nrows = 0;
     for (int i = 0; i < m && a->nrows < MAX_ROWS; i++) {
@@ -861,7 +877,8 @@ static lv_obj_t *build_weather(ru_dzapp_t *a) {
   ru_age_format(ru_val_age_ms(&v, a->now), age, sizeof age);
   snprintf(stale, sizeof stale, v.valid ? "UPDATED %s" : "STALE", age);
   ru_dzv_upper(stale, sizeof stale, stale);
-  ru_cl_page_ctx_t ctx = { .v = &cv, .st = st, .stale_text = stale, .k = page, .n = pages };
+  /* the counter counts devices over all pages: with the overview as page 0, device k is "k+1/n+1" */
+  ru_cl_page_ctx_t ctx = { .v = &cv, .st = st, .stale_text = stale, .k = k, .n = pages };
   ru_climate_draw_page(s, &ctx);
   if (d.cap == DZ_CAP_THERMOSTAT || d.cap == DZ_CAP_MODE) ru_climate_tap_zone(s, cb_cl_open, a);
   else if (pages > 1) ru_climate_tap_zone(s, cb_cycle_weather, a);

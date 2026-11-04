@@ -119,14 +119,26 @@ bool ru_wifi_attempt_begin(ru_wifi_attempt_t *a, uint32_t *ticket) {
   if (a->st == RU_WIFI_ATT_PENDING) return false;
   a->ticket++;
   a->st = RU_WIFI_ATT_PENDING;
+  a->timed = false;
   if (ticket) *ticket = a->ticket;
   return true;
+}
+
+bool ru_wifi_attempt_begin_until(ru_wifi_attempt_t *a, uint32_t *ticket, uint32_t now_ms, uint32_t budget_ms) {
+  if (!ru_wifi_attempt_begin(a, ticket)) return false;
+  a->timed = true;
+  a->deadline_ms = now_ms + budget_ms;
+  return true;
+}
+
+bool ru_wifi_attempt_expired(const ru_wifi_attempt_t *a, uint32_t now_ms) {
+  return a->st == RU_WIFI_ATT_PENDING && a->timed && (int32_t)(now_ms - a->deadline_ms) >= 0;
 }
 
 void ru_wifi_attempt_on_state(ru_wifi_attempt_t *a, ru_wifi_state_t to) {
   if (a->st != RU_WIFI_ATT_PENDING) return; /* final already: the revert's CONNECTED is not ours */
   if (to == RU_WIFI_CONNECTED) a->st = RU_WIFI_ATT_OK;
-  else if (to == RU_WIFI_FAILED || to == RU_WIFI_AP_REQUESTED) a->st = RU_WIFI_ATT_FAILED;
+  else if (to == RU_WIFI_FAILED || to == RU_WIFI_AP_REQUESTED || to == RU_WIFI_IDLE) a->st = RU_WIFI_ATT_FAILED;
 }
 
 ru_wifi_att_state_t ru_wifi_attempt_poll(const ru_wifi_attempt_t *a, uint32_t ticket) {

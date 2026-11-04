@@ -14,3 +14,14 @@ Build: `cmake -S . -B /tmp/vbc -DRU_BUILD_SIM=OFF && cmake --build /tmp/vbc -j8 
 - coordinator ask (fw-core final): (1) every switch over dz_cap_t must list new caps explicitly (no default); (2) run `cd /workspace/firmware; export IDF_TOOLS_PATH=/home/dev/.idf-shadow; . /opt/esp/idf/export.sh; idf.py -B /tmp/fw/build build` in BACKGROUND to verify (do not edit firmware/); (3) optional: public ru_dzapp_back() and ui_tick skipping rebuild while its screen not active.
 - [x] components/ru_apps: ru_climate.[ch] (pure view model: units, pages, thermo, modes) + ru_climate_ui.[ch] (LVGL page/compass/overview; NOT yet compiled), ru_dzview value_text_u(units). ru_ui: ru_ring_gauge_set_display, ru_thermostat_set_unit/readonly. tests/test_apps_climate.c (ctest apps_climate) green; test_dz_mock extended (climate e2e, F setpoint, mode).
 - NEXT: wire ru_dzapp.c (build_weather -> climate pager + overview; detail for TEMP/WEATHER/SENSOR/MODE/THERMOSTAT; home hero units; confirm verb with value; no `default` in cap switches), sim apps_demo sets + test_apps climate checks (466/480, bright-pixel <=12%), screenshots, firmware build check, notes to coordinator: components/ru_apps/CMakeLists.txt got ru_climate.c ru_climate_ui.c (fw-core file).
+
+## Wiring pass (coder, after CI red on ctest apps: 62 of 2912)
+Finding: ru_dzapp.c / apps_demo already had the wiring; remaining failures were behaviour/fixture issues:
+- counter "k/n": draw_page now gets k = device index (not page) so with overview "5/27" for the 5th device (test dictated)
+- widgets thermostat: setpoint kept exact (66.2F no longer snapped to the min-based grid); +/- steps from the exact value (66.2 + 0.5 = 66.7); drag snaps to grid
+- fixture name "Heating Zone" contains HEATING which screen_ok forbids -> renamed "Zone Controller" (sim/mock + 2 fixtures)
+- apps_demo NOUNITS: devices also carry no vunit (else the setpoint printed the device's own degC; test says no DEGC anywhere)
+- overview headline "TEMP <hero>" under CLIMATE title (real-fixture weather check at test_apps.c:364 wants TEMP/HUMIDITY on the first weather screen; names are scrubbed there)
+- ru_climate.c format-truncation: ru_cl_line_t.text 48->96, one local 48->64
+TODO: rebuild /tmp/climsim, ctest, screenshots, host-only build, fw build + dist.
+- DONE: also ru_ui state tile name/value one line (dots, smaller value font), overview rows ellipsize name; apps_demo home_climate[_f]. sim ctest 25/25, host-only 21/21, fw build 0 warnings (0x192080 bytes, 61% free), dist regenerated.
