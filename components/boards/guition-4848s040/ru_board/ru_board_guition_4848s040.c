@@ -69,8 +69,8 @@ void ru_port_brightness_set(int percent) {
 }
 int ru_port_brightness_get(void) { return g_brightness; }
 
-/* Startup failures are terminal: ru_port_start returns NULL and the caller never retries, so the error paths in panel_new and
- * ru_port_start deliberately do not tear down the SPI IO, RGB panel or adapter. */
+/* Startup failures are terminal: ru_port_start returns NULL and the caller never retries, so ru_port_start does not tear down
+ * the adapter or backlight; panel_new and touch_new do release their own handles. */
 /* Panel: 3-wire SPI IO -> esp_lcd_st7701 (vendor init table) -> RGB panel. */
 static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel) {
   const esp_lcd_panel_io_3wire_spi_config_t io_cfg = ST7701_PANEL_IO_3WIRE_SPI_CONFIG(
@@ -85,7 +85,11 @@ static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel) {
       }),
       0 /* data sampled on the rising SCK edge */);
   esp_lcd_panel_io_handle_t io = NULL;
-  ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_3wire_spi(&io_cfg, &io), TAG, "3-wire SPI io");
+  esp_err_t e = esp_lcd_new_panel_io_3wire_spi(&io_cfg, &io);
+  if (e != ESP_OK) {
+    ESP_LOGE(TAG, "3-wire SPI io failed: %s", esp_err_to_name(e));
+    return e;
+  }
 
   const uint8_t nfb = esp_lv_adapter_get_required_frame_buffer_count(ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE, ESP_LV_ADAPTER_ROTATE_0);
   const esp_lcd_rgb_panel_config_t rgb = {
@@ -135,9 +139,22 @@ static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel) {
       .vendor_config = (void *)&vendor,
   };
   esp_lcd_panel_handle_t panel = NULL;
-  ESP_RETURN_ON_ERROR(esp_lcd_new_panel_st7701(io, &dev, &panel), TAG, "st7701 panel");
-  ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(panel), TAG, "panel reset");
-  ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel), TAG, "panel init"); /* sends the init table incl. sleep out and display on */
+  const char *stage = "st7701 panel";
+  e = esp_lcd_new_panel_st7701(io, &dev, &panel);
+  if (e == ESP_OK) {
+    stage = "panel reset";
+    e = esp_lcd_panel_reset(panel);
+  }
+  if (e == ESP_OK) {
+    stage = "panel init"; /* sends the init table incl. sleep out and display on */
+    e = esp_lcd_panel_init(panel);
+  }
+  if (e != ESP_OK) {
+    ESP_LOGE(TAG, "%s failed: %s", stage, esp_err_to_name(e));
+    if (panel) esp_lcd_panel_del(panel); /* does not delete the 3-wire io (enable_io_multiplex = 0) */
+    esp_lcd_panel_io_del(io);
+    return e;
+  }
   *out_panel = panel;
   return ESP_OK;
 }
@@ -152,7 +169,12 @@ static esp_err_t touch_new(esp_lcd_touch_handle_t *out) {
       .glitch_ignore_cnt = 7,
       .flags.enable_internal_pullup = true,
   };
-  ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_cfg, &g_bus), TAG, "i2c bus");
+  esp_err_t e = i2c_new_master_bus(&bus_cfg, &g_bus);
+  if (e != ESP_OK) {
+    ESP_LOGE(TAG, "i2c bus failed: %s", esp_err_to_name(e));
+    g_bus = NULL;
+    return e;
+  }
   static const uint8_t addrs[] = {ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP};
   uint8_t addr = 0;
   for (size_t i = 0; i < sizeof(addrs); i++) {
@@ -161,12 +183,19 @@ static esp_err_t touch_new(esp_lcd_touch_handle_t *out) {
       break;
     }
   }
-  ESP_RETURN_ON_FALSE(addr, ESP_ERR_NOT_FOUND, TAG, "no GT911 at 0x5D or 0x14");
+  if (!addr) {
+    ESP_LOGE(TAG, "no GT911 at 0x5D or 0x14: %s", esp_err_to_name(ESP_ERR_NOT_FOUND)); /* g_bus is kept for the probe scan */
+    return ESP_ERR_NOT_FOUND;
+  }
   esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
   io_cfg.dev_addr = addr;
   io_cfg.scl_speed_hz = RU_GUITION_TOUCH_I2C_HZ;
   esp_lcd_panel_io_handle_t tio = NULL;
-  ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(g_bus, &io_cfg, &tio), TAG, "touch io"); /* bus stays up for the probe scan */
+  e = esp_lcd_new_panel_io_i2c(g_bus, &io_cfg, &tio); /* bus stays up for the probe scan */
+  if (e != ESP_OK) {
+    ESP_LOGE(TAG, "touch io failed: %s", esp_err_to_name(e));
+    return e;
+  }
   const esp_lcd_touch_config_t tcfg = {
       .x_max = RU_GUITION_HRES,
       .y_max = RU_GUITION_VRES,
@@ -175,24 +204,33 @@ static esp_err_t touch_new(esp_lcd_touch_handle_t *out) {
       .levels = {.reset = 0, .interrupt = 0},
       .flags = {.swap_xy = 0, .mirror_x = 0, .mirror_y = 0},
   };
-  esp_err_t err = esp_lcd_touch_new_i2c_gt911(tio, &tcfg, out);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "gt911: %s", esp_err_to_name(err));
+  e = esp_lcd_touch_new_i2c_gt911(tio, &tcfg, out);
+  if (e != ESP_OK) {
+    ESP_LOGE(TAG, "gt911: %s", esp_err_to_name(e));
     esp_lcd_panel_io_del(tio); /* g_bus is kept on purpose: the bring-up probe scans it via ru_guition_touch_bus() */
-    return err;
+    return e;
   }
   g_tp_addr = addr;
   return ESP_OK;
 }
 
+/* Startup failure: say so, because the backlight is only switched on at the very end and a dark screen must not be mistaken
+ * for a polarity problem. */
+static lv_display_t *start_failed(const char *stage, esp_err_t e) {
+  ESP_LOGE(TAG, "%s failed: %s", stage, esp_err_to_name(e));
+  ESP_LOGE(TAG, "display init failed: backlight stays OFF (this is not a backlight polarity problem)");
+  return NULL;
+}
+
 lv_display_t *ru_port_start(lv_indev_t **indev) {
   *indev = NULL;
+  esp_err_t e;
   const esp_lv_adapter_config_t cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
-  if (esp_lv_adapter_init(&cfg) != ESP_OK) return NULL;
-  if (backlight_init() != ESP_OK) return NULL;
+  if ((e = esp_lv_adapter_init(&cfg)) != ESP_OK) return start_failed("esp_lv_adapter_init", e);
+  if ((e = backlight_init()) != ESP_OK) return start_failed("backlight_init", e);
 
   esp_lcd_panel_handle_t panel = NULL;
-  if (panel_new(&panel) != ESP_OK) return NULL;
+  if ((e = panel_new(&panel)) != ESP_OK) return start_failed("panel_new", e);
 
   /* Bring-up: one frame buffer in PSRAM, no tear avoidance. */
   esp_lv_adapter_display_config_t dcfg = ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(panel, NULL, RU_GUITION_HRES, RU_GUITION_VRES,
@@ -200,16 +238,17 @@ lv_display_t *ru_port_start(lv_indev_t **indev) {
   dcfg.tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE;
   dcfg.profile.use_psram = true;
   lv_display_t *disp = esp_lv_adapter_register_display(&dcfg);
-  if (!disp) return NULL;
+  if (!disp) return start_failed("register_display", ESP_FAIL);
 
-  if (touch_new(&g_tp) == ESP_OK) {
+  e = touch_new(&g_tp);
+  if (e == ESP_OK) {
     const esp_lv_adapter_touch_config_t tc = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, g_tp);
     *indev = esp_lv_adapter_register_touch(&tc);
   } else {
     g_tp = NULL;
-    ESP_LOGW(TAG, "touch init failed; display only");
+    ESP_LOGW(TAG, "touch init failed (%s); display only", esp_err_to_name(e));
   }
-  if (esp_lv_adapter_start() != ESP_OK) return NULL;
+  if ((e = esp_lv_adapter_start()) != ESP_OK) return start_failed("esp_lv_adapter_start", e);
   ru_port_brightness_set(100); /* ru_hal does not set brightness at start */
   return disp;
 }
