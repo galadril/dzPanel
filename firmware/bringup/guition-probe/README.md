@@ -17,6 +17,10 @@ esp_lvgl_adapter, lvgl) into `managed_components/` and is slow. Pins and timing 
 Flash the merged image at offset 0x0 (see docs/flashing.md; `idf.py -B build-guition-probe merge-bin` or the image in `dist/`).
 Monitor: UART0 (GPIO43/44 through the CH341 bridge) at **115200**, e.g. `idf.py -p COMx monitor` or any terminal. Native USB is not usable.
 
+Serial caveat: GPIO0 is both the boot strap and RGB R4. The CH341 DTR/RTS auto-reset can leave GPIO0 low after a port is opened and the chip boots into the ROM download loader (black screen, silent console, ROM prints `waiting for download`). Open the port with DTR and RTS deasserted (miniterm `--dtr 0 --rts 0`), then press RST once. The web installer page resets via DTR/RTS, so you may need to press RST after opening it.
+
+Flashing the probe onto a provisioned board leaves the Wi-Fi/Domoticz config in NVS (it is not erased and the probe never reads it).
+
 ## What to expect
 
 Serial, in order:
