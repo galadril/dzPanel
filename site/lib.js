@@ -1,4 +1,4 @@
-// RoundOS installer: pure helpers (no DOM, no network) so they can be tested with node.
+// dzPanel installer: pure helpers (no DOM, no network) so they can be tested with node.
 // Nothing here ever sends a token anywhere. See docs/provisioning.md.
 
 export const BOARDS = [
@@ -233,7 +233,7 @@ export function describeReply(r) {
       : 'The device cannot reach Domoticz. Check the address and that the device has Wi-Fi.');
     case 'no_wifi': return 'The device is not on Wi-Fi yet. Enter the Wi-Fi name and password above, or use the install dialog.';
     case 'tls': return pre + 'The secure connection failed. Check the https address and certificate.';
-    case 'timeout': return 'The device did not answer. Is RoundOS installed and running?';
+    case 'timeout': return 'The device did not answer. Is dzPanel installed and running?';
     case 'store': return pre + 'The device could not save the settings (storage error). Try again; if it repeats, reinstall and choose erase.';
     case 'bad_version': return 'This installer and the firmware disagree on the settings format. Update the firmware or reload this page.';
     case 'too_long': return 'The address, password or token is too long for the device.';

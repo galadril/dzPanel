@@ -99,7 +99,7 @@ async function sendConfig(config) {
         if (reply) return reply; // ordinary log lines are ignored
       }
     }
-    return { ok: false, code: 'timeout', message: 'The device did not answer. Is RoundOS installed and running?' };
+    return { ok: false, code: 'timeout', message: 'The device did not answer. Is dzPanel installed and running?' };
   } finally {
     writer.releaseLock();
     await reader.cancel().catch(() => {});
