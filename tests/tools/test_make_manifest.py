@@ -54,6 +54,14 @@ class T(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.out, "firmware/amoled-175/stable/1.10.0")))
         self.assertTrue(os.path.exists(os.path.join(self.out, "firmware/amoled-175/stable/2.0.0")))
 
+    def test_guition_board_and_product_name(self):
+        self.pub("1.0.0", board="guition-4848s040")
+        base = os.path.join(self.out, "firmware/guition-4848s040/stable/1.0.0")
+        m = json.load(open(os.path.join(base, "manifest.json")))
+        self.assertEqual(m["name"], "dzPanel")  # must equal the Improv fw_name in firmware/main/svc_glue.c
+        self.assertEqual(m["builds"][0]["chipFamily"], "ESP32-S3")
+        self.assertTrue(os.path.exists(os.path.join(base, "dzpanel-guition-4848s040-1.0.0-merged.bin")))
+
     def test_prune_is_per_board_and_channel(self):
         self.pub("1.0.0"); self.pub("1.0.0", board="amoled-216"); self.pub("1.0.0", ch="nightly")
         self.pub("1.1.0", keep=1)
@@ -79,7 +87,7 @@ class T(unittest.TestCase):
         finally:
             os.umask(old)
         base = os.path.join(self.out, "firmware/amoled-175/stable/1.0.0")
-        for f in [os.path.join(base, "manifest.json"), os.path.join(base, "roundos-amoled-175-1.0.0-merged.bin"),
+        for f in [os.path.join(base, "manifest.json"), os.path.join(base, "dzpanel-amoled-175-1.0.0-merged.bin"),
                   os.path.join(self.out, "versions.json")]:
             self.assertEqual(os.stat(f).st_mode & 0o777, 0o644, f)
 

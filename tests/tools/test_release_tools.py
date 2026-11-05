@@ -80,7 +80,7 @@ class Site(SiteBase):
         r = self.check(); self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("1 build", r.stdout)
 
     def test_flipped_byte_is_caught(self):
-        img = os.path.join(self.base(), "roundos-amoled-175-1.0.0-merged.bin")
+        img = os.path.join(self.base(), "dzpanel-amoled-175-1.0.0-merged.bin")
         b = bytearray(open(img, "rb").read()); b[100] ^= 1; open(img, "wb").write(b)
         r = self.check(); self.assertEqual(r.returncode, 1); self.assertIn("sha256", r.stderr)
 

@@ -2,7 +2,7 @@
 """Publish one merged firmware image into the installer site tree.
 
     make_manifest.py --board amoled-175 --channel stable --version 1.0.0 \
-                     --merged build/roundos-merged.bin --out site-out [--keep 5]
+                     --merged build/dzpanel-merged.bin --out site-out [--keep 5]
 
 Writes  <out>/firmware/<board>/<channel>/<version>/{manifest.json,<image>.bin}
 and updates <out>/versions.json (schema 1). Standard library only. Run with `python3 -I`.
@@ -17,7 +17,7 @@ import shutil
 import sys
 import tempfile
 
-BOARDS = {"amoled-175": "ESP32-S3", "amoled-216": "ESP32-S3"}
+BOARDS = {"amoled-175": "ESP32-S3", "amoled-216": "ESP32-S3", "guition-4848s040": "ESP32-S3"}
 CHANNELS = ("stable", "nightly")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$")
 MAX_IMAGE = 16 * 1024 * 1024  # the boards assume 16 MB flash
@@ -83,12 +83,12 @@ def publish(board, channel, version, merged, out, date, keep):
     rel_dir = f"firmware/{board}/{channel}/{version}"
     dest = os.path.join(out, rel_dir)
     os.makedirs(dest, exist_ok=True)
-    image = f"roundos-{board}-{version}-merged.bin"
+    image = f"dzpanel-{board}-{version}-merged.bin"
     shutil.copyfile(merged, os.path.join(dest, image))
     os.chmod(os.path.join(dest, image), PUBLIC_MODE)  # not at the mercy of the runner's umask
 
     manifest = {
-        "name": "RoundOS",
+        "name": "dzPanel",
         "version": version,
         # Verified in ESP Web Tools source: without Improv a device is ERASED by default on install.
         # Ask first, so a reinstall does not silently wipe stored Wi-Fi and Domoticz settings.

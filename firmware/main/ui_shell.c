@@ -55,7 +55,7 @@ static lv_obj_t *build_setup_screen(void) {
   lv_obj_t *rim = ru_status_rim_create(s);
   ru_status_rim_set_state(rim, RU_RIM_OFFLINE);
   label(s, "NOT SET UP", ru_font_title(), t->warn, -22);
-  label(s, "OPEN THE ROUNDOS INSTALLER", ru_font_body(), t->text, -8);
+  label(s, "OPEN THE DZPANEL INSTALLER", ru_font_body(), t->text, -8);
   label(s, "PAGE IN CHROME OR EDGE,", ru_font_body(), t->text, -1);
   label(s, "CONNECT THIS DEVICE BY USB", ru_font_body(), t->text, 6);
   label(s, "AND ENTER WI-FI AND DOMOTICZ", ru_font_body(), t->text, 13);
@@ -211,7 +211,7 @@ static void splash_begin(void) {
   static char ver[24];
   const esp_app_desc_t *d = esp_app_get_description();
   snprintf(ver, sizeof ver, "v%.20s", d && d->version[0] ? d->version : "dev");
-  ru_splash_cfg_t cfg = { "RoundOS", "for Domoticz", ver };
+  ru_splash_cfg_t cfg = { "dzPanel", "for Domoticz", ver };
   s_splash = ru_splash_overlay_create(&cfg);
   if (!s_splash) return; /* no memory for the splash is not a reason to fail the boot */
   ru_splash_start(s_splash);

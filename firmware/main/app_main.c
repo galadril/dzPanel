@@ -1,4 +1,4 @@
-/* RoundOS firmware entry: NVS -> boot counter -> HAL/LVGL -> UI shell -> Wi-Fi + console + Domoticz service.
+/* dzPanel firmware entry: NVS -> boot counter -> HAL/LVGL -> UI shell -> Wi-Fi + console + Domoticz service.
  * Compiled only, never run on a board. */
 #include "esp_err.h"
 #include "esp_log.h"
@@ -12,11 +12,11 @@
 #include "heap_log.h"
 #include "ui_shell.h"
 
-static const char *TAG = "roundos";
+static const char *TAG = "dzpanel";
 static ru_bus_t g_bus;
 
 void app_main(void) {
-  ESP_LOGI(TAG, "RoundOS, IDF %s", esp_get_idf_version());
+  ESP_LOGI(TAG, "dzPanel, IDF %s", esp_get_idf_version());
   const ru_board_t *brd = ru_board();
   ESP_LOGI(TAG, "board %s, display %dx%d %s", brd->id, brd->diameter, brd->diameter, brd->round ? "round" : "square");
   if (ru_kv_nvs_init() != 0) {

@@ -51,6 +51,13 @@ t('esptool fallback command', () => {
   assert.match(esptoolCommand(E()), /^esptool\.py --chip esp32s3 .* write_flash 0x0 a-merged\.bin$/);
 });
 
+t('guition board is known and square', () => {
+  const g = E({ board: 'guition-4848s040', manifest: 'firmware/guition-4848s040/stable/1.0.0/manifest.json', file: 'firmware/guition-4848s040/stable/1.0.0/d-merged.bin' });
+  assert.equal(validateVersions({ schema: 1, builds: [g] }).ok, true);
+  assert.equal(pickBuild({ schema: 1, builds: [g] }, 'guition-4848s040', 'stable').version, '1.0.0');
+  assert.match(esptoolCommand(g), /--chip esp32s3 .* d-merged\.bin$/);
+});
+
 t('url normalisation', () => {
   assert.deepEqual(normaliseUrl('192.168.1.5:8080'), { ok: true, url: 'http://192.168.1.5:8080', https: false });
   assert.equal(normaliseUrl(' https://dz.example.org/ ').url, 'https://dz.example.org');

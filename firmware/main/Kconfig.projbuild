@@ -1,4 +1,4 @@
-menu "RoundOS diagnostics"
+menu "dzPanel diagnostics"
 
     config RU_HEAP_LOG
         bool "Periodic heap and task-stack log line, and failed-allocation log"

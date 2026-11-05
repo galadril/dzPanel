@@ -18,7 +18,7 @@ function renderBoards() {
     strong.textContent = b.name;
     const small = document.createElement('div');
     small.className = 'muted';
-    small.textContent = `${b.size} px round AMOLED, ${b.chip}`;
+    small.textContent = `${b.size} px ${b.shape} ${b.panel}, ${b.chip}`;
     card.append(strong, small);
     const pick = () => { state.board = b.id; renderBoards(); update(); };
     card.addEventListener('click', pick);

@@ -5,6 +5,7 @@
 
 #include "boot_health.h"
 #include "dz_transport_esp.h"
+#include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "ru_cfg.h"
@@ -139,10 +140,10 @@ void svc_start(void) {
   cc.improv.wifi_connect = improv_connect;
   cc.improv.wifi_scan = improv_scan;
   cc.improv.wifi_connected = improv_connected;
-  cc.improv.fw_name = "RoundOS";
-  cc.improv.fw_version = "0.0.1";
+  cc.improv.fw_name = "dzPanel";
+  cc.improv.fw_version = esp_app_get_description()->version;
   cc.improv.chip = "ESP32-S3";
-  cc.improv.device_name = "RoundOS";
+  cc.improv.device_name = "dzPanel";
   cc.improv_enabled = !svc_provisioned(); /* only while unprovisioned (docs/research/flashing.md) */
   cc.improv_authorized = true; /* REVIEW: no physical authorisation step yet; USB access is already physical access */
   if (!ru_console_esp_start(&cc)) ESP_LOGE(TAG, "console start failed");
