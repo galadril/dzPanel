@@ -26,7 +26,7 @@ static void run(int size) {
   CHECK(px(&s, c, c) == 0xFFFFFF); /* sanity: the underlay is visible before any splash */
 
   /* overlay: on the top layer, covers the underlay, absorbs touches */
-  ru_splash_cfg_t cfg = { "RoundOS", "for Domoticz", "v0.1.0" };
+  ru_splash_cfg_t cfg = { "dzPanel", "for Domoticz", "v0.1.0" };
   lv_obj_t *o = ru_splash_overlay_create(&cfg);
   CHECK(o != NULL);
   CHECK(lv_obj_get_parent(o) == lv_layer_top());

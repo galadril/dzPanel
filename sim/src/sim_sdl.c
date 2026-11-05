@@ -22,7 +22,7 @@ static void load(int idx) {
 
 int sim_sdl_run(sim_t *s, const char *screen, int frames) {
   if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
-  SDL_Window *win = SDL_CreateWindow("RoundOS simulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, s->size, s->size, 0);
+  SDL_Window *win = SDL_CreateWindow("dzPanel simulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, s->size, s->size, 0);
   SDL_Renderer *ren = win ? SDL_CreateRenderer(win, -1, 0) : NULL;
   SDL_Texture *tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, s->size, s->size) : NULL;
   uint32_t *masked = malloc((size_t)s->size * (size_t)s->size * 4);

@@ -144,7 +144,7 @@ bool ru_gen_ap_ssid(ru_rand_fn rnd, void *user, char *out, size_t cap) {
   if (!rnd || cap < 13) return false;
   uint8_t r[4];
   if (!rnd(user, r, 4)) return false;
-  memcpy(out, "RoundOS-", 8);
+  memcpy(out, "dzPanel-", 8);
   for (int i = 0; i < 4; i++) out[8 + i] = RU_PW_ALPHABET[r[i] & 31];
   out[12] = 0;
   return true;

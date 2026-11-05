@@ -42,7 +42,7 @@ bool ru_qr_wifi_payload(const char *ssid, const char *password, char *out, size_
 /* len chars (RU_PW_MIN..RU_PW_MAX) from the alphabet, uniformly (32 symbols so 5 bits per byte, no modulo bias).
  * out needs len+1 bytes. false on a bad length or a random failure (out zeroed). */
 bool ru_gen_password(ru_rand_fn rnd, void *user, unsigned len, char *out, size_t cap);
-/* "RoundOS-XXXX" (4 alphabet chars) for the AP name. cap >= 13. */
+/* "dzPanel-XXXX" (4 alphabet chars) for the AP name. cap >= 13. */
 bool ru_gen_ap_ssid(ru_rand_fn rnd, void *user, char *out, size_t cap);
 /* Lowercase hex of n random bytes (CSRF token). out needs 2n+1. */
 bool ru_gen_hex(ru_rand_fn rnd, void *user, unsigned n, char *out, size_t cap);

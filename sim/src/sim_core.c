@@ -122,5 +122,5 @@ void sim_masked_copy(const sim_t *s, uint32_t *dst) {
 
 /* LVGL 9.2.2 upstream bug: lv_draw_sw_arc() never frees the radius mask it inits for rounded arcs
  * (lv_draw_sw_arc.c, circle_mask_param). Suppress only that allocation so LeakSanitizer still
- * catches leaks in RoundOS code. Remove when LVGL is bumped. */
+ * catches leaks in dzPanel code. Remove when LVGL is bumped. */
 const char *__lsan_default_suppressions(void) { return "leak:lv_draw_sw_mask_radius_init\n"; }

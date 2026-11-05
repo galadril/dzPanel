@@ -559,7 +559,7 @@ static void climate_pages(int size) {
   dz_model_set_units(&f.model, &u);
   ru_dzapp_ui_tick(a, f.T + 1);
   ru_dzapp_show_section(a, RU_SEC_HOME);
-  CHECK(shows(a, "ROUNDOS") && !shows(a, "12.5") && !shows(a, "19.5"));
+  CHECK(shows(a, "dzPanel") && !shows(a, "12.5") && !shows(a, "19.5"));
   ru_dzapp_show_section(a, RU_SEC_DEVICES);
   CHECK(!shows(a, "12.5" DEGC) && !shows(a, "19.5" DEGC));
   finish(&f, a);

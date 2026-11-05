@@ -401,7 +401,7 @@ static bool i_up(void *u) { (void)u; return E.up; }
 
 static void imp_reset_env(void) { memset(&E, 0, sizeof E); E.start_ok = true; }
 static void imp_setup(ru_improv_t *im, bool auth) {
-  ru_improv_ops_t o = {i_write, i_connect, i_scan, i_up, NULL, "RoundOS", "0.1.0", "ESP32-S3", "roundos", NULL};
+  ru_improv_ops_t o = {i_write, i_connect, i_scan, i_up, NULL, "dzPanel", "0.1.0", "ESP32-S3", "dzpanel", NULL};
   imp_reset_env();
   ru_improv_init(im, &o, auth);
 }
@@ -485,7 +485,7 @@ static void test_improv(void) {
   imp_setup(&im, true);
   n = rpc(pk, 3, NULL, 0); done = nm = 0; feed_all(&im, pk, n, &done, &nm);
   CHECK(E.frames == 1 && frame_at(0, &f, &fl) && f[7] == 4 && f[9] == 3 && sum_ok(f, fl));
-  CHECK(f[10] == 1 + 7 + 1 + 5 + 1 + 8 + 1 + 7 && f[11] == 7 && !memcmp(f + 12, "RoundOS", 7) && f[19] == 5 && !memcmp(f + 20, "0.1.0", 5));
+  CHECK(f[10] == 1 + 7 + 1 + 5 + 1 + 8 + 1 + 7 && f[11] == 7 && !memcmp(f + 12, "dzPanel", 7) && f[19] == 5 && !memcmp(f + 20, "0.1.0", 5));
 
   /* scan: 2 networks + terminator */
   imp_setup(&im, true);

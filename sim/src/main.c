@@ -1,4 +1,4 @@
-/* roundos_sim: interactive SDL window (if built with SDL2) or headless PNG export. */
+/* dzpanel_sim: interactive SDL window (if built with SDL2) or headless PNG export. */
 #include "sim_core.h"
 #include "screens.h"
 #include "apps_demo.h"
@@ -12,7 +12,7 @@ int sim_sdl_run(sim_t *s, const char *screen, int frames);
 #endif
 
 static void usage(void) {
-  puts("usage: roundos_sim [--size 466|480] [--shape round|square] [--screen NAME] [--shot FILE.png] [--all DIR] [--apps DIR] [--app NAME] [--headless] [--frames N] [--list]\n"
+  puts("usage: dzpanel_sim [--size 466|480] [--shape round|square] [--screen NAME] [--shot FILE.png] [--all DIR] [--apps DIR] [--app NAME] [--headless] [--frames N] [--list]\n"
        "  --shape S     round (default, circle-masked PNGs) or square (full panel, files named NAME_480sq.png)\n"
        "  --apps DIR    render every Domoticz app screen (fixture data, no network) to DIR/app_NAME_SIZE[sq].png and exit\n"
        "  --app NAME --shot FILE   render one app screen (see --list-apps)\n"

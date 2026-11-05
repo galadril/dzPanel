@@ -551,7 +551,7 @@ static lv_obj_t *build_home(ru_dzapp_t *a) {
       ru_ring_gauge_set_display(g, cv.hero, cv.ring, cv.known ? hs : RU_VAL_UNKNOWN);
     }
   } else {
-    label_u(s, "ROUNDOS", ru_font_title(), t->text_dim, 0, -20);
+    label_u(s, "dzPanel", ru_font_title(), t->text_dim, 0, -20);
   }
   /* favourites: a row of tiles (devices, scenes and groups the user marked in Domoticz) */
   int tw = ru_u(21), th = ru_u(21);
@@ -994,7 +994,7 @@ static lv_obj_t *build_sub(ru_dzapp_t *a) {
     case RU_SUB_ABOUT:
     default:
       title(s, "ABOUT");
-      label_u(s, "ROUNDOS", ru_font_title(), t->text, 0, -24);
+      label_u(s, "dzPanel", ru_font_title(), t->text, 0, -24);
       snprintf(line, sizeof line, "LVGL %d.%d.%d", LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
       label_u(s, line, ru_font_body(), t->text_dim, 0, -12);
       if (a->client && a->client->version.valid) snprintf(line, sizeof line, "DOMOTICZ %d.%d", a->client->version.year, a->client->version.minor);

@@ -4,7 +4,7 @@
 #include "lvgl.h"
 
 typedef struct {
-  const char *name;     /* wordmark, default "RoundOS" */
+  const char *name;     /* wordmark, default "dzPanel" */
   const char *tagline;  /* default "for Domoticz" (plain text, no logo) */
   const char *version;  /* small text at the bottom, NULL for none */
 } ru_splash_cfg_t;

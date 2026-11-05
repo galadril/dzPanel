@@ -95,7 +95,7 @@ static lv_obj_t *build(lv_obj_t *root, const ru_splash_cfg_t *cfg) {
   lv_obj_set_user_data(s->scr, s);
   lv_obj_add_event_cb(s->scr, on_delete, LV_EVENT_DELETE, s);
 
-  const char *name = cfg && cfg->name ? cfg->name : "RoundOS";
+  const char *name = cfg && cfg->name ? cfg->name : "dzPanel";
   const char *tag = cfg && cfg->tagline ? cfg->tagline : "for Domoticz";
   const char *ver = cfg ? cfg->version : NULL;
 

@@ -61,11 +61,11 @@ static const char *err_text(err_t e) {
 /* ---------------- pages ---------------- */
 static void head(wr_t *w) {
   w_s(w, "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>RoundOS setup</title>"
+         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>dzPanel setup</title>"
          "<style>body{font-family:sans-serif;max-width:32em;margin:1em auto;padding:0 1em;line-height:1.4}"
          "label{display:block;margin:.8em 0}input,select,button{font-size:1em;width:100%;box-sizing:border-box;padding:.5em}"
          "input[type=checkbox]{width:auto}.err{border:2px solid #b00;padding:.5em}"
-         ".warn{border:2px solid #c80;padding:.5em}small{color:#555}</style></head><body><h1>Set up your RoundOS</h1>");
+         ".warn{border:2px solid #c80;padding:.5em}small{color:#555}</style></head><body><h1>Set up your dzPanel</h1>");
 }
 static void foot(wr_t *w) {
   w_s(w, "<p><small>This page is served over plain http by the device itself, on its own private Wi-Fi network that is "
@@ -257,7 +257,7 @@ static void finish(ru_portal_resp_t *r, wr_t *w, int status) {
   if (!w->ok) { /* page did not fit: never send a truncated page */
     wr_t w2;
     w_init(&w2, r->body, r->body_cap);
-    w_s(&w2, "<!doctype html><title>RoundOS</title><p>Internal error.");
+    w_s(&w2, "<!doctype html><title>dzPanel</title><p>Internal error.");
     r->status = 500;
     r->body_len = w2.ok ? w2.n : 0;
     r->html = w2.ok;

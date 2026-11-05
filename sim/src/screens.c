@@ -192,7 +192,7 @@ lv_obj_t *sim_screen_build(const char *name, uint32_t now) {
   if (!strcmp(name, "scenes")) return scr_scenes(now);
   /* boot splash: deterministic frames (not animated): ring complete, ring half drawn, and the boot-error variant */
   if (!strncmp(name, "splash", 6)) {
-    ru_splash_cfg_t cfg = { "RoundOS", "for Domoticz", "v0.1.0" };
+    ru_splash_cfg_t cfg = { "dzPanel", "for Domoticz", "v0.1.0" };
     lv_obj_t *s = ru_splash_create(&cfg);
     if (!s) return NULL;
     if (!strcmp(name, "splash")) ru_splash_set_progress(s, 1000);

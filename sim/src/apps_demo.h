@@ -1,5 +1,5 @@
 /* Simulator driver for the Domoticz apps: a fixture-backed fake model (no network, no mock server) so every app
- * renders with real-shaped data. Used by roundos_sim --apps and by the app tests. */
+ * renders with real-shaped data. Used by dzpanel_sim --apps and by the app tests. */
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>

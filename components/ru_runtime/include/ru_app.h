@@ -20,7 +20,7 @@ typedef struct {
 } ru_app_env_t;
 
 typedef struct {
-  const char *id;          /* "org.roundos.home" */
+  const char *id;          /* "org.dzpanel.home" */
   const char *name;        /* display name or i18n key */
   uint16_t icon_id;
   ru_mem_class_t mem_class;

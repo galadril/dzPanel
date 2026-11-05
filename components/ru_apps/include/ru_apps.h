@@ -5,12 +5,12 @@
 #include "ru_dzapp.h"
 #include "ru_runtime.h"
 
-#define RU_APP_ID_HOME "org.roundos.home"
-#define RU_APP_ID_DEVICES "org.roundos.devices"
-#define RU_APP_ID_SCENES "org.roundos.scenes"
-#define RU_APP_ID_ENERGY "org.roundos.energy"
-#define RU_APP_ID_WEATHER "org.roundos.weather"
-#define RU_APP_ID_SETTINGS "org.roundos.settings"
+#define RU_APP_ID_HOME "org.dzpanel.home"
+#define RU_APP_ID_DEVICES "org.dzpanel.devices"
+#define RU_APP_ID_SCENES "org.dzpanel.scenes"
+#define RU_APP_ID_ENERGY "org.dzpanel.energy"
+#define RU_APP_ID_WEATHER "org.dzpanel.weather"
+#define RU_APP_ID_SETTINGS "org.dzpanel.settings"
 
 /* Binds the shared state and registers the six apps (Home as the runtime's home). */
 ru_err_t ru_apps_register(ru_runtime_t *rt, ru_dzapp_t *shared);

@@ -1,4 +1,4 @@
-/* LVGL 9.4.0 configuration for the RoundOS simulator. Owned by the UI agent.
+/* LVGL 9.4.0 configuration for the dzPanel simulator. Owned by the UI agent.
  * Everything not set here takes the default from lv_conf_internal.h. */
 #ifndef LV_CONF_H
 #define LV_CONF_H
@@ -18,7 +18,7 @@
 #define LV_USE_DRAW_SW 1
 #define LV_DRAW_SW_COMPLEX 1
 #define LV_USE_SNAPSHOT 0
-#define LV_USE_THEME_DEFAULT 0     /* RoundOS applies its own Halo styles */
+#define LV_USE_THEME_DEFAULT 0     /* dzPanel applies its own Halo styles */
 #define LV_USE_THEME_SIMPLE 0
 #define LV_USE_THEME_MONO 0
 

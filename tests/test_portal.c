@@ -389,7 +389,7 @@ static void test_captive(void) {
 
 static void test_qr(void) {
   char o[200];
-  CHECK(ru_qr_wifi_payload("RoundOS-AB23", "pass word", o, sizeof o) && !strcmp(o, "WIFI:T:WPA;S:RoundOS-AB23;P:pass word;;"));
+  CHECK(ru_qr_wifi_payload("dzPanel-AB23", "pass word", o, sizeof o) && !strcmp(o, "WIFI:T:WPA;S:dzPanel-AB23;P:pass word;;"));
   CHECK(ru_qr_wifi_payload("a;b", "c,d", o, sizeof o) && !strcmp(o, "WIFI:T:WPA;S:a\\;b;P:c\\,d;;"));
   CHECK(ru_qr_wifi_payload("a:b", "x\\y", o, sizeof o) && !strcmp(o, "WIFI:T:WPA;S:a\\:b;P:x\\\\y;;"));
   CHECK(ru_qr_wifi_payload("q\"s", "p\"w", o, sizeof o) && !strcmp(o, "WIFI:T:WPA;S:q\\\"s;P:p\\\"w;;"));
@@ -430,7 +430,7 @@ static void test_password(void) {
   for (int i = 0; i < 500; i++) { char t[40]; CHECK(ru_gen_password(lcg_rand, NULL, 32, t, sizeof t)); for (int k = 0; k < 32; k++) cnt[strchr(RU_PW_ALPHABET, t[k]) - RU_PW_ALPHABET]++; }
   for (int k = 0; k < 32; k++) CHECK(cnt[k] > 350 && cnt[k] < 650);
   char ssid[16];
-  CHECK(ru_gen_ap_ssid(lcg_rand, NULL, ssid, sizeof ssid) && strlen(ssid) == 12 && !strncmp(ssid, "RoundOS-", 8));
+  CHECK(ru_gen_ap_ssid(lcg_rand, NULL, ssid, sizeof ssid) && strlen(ssid) == 12 && !strncmp(ssid, "dzPanel-", 8));
   CHECK(!ru_gen_ap_ssid(lcg_rand, NULL, ssid, 12) && !ru_gen_ap_ssid(bad_rand, NULL, ssid, sizeof ssid));
   char h[40];
   CHECK(ru_gen_hex(lcg_rand, NULL, 16, h, sizeof h) && strlen(h) == 32 && strspn(h, "0123456789abcdef") == 32);
@@ -843,10 +843,10 @@ static void test_probes_and_status(void) {
   /* status for the on-screen QR */
   ru_portal_status_t st;
   ru_portal_status(&P, 2000, &st);
-  CHECK(st.running && st.step == RU_PORTAL_STEP_WIFI && !strncmp(st.ssid, "RoundOS-", 8) && strlen(st.password) == 12);
+  CHECK(st.running && st.step == RU_PORTAL_STEP_WIFI && !strncmp(st.ssid, "dzPanel-", 8) && strlen(st.password) == 12);
   CHECK(!strcmp(st.url, "http://192.168.4.1/") && st.remaining_min == 10);
   char q[200], u[80];
-  CHECK(ru_portal_qr_wifi(&P, q, sizeof q) && !strncmp(q, "WIFI:T:WPA;S:RoundOS-", 21) && strstr(q, st.password));
+  CHECK(ru_portal_qr_wifi(&P, q, sizeof q) && !strncmp(q, "WIFI:T:WPA;S:dzPanel-", 21) && strstr(q, st.password));
   CHECK(ru_portal_qr_wifi(&P, q, sizeof q) && strstr(q, ";P:") && q[strlen(q) - 1] == ';');
   CHECK(ru_portal_qr_url(&P, u, sizeof u) && !strcmp(u, "http://192.168.4.1/") && !ru_portal_qr_url(&P, u, 5));
   CHECK(!strstr(LOG, st.password) && !strstr(LOG, st.ssid));
