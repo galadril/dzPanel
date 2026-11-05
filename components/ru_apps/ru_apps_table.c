@@ -31,14 +31,16 @@ static void visible(void *p, bool v) {
   static ru_err_t create_##fn(const ru_app_env_t *e, void **o) { return create_sec(e, o, sec); } \
   static const ru_app_t k_##fn = { id, name, icon, RU_MEM_LIGHT, create_##fn, destroy, NULL, visible, NULL };
 
-SEC_APP(home, RU_SEC_HOME, RU_APP_ID_HOME, "Home", 1)
-SEC_APP(devices, RU_SEC_DEVICES, RU_APP_ID_DEVICES, "Devices", 2)
+SEC_APP(home, RU_SEC_HOME, RU_APP_ID_HOME, "Favourites", 1)
+SEC_APP(lights, RU_SEC_LIGHTS, RU_APP_ID_LIGHTS, "Lights", 2)
 SEC_APP(scenes, RU_SEC_SCENES, RU_APP_ID_SCENES, "Scenes", 3)
-SEC_APP(energy, RU_SEC_ENERGY, RU_APP_ID_ENERGY, "Energy", 4)
+SEC_APP(temp, RU_SEC_TEMP, RU_APP_ID_TEMP, "Temperature", 4)
 SEC_APP(weather, RU_SEC_WEATHER, RU_APP_ID_WEATHER, "Weather", 5)
-SEC_APP(settings, RU_SEC_SETTINGS, RU_APP_ID_SETTINGS, "Settings", 6)
+SEC_APP(utility, RU_SEC_UTILITY, RU_APP_ID_UTILITY, "Utility", 6)
+SEC_APP(energy, RU_SEC_ENERGY, RU_APP_ID_ENERGY, "Energy", 7)
+SEC_APP(settings, RU_SEC_SETTINGS, RU_APP_ID_SETTINGS, "Settings", 8)
 
-static const ru_app_t *const k_table[RU_SEC_COUNT] = { &k_home, &k_devices, &k_scenes, &k_energy, &k_weather, &k_settings };
+static const ru_app_t *const k_table[RU_SEC_COUNT] = { &k_home, &k_lights, &k_scenes, &k_temp, &k_weather, &k_utility, &k_energy, &k_settings };
 
 const ru_app_t *ru_apps_descriptor(ru_section_t s) { return s < RU_SEC_COUNT ? k_table[s] : NULL; }
 

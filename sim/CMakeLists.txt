@@ -68,7 +68,7 @@ add_custom_target(screenshots
 add_library(ru_apps STATIC ${CMAKE_SOURCE_DIR}/components/ru_apps/ru_dzapp.c ${CMAKE_SOURCE_DIR}/components/ru_apps/ru_apps_table.c
   ${CMAKE_SOURCE_DIR}/components/ru_apps/ru_climate_ui.c)
 target_include_directories(ru_apps PUBLIC ${CMAKE_SOURCE_DIR}/components/ru_apps/include)
-target_link_libraries(ru_apps PUBLIC ru_ui_lvgl ru_apps_core ru_runtime int_domoticz ru_core ru_data)
+target_link_libraries(ru_apps PUBLIC ru_ui_lvgl ru_apps_core ru_runtime ru_shell int_domoticz ru_core ru_data)
 
 # Fixture-backed driver: every app on real-shaped data, no network (dzpanel_sim --apps, tests)
 add_library(ru_sim_apps STATIC src/apps_demo.c)

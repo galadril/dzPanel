@@ -11,7 +11,11 @@
 #include "ru_climate_ui.h"
 #include "ru_osal.h"
 
-#define MAX_ROWS 64
+#define MAX_ROWS 8 /* LVGL objects per screen build: one page of tiles or rows (6 or 4), or the 5 settings rows */
+#define GRID_COLS 3
+#define GRID_ROWS 2
+#define PAGE_TILES (GRID_COLS * GRID_ROWS)
+#define PAGE_ROWS 4
 #define MAX_NAMES 12
 #define NAME_LEN 20
 #define INTERACT_MS 2500
@@ -23,6 +27,8 @@ typedef struct {
   dz_cmd_result_t r;
 } res_msg_t;
 typedef struct { struct ru_dzapp *app; char idx[12]; bool scene; int setting; } row_t;
+/* one entry of the index list of a screen: sort key (group, server order) and the dz_model entry index */
+typedef struct { uint32_t key; uint16_t i; } ix_t;
 
 struct ru_dzapp {
   dz_model_t *model;
@@ -54,8 +60,11 @@ struct ru_dzapp {
   uint32_t now, interact_until;
   char banner[56];
 
-  int energy_sel, weather_sel;
-  char cl_open_idx[12]; /* the device a tap on the climate page opens (a control) */
+  int energy_sel;
+  int page, pages;      /* the paged list on screen: current page (kept over detail and back) and page count */
+  ix_t *ix;             /* index list of the current section, rebuilt for each screen build (one pass over the model) */
+  size_t ix_n, ix_cap;
+  int press_x, press_y; /* where the finger went down on a tile: a drag that ends on it is a swipe, not a tap */
   int brightness;
   void (*bright_fn)(int, void *);
   void *bright_ud;
@@ -72,7 +81,8 @@ struct ru_dzapp {
   const char *name_ptrs[MAX_NAMES];
 };
 
-static const char *const k_sec_names[RU_SEC_COUNT] = { "HOME", "DEVICES", "SCENES", "ENERGY", "WEATHER", "SETTINGS" };
+static const char *const k_sec_names[RU_SEC_COUNT] = { "FAVOURITES", "LIGHTS", "SCENES", "TEMPERATURE", "WEATHER", "UTILITY",
+                                                       "ENERGY", "SETTINGS" };
 const char *ru_section_name(ru_section_t s) { return s < RU_SEC_COUNT ? k_sec_names[s] : "?"; }
 
 static uint64_t fnv(uint64_t h, const void *p, size_t n) {
@@ -120,43 +130,101 @@ static bool get_entry(ru_dzapp_t *a, const char *idx, bool scene, dz_device_t *d
 
 static void get_units(ru_dzapp_t *a, dz_units_t *u) { dz_model_units(a->model, u); }
 
+/* Home group order = the Domoticz dashboard: scenes and groups, lights, temperature, weather, utility, the rest. */
+static unsigned home_group(const dz_device_t *d, bool scene) {
+  if (scene) return 0;
+  if (d->tabs & DZ_TAB_LIGHT) return 1;
+  if (d->tabs & DZ_TAB_TEMP) return 2;
+  if (d->tabs & DZ_TAB_WEATHER) return 3;
+  if (d->tabs & DZ_TAB_UTILITY) return 4;
+  return 5;
+}
+
 static bool sec_match(ru_section_t s, const dz_device_t *d, bool scene) {
   switch (s) {
-    case RU_SEC_DEVICES: return !scene;
+    case RU_SEC_HOME: return d->favorite;
+    case RU_SEC_LIGHTS: return !scene && (d->tabs & DZ_TAB_LIGHT);
     case RU_SEC_SCENES: return scene;
+    case RU_SEC_TEMP: return !scene && (d->tabs & DZ_TAB_TEMP);
+    case RU_SEC_WEATHER: return !scene && (d->tabs & DZ_TAB_WEATHER);
+    case RU_SEC_UTILITY: return !scene && (d->tabs & DZ_TAB_UTILITY);
     case RU_SEC_ENERGY: return !scene && d->cap == DZ_CAP_ENERGY && (d->has_usage || d->has_usage_deliv || d->has_today);
-    /* Climate: every sensor with a reading (never hidden), plus setpoint and mode devices. Chosen by capability only. */
-    case RU_SEC_WEATHER:
-      return !scene && (d->cap == DZ_CAP_TEMP || d->cap == DZ_CAP_WEATHER || d->cap == DZ_CAP_SENSOR || d->cap == DZ_CAP_THERMOSTAT ||
-                        d->cap == DZ_CAP_MODE);
     default: return false;
   }
 }
 
-/* n-th model entry belonging to a section (-1 = count only). Returns the count of matches. */
-static int sec_find(ru_dzapp_t *a, ru_section_t s, int n, dz_device_t *d, ru_val_t *v, ru_val_state_t *st) {
-  int k = 0;
+static int ix_cmp(const void *x, const void *y) {
+  const ix_t *p = x, *q = y;
+  if (p->key != q->key) return p->key < q->key ? -1 : 1;
+  return p->i < q->i ? -1 : p->i > q->i; /* equal server order (new by delta, 0xFFFF): model order */
+}
+
+/* The entries of a section in display order, in ONE pass over the model (a->ix, a->ix_n). Returns the count. */
+static size_t build_ix(ru_dzapp_t *a, ru_section_t s) {
+  size_t total = dz_model_count(a->model);
+  a->ix_n = 0;
+  if (total > a->ix_cap) {
+    ix_t *n = realloc(a->ix, total * sizeof *n);
+    if (!n) return 0;
+    a->ix = n;
+    a->ix_cap = total;
+  }
+  for (size_t i = 0; i < total && i < 0xFFFF; i++) {
+    dz_device_t d;
+    ru_val_t v;
+    ru_val_state_t st;
+    bool scene;
+    if (!dz_model_at(a->model, i, &d, &v, &st, &scene, a->now) || !sec_match(s, &d, scene)) continue;
+    uint32_t order = dz_model_order_at(a->model, i);
+    a->ix[a->ix_n].key = s == RU_SEC_HOME ? (home_group(&d, scene) << 16) | order : order;
+    a->ix[a->ix_n].i = (uint16_t)i;
+    a->ix_n++;
+  }
+  qsort(a->ix, a->ix_n, sizeof *a->ix, ix_cmp);
+  return a->ix_n;
+}
+
+/* the k-th entry of the index list */
+static bool ix_get(ru_dzapp_t *a, size_t k, dz_device_t *d, ru_val_t *v, ru_val_state_t *st, bool *scene) {
+  ru_val_t vv;
+  ru_val_state_t ss;
+  bool sc;
+  return k < a->ix_n && dz_model_at(a->model, a->ix[k].i, d, v ? v : &vv, st ? st : &ss, scene ? scene : &sc, a->now);
+}
+
+static bool ix_any_stale(ru_dzapp_t *a) {
+  for (size_t k = 0; k < a->ix_n; k++) {
+    dz_device_t d;
+    ru_val_state_t st;
+    if (ix_get(a, k, &d, NULL, &st, NULL) && st == RU_VAL_STALE) return true;
+  }
+  return false;
+}
+
+/* Which sections have something to show: one pass, one bit each. Home and Settings are always there. */
+static unsigned avail_mask(ru_dzapp_t *a) {
+  unsigned m = (1u << RU_SEC_HOME) | (1u << RU_SEC_SETTINGS);
   size_t total = dz_model_count(a->model);
   for (size_t i = 0; i < total; i++) {
-    dz_device_t dd;
-    ru_val_t vv;
-    ru_val_state_t ss;
+    dz_device_t d;
+    ru_val_t v;
+    ru_val_state_t st;
     bool scene;
-    if (!dz_model_at(a->model, i, &dd, &vv, &ss, &scene, a->now) || !sec_match(s, &dd, scene)) continue;
-    if (k == n) { if (d) *d = dd; if (v) *v = vv; if (st) *st = ss; }
-    k++;
+    if (!dz_model_at(a->model, i, &d, &v, &st, &scene, a->now)) continue;
+    for (int s = RU_SEC_LIGHTS; s < RU_SEC_SETTINGS; s++) if (sec_match((ru_section_t)s, &d, scene)) m |= 1u << s;
   }
-  return k;
+  return m;
 }
 
 bool ru_dzapp_section_available(ru_dzapp_t *a, ru_section_t s) {
-  if (s == RU_SEC_HOME || s == RU_SEC_DEVICES || s == RU_SEC_SETTINGS) return true;
-  return sec_find(a, s, -1, NULL, NULL, NULL) > 0;
+  if (s == RU_SEC_HOME || s == RU_SEC_SETTINGS) return true;
+  return s < RU_SEC_COUNT && (avail_mask(a) >> s & 1u);
 }
 
 /* ------------------------------------------------------------------ commands (UI side: queue only) */
 
 static void build_and_show(ru_dzapp_t *a);
+static uint64_t screen_sig(ru_dzapp_t *a);
 
 static void post_cmd(ru_dzapp_t *a, const req_msg_t *m) {
   if (a->spy_fn) {
@@ -423,21 +491,14 @@ static void back_button(ru_dzapp_t *a, lv_obj_t *scr, const char *text) { nav_ba
 /* Dial screens use the whole face: the pill reads "< DEVICE NAME" where the name sits (the shell's edge swipe is the other way back). */
 static void name_back(ru_dzapp_t *a, lv_obj_t *scr, const char *text, float dy_u) { nav_back_f(a, scr, text, ru_u(dy_u), ru_font_body()); }
 
-static void cb_gesture(lv_event_t *e) {
-  ru_dzapp_t *a = lv_event_get_user_data(e);
-  if (a->view != RU_VIEW_HOME) return;
-  lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_active());
-  if (d == LV_DIR_LEFT) ru_dzapp_step_section(a, 1);
-  else if (d == LV_DIR_RIGHT) ru_dzapp_step_section(a, -1);
-}
-
 /* One dot per available section, the current one lit. Not colour alone: the current dot is also larger. */
 static void pager_dots(ru_dzapp_t *a, lv_obj_t *scr) {
   const ru_theme_t *t = ru_theme();
   int n = 0;
   ru_section_t avail[RU_SEC_COUNT];
-  for (int s = 0; s < RU_SEC_COUNT; s++) if (ru_dzapp_section_available(a, (ru_section_t)s)) avail[n++] = (ru_section_t)s;
-  float step = 3.4f, x0 = -(float)(n - 1) * step / 2;
+  unsigned mask = avail_mask(a);
+  for (int s = 0; s < RU_SEC_COUNT; s++) if (mask >> s & 1u) avail[n++] = (ru_section_t)s;
+  float step = 3.0f, x0 = -(float)(n - 1) * step / 2;
   for (int i = 0; i < n; i++) {
     bool cur = avail[i] == a->section;
     lv_obj_t *d = ru_icon_dot(scr, ru_u(cur ? 1.6f : 1.1f), cur ? t->accent : ru_dim(t->text_dim, 120));
@@ -449,9 +510,9 @@ static lv_obj_t *section_screen(ru_dzapp_t *a, bool any_stale) {
   lv_obj_t *s = ru_screen_new();
   lv_obj_t *rim = ru_status_rim_create(s);
   ru_status_rim_set_state(rim, rim_for(conn(a), any_stale));
-  lv_obj_add_event_cb(s, cb_gesture, LV_EVENT_GESTURE, a);
   a->list = NULL;
   a->nrows = 0;
+  a->pages = 1;
   return s;
 }
 
@@ -526,10 +587,32 @@ static void tile_content(const ru_dzapp_t *a, const dz_device_t *d, bool scene, 
   }
 }
 
+/* A tap counts only on the screen that is shown (a swipe that changed section can still end as a click on the old
+ * one, which is freed asynchronously) and only if the finger stayed put: a drag that happens to end on the tile it
+ * started on is a swipe, handled by ru_dzapp_swipe. */
+static bool tap_valid(ru_dzapp_t *a, lv_obj_t *w) {
+  if (lv_obj_get_screen(w) != a->scr) return false;
+  lv_indev_t *in = lv_indev_active();
+  if (!in) return true; /* a test hook, not a finger */
+  lv_point_t p;
+  lv_indev_get_point(in, &p);
+  int dx = p.x - a->press_x, dy = p.y - a->press_y, slop = ru_u(2.2f);
+  return dx * dx + dy * dy <= slop * slop;
+}
+
+static void cb_press(lv_event_t *e) {
+  ru_dzapp_t *a = lv_event_get_user_data(e);
+  lv_indev_t *in = lv_indev_active();
+  lv_point_t p = { 0, 0 };
+  if (in) lv_indev_get_point(in, &p);
+  a->press_x = p.x;
+  a->press_y = p.y;
+}
+
 static void cb_row(lv_obj_t *w, void *ud) {
-  (void)w;
   row_t *r = ud;
   ru_dzapp_t *a = r->app;
+  if (!tap_valid(a, w)) return;
   ru_dzapp_open(a, r->idx, r->scene); /* a scene or group goes to its hold screen, a device to its detail */
 }
 
@@ -552,6 +635,7 @@ static lv_obj_t *add_entry_tile(ru_dzapp_t *a, lv_obj_t *parent, int w, int h, c
   ru_state_tile_set(tile, dot, sub, dot == RU_DOT_NONE && !val[0] ? RU_VAL_UNKNOWN : st);
   if (dot == RU_DOT_NONE) ru_state_tile_set_value(tile, val);
   ru_state_tile_on_tap(tile, cb_row, r);
+  lv_obj_add_event_cb(tile, cb_press, LV_EVENT_PRESSED, a);
   a->row_tiles[a->nrows++] = tile;
   return tile;
 }
@@ -582,99 +666,6 @@ static ru_val_t power_val(ru_val_state_t st, uint32_t now, float watts, float *m
   return make_val(watts, RU_UNIT_W, st, now);
 }
 
-static lv_obj_t *build_home(ru_dzapp_t *a) {
-  const ru_theme_t *t = ru_theme();
-  dz_conn_state_t cs = conn(a);
-  /* hero: first entry that has a power reading, else the first temperature */
-  dz_device_t hd;
-  ru_val_t hv;
-  ru_val_state_t hs = RU_VAL_UNKNOWN;
-  bool have_hero = false, hero_power = false;
-  int ne = sec_find(a, RU_SEC_ENERGY, -1, NULL, NULL, NULL);
-  for (int i = 0; i < ne && !have_hero; i++) {
-    sec_find(a, RU_SEC_ENERGY, i, &hd, &hv, &hs);
-    if (hd.has_usage || hd.has_usage_deliv) { have_hero = hero_power = true; }
-  }
-  if (!have_hero) {
-    int nw = sec_find(a, RU_SEC_WEATHER, -1, NULL, NULL, NULL);
-    for (int i = 0; i < nw && !have_hero; i++) {
-      sec_find(a, RU_SEC_WEATHER, i, &hd, &hv, &hs);
-      if (dz_dev_room_temp(&hd) && hd.cap != DZ_CAP_THERMOSTAT) have_hero = true; /* a room temperature, never a wind sensor's own */
-    }
-  }
-  /* any stale favourite or hero marks the rim */
-  bool any_stale = have_hero && hs == RU_VAL_STALE;
-  size_t total = dz_model_count(a->model);
-  for (size_t i = 0; i < total; i++) {
-    dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
-    if (dz_model_at(a->model, i, &d, &v, &st, &sc, a->now) && d.favorite && st == RU_VAL_STALE) any_stale = true;
-  }
-  lv_obj_t *s = section_screen(a, any_stale);
-  snprintf(a->banner, sizeof a->banner, "%s", banner_for(cs));
-  /* a->banner stays the CONNECTION text (empty when fine); stale data gets its own line */
-  const char *top = a->banner[0] ? a->banner : any_stale ? "STALE DATA" : "";
-  if (top[0]) {
-    label_u(s, top, ru_font_small(), cs == DZ_CS_CONNECTING ? t->text_dim : (cs == DZ_CS_OK || cs == DZ_CS_OFFLINE) ? t->warn : t->error, 0, -41.5f);
-  }
-  if (have_hero) {
-    lv_obj_t *g = ru_ring_gauge_create(s, ru_u(31), hero_power ? "POWER" : "TEMP");
-    lv_obj_align(g, LV_ALIGN_CENTER, 0, ru_u(-21.0f));
-    if (hero_power) {
-      ru_energy_view_t ev;
-      ru_dzv_energy(&hd, &ev);
-      float mx = 1000.0f;
-      ru_val_t pv = ev.known ? power_val(hs, a->now, ev.hero_w, &mx) : ru_val_unknown();
-      ru_ring_gauge_set_color(g, t->accent);
-      ru_ring_gauge_set(g, &pv, 0.0f, mx, a->now);
-    } else {
-      ru_ring_gauge_set_color(g, t->info);
-      dz_units_t un;
-      get_units(a, &un);
-      ru_cl_view_t cv;
-      ru_cl_units_t cu;
-      ru_cl_units(&un, &cu);
-      ru_cl_build(&hd, &cu, &cv);
-      ru_ring_gauge_set_display(g, cv.hero, cv.ring, cv.known ? hs : RU_VAL_UNKNOWN);
-    }
-  } else {
-    label_u(s, "dzPanel", ru_font_title(), t->text_dim, 0, -20);
-  }
-  /* favourites: a row of tiles (devices, scenes and groups the user marked in Domoticz) */
-  int tw = ru_u(21), th = ru_u(21);
-  lv_obj_t *row = lv_obj_create(s);
-  lv_obj_remove_style_all(row);
-  lv_obj_set_size(row, ru_u(67), th);
-  lv_obj_align(row, LV_ALIGN_CENTER, 0, ru_u(13));
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(row, ru_u(1.5f), 0);
-  lv_obj_set_scroll_dir(row, LV_DIR_HOR);
-  lv_obj_set_scroll_snap_x(row, LV_SCROLL_SNAP_START);
-  lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
-  a->list = row;
-  for (int pass = 0; pass < 2; pass++) {
-    for (size_t i = 0; i < total; i++) {
-      dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
-      if (!dz_model_at(a->model, i, &d, &v, &st, &sc, a->now) || !d.favorite || sc != (pass == 1)) continue;
-      add_entry_tile(a, row, tw, th, &d, sc, st);
-    }
-  }
-  if (a->nrows == 0) {
-    lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
-    if (cs == DZ_CS_OK) {
-      label_u(s, "NO FAVOURITES", ru_font_body(), t->text_dim, 0, 10);
-      label_u(s, "MARK THEM IN DOMOTICZ", ru_font_small(), t->text_dim, 0, 17);
-    } else {
-      label_u(s, cs == DZ_CS_TOKEN_REJECTED ? "CHECK THE TOKEN IN SETTINGS" : "WAITING FOR DOMOTICZ", ru_font_small(), t->text_dim, 0, 12);
-    }
-  }
-  fb_label(a, s, 33.5f);
-  pager_dots(a, s);
-  return s;
-}
-
-/* ------------------------------------------------------------------ section: devices and scenes lists */
-
 static lv_obj_t *list_box(lv_obj_t *s, float top_u, float bot_u, int *w_out) {
   const ru_geom_t *g = ru_theme_geom();
   float top = (float)g->diameter / 2 + top_u * g->u, bot = (float)g->diameter / 2 + bot_u * g->u;
@@ -690,32 +681,152 @@ static lv_obj_t *list_box(lv_obj_t *s, float top_u, float bot_u, int *w_out) {
   return list;
 }
 
-static void conn_banner(ru_dzapp_t *a, lv_obj_t *s, dz_conn_state_t cs) {
+static void conn_banner(ru_dzapp_t *a, lv_obj_t *s, dz_conn_state_t cs, float dy_u) {
   snprintf(a->banner, sizeof a->banner, "%s", banner_for(cs));
-  if (a->banner[0]) label_u(s, a->banner, ru_font_small(), cs == DZ_CS_CONNECTING ? ru_theme()->text_dim : cs == DZ_CS_OFFLINE ? ru_theme()->warn : ru_theme()->error, 0, -34);
+  if (a->banner[0]) label_u(s, a->banner, ru_font_small(), cs == DZ_CS_CONNECTING ? ru_theme()->text_dim : cs == DZ_CS_OFFLINE ? ru_theme()->warn : ru_theme()->error, 0, dy_u);
 }
 
-static lv_obj_t *build_devices(ru_dzapp_t *a) {
+/* ---- paged lists ---- */
+
+static void page_go(ru_dzapp_t *a, int p) {
+  a->page = p;
+  build_and_show(a);
+  a->sig = screen_sig(a);
+}
+
+static void cb_pager(lv_event_t *e) {
+  ru_dzapp_t *a = lv_event_get_user_data(e);
+  if (lv_obj_get_screen((lv_obj_t *)lv_event_get_target(e)) != a->scr || a->pages < 2) return;
+  page_go(a, (a->page + 1) % a->pages); /* the indicator is also a button: the next page, round to the first */
+}
+
+/* the 'n/N' page indicator under a list; a tap on it steps to the next page. Nothing for a single page. */
+static void page_indicator(ru_dzapp_t *a, lv_obj_t *s, float dy_u) {
+  if (a->pages < 2) return;
+  char c[16];
+  snprintf(c, sizeof c, "%d/%d", a->page + 1, a->pages);
+  lv_obj_t *l = label_u(s, c, ru_font_small(), ru_theme()->text_dim, 0, dy_u);
+  lv_obj_add_flag(l, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(l, ru_u(3));
+  lv_obj_add_event_cb(l, cb_pager, LV_EVENT_CLICKED, a);
+}
+
+/* Fix the page for a list of n entries with per_page on a page. Returns the first entry of the page. */
+static size_t page_setup(ru_dzapp_t *a, size_t n, int per_page) {
+  a->pages = n ? (int)((n + (size_t)per_page - 1) / (size_t)per_page) : 1;
+  if (a->page >= a->pages) a->page = a->pages - 1;
+  if (a->page < 0) a->page = 0;
+  return (size_t)a->page * (size_t)per_page;
+}
+
+/* The grid of state tiles: 3 columns x 2 rows. Chord at +-23u is 79u, the grid is 78u wide. */
+static lv_obj_t *tile_grid(lv_obj_t *s, float cy_u) {
+  int tw = ru_u(25), th = ru_u(21), gap = ru_u(1.5f);
+  lv_obj_t *g = lv_obj_create(s);
+  lv_obj_remove_style_all(g);
+  lv_obj_set_size(g, GRID_COLS * tw + (GRID_COLS - 1) * gap, GRID_ROWS * th + (GRID_ROWS - 1) * gap);
+  lv_obj_align(g, LV_ALIGN_CENTER, 0, ru_u(cy_u));
+  lv_obj_remove_flag(g, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(g, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_flex_flow(g, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(g, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START); /* a short last row is centred */
+  lv_obj_set_style_pad_row(g, gap, 0);
+  lv_obj_set_style_pad_column(g, gap, 0);
+  return g;
+}
+
+static void grid_page(ru_dzapp_t *a, lv_obj_t *s) {
+  size_t first = page_setup(a, a->ix_n, PAGE_TILES);
+  if (a->ix_n == 0) return;
+  lv_obj_t *g = tile_grid(s, -1.0f);
+  a->list = g;
+  for (size_t k = first; k < a->ix_n && k < first + PAGE_TILES; k++) {
+    dz_device_t d;
+    ru_val_state_t st;
+    bool sc;
+    if (!ix_get(a, k, &d, NULL, &st, &sc)) continue;
+    add_entry_tile(a, g, ru_u(25), ru_u(21), &d, sc, st);
+  }
+  page_indicator(a, s, 26.5f);
+}
+
+/* ---- section: favourites (home) ---- */
+
+static lv_obj_t *build_home(ru_dzapp_t *a) {
   const ru_theme_t *t = ru_theme();
   dz_conn_state_t cs = conn(a);
-  bool any_stale = false;
-  size_t total = dz_model_count(a->model);
-  for (size_t i = 0; i < total; i++) {
-    dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
-    if (dz_model_at(a->model, i, &d, &v, &st, &sc, a->now) && !sc && st == RU_VAL_STALE) any_stale = true;
-  }
+  build_ix(a, RU_SEC_HOME);
+  bool any_stale = ix_any_stale(a);
   lv_obj_t *s = section_screen(a, any_stale);
-  title(s, "DEVICES");
-  conn_banner(a, s, cs);
+  title(s, "FAVOURITES");
+  snprintf(a->banner, sizeof a->banner, "%s", banner_for(cs));
+  /* a->banner stays the CONNECTION text (empty when fine); stale data gets its own line */
+  const char *top = a->banner[0] ? a->banner : any_stale ? "STALE DATA" : "";
+  if (top[0]) {
+    label_u(s, top, ru_font_small(), cs == DZ_CS_CONNECTING ? t->text_dim : (cs == DZ_CS_OK || cs == DZ_CS_OFFLINE) ? t->warn : t->error, 0, -34);
+  }
+  grid_page(a, s);
+  if (a->nrows == 0) {
+    if (cs == DZ_CS_OK) {
+      label_u(s, "NO FAVOURITES", ru_font_body(), t->text_dim, 0, -2);
+      label_u(s, "MARK THEM IN DOMOTICZ", ru_font_small(), t->text_dim, 0, 5);
+    } else {
+      label_u(s, cs == DZ_CS_TOKEN_REJECTED ? "CHECK THE TOKEN IN SETTINGS" : "WAITING FOR DOMOTICZ", ru_font_small(), t->text_dim, 0, 0);
+    }
+  }
+  fb_label(a, s, 33.5f);
+  pager_dots(a, s);
+  return s;
+}
+
+/* ---- lights and scenes: tiles; temperature, weather, utility: value rows ---- */
+
+static const char *empty_text(ru_section_t sec) {
+  switch (sec) {
+    case RU_SEC_LIGHTS: return "NO LIGHTS";
+    case RU_SEC_SCENES: return "NO SCENES";
+    case RU_SEC_TEMP: return "NO TEMPERATURE";
+    case RU_SEC_WEATHER: return "NO WEATHER";
+    default: return "NO DEVICES";
+  }
+}
+
+static lv_obj_t *build_tiles_section(ru_dzapp_t *a, ru_section_t sec) {
+  dz_conn_state_t cs = conn(a);
+  build_ix(a, sec);
+  lv_obj_t *s = section_screen(a, ix_any_stale(a));
+  title(s, ru_section_name(sec));
+  conn_banner(a, s, cs, -34);
+  grid_page(a, s);
+  if (a->nrows == 0) label_u(s, cs == DZ_CS_OK ? empty_text(sec) : "WAITING FOR DOMOTICZ", ru_font_body(), ru_theme()->text_dim, 0, 0);
+  fb_label(a, s, 33.5f);
+  pager_dots(a, s);
+  return s;
+}
+
+static lv_obj_t *build_rows_section(ru_dzapp_t *a, ru_section_t sec) {
+  const ru_theme_t *t = ru_theme();
+  dz_conn_state_t cs = conn(a);
+  build_ix(a, sec);
+  lv_obj_t *s = section_screen(a, ix_any_stale(a));
+  title(s, ru_section_name(sec));
+  conn_banner(a, s, cs, -34);
+  size_t first = page_setup(a, a->ix_n, PAGE_ROWS);
   int w;
-  lv_obj_t *list = list_box(s, -29, 33, &w);
+  const float rh = 13.0f, pad = 1.5f;
+  lv_obj_t *list = list_box(s, -29, -29 + PAGE_ROWS * rh + (PAGE_ROWS - 1) * pad, &w);
+  lv_obj_remove_flag(list, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(list, ru_u(1.5f), 0);
+  lv_obj_set_style_pad_row(list, ru_u(pad), 0);
   a->list = list;
-  for (size_t i = 0; i < total && a->nrows < MAX_ROWS; i++) {
-    dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
-    if (!dz_model_at(a->model, i, &d, &v, &st, &sc, a->now) || sc) continue;
+  dz_units_t un;
+  get_units(a, &un);
+  for (size_t k = first; k < a->ix_n && k < first + PAGE_ROWS && a->nrows < MAX_ROWS; k++) {
+    dz_device_t d;
+    ru_val_state_t st;
+    bool sc;
+    if (!ix_get(a, k, &d, NULL, &st, &sc)) continue;
     row_t *r = &a->rows[a->nrows];
     r->app = a; r->scene = false; r->setting = -1;
     snprintf(r->idx, sizeof r->idx, "%s", d.idx);
@@ -723,57 +834,25 @@ static lv_obj_t *build_devices(ru_dzapp_t *a) {
     ru_dzv_upper(nm, sizeof nm, d.name);
     ru_dzv_clamp(nm, sizeof nm, nm, 22);
     bool known;
-    dz_units_t un;
-    get_units(a, &un);
     ru_dzv_value_text_u(&d, &un, txt, sizeof txt, &known);
-    lv_obj_t *tile = ru_value_tile_create(list, w, ru_u(12), nm);
+    lv_obj_t *tile = ru_value_tile_create(list, w, ru_u(rh), nm);
     bool on = (d.cap == DZ_CAP_ONOFF || d.cap == DZ_CAP_DIMMER) && dz_device_state(&d) == DZ_STATE_ON;
     ru_value_tile_set_color(tile, on ? t->accent : t->text);
     ru_value_tile_set_text(tile, txt, known ? st : RU_VAL_UNKNOWN);
     ru_value_tile_on_tap(tile, cb_row, r);
+    lv_obj_add_event_cb(tile, cb_press, LV_EVENT_PRESSED, a);
     a->row_tiles[a->nrows++] = tile;
   }
-  if (a->nrows == 0) {
-    label_u(s, cs == DZ_CS_OK ? "NO DEVICES" : "WAITING FOR DOMOTICZ", ru_font_body(), t->text_dim, 0, 0);
-  }
-  fb_label(a, s, 37.5f);
+  if (a->nrows == 0) label_u(s, cs == DZ_CS_OK ? empty_text(sec) : "WAITING FOR DOMOTICZ", ru_font_body(), t->text_dim, 0, 0);
+  page_indicator(a, s, 31.5f);
+  fb_label(a, s, 37.0f);
   pager_dots(a, s);
   return s;
 }
 
-static lv_obj_t *build_scenes(ru_dzapp_t *a) {
-  dz_conn_state_t cs = conn(a);
-  bool any_stale = false;
-  size_t total = dz_model_count(a->model);
-  for (size_t i = 0; i < total; i++) {
-    dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
-    if (dz_model_at(a->model, i, &d, &v, &st, &sc, a->now) && sc && st == RU_VAL_STALE) any_stale = true;
-  }
-  lv_obj_t *s = section_screen(a, any_stale);
-  title(s, "SCENES");
-  conn_banner(a, s, cs);
-  lv_obj_t *grid = list_box(s, -32, 29, NULL);
-  int gw = ru_u(55);
-  lv_obj_set_width(grid, gw);
-  lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-  lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(grid, ru_u(1.5f), 0);
-  lv_obj_set_style_pad_column(grid, ru_u(2), 0);
-  a->list = grid;
-  for (size_t i = 0; i < total; i++) {
-    dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
-    if (!dz_model_at(a->model, i, &d, &v, &st, &sc, a->now) || !sc) continue;
-    add_entry_tile(a, grid, ru_u(25), ru_u(21), &d, sc, st);
-  }
-  fb_label(a, s, 35.0f);
-  pager_dots(a, s);
-  return s;
-}
-
-/* ------------------------------------------------------------------ section: energy, weather */
+/* ------------------------------------------------------------------ section: energy */
 
 static void cb_cycle_energy(lv_event_t *e) { ru_dzapp_t *a = lv_event_get_user_data(e); a->energy_sel++; a->sig = 0; }
-static void cb_cycle_weather(lv_event_t *e) { ru_dzapp_t *a = lv_event_get_user_data(e); a->weather_sel++; a->sig = 0; }
 
 static const char *stale_text(const ru_val_t *v, uint32_t now) {
   static char buf[40];
@@ -793,12 +872,16 @@ static lv_obj_t *tap_zone(lv_obj_t *s, lv_event_cb_t cb, ru_dzapp_t *a) {
 
 static lv_obj_t *build_energy(ru_dzapp_t *a) {
   const ru_theme_t *t = ru_theme();
-  int n = sec_find(a, RU_SEC_ENERGY, -1, NULL, NULL, NULL);
+  int n = (int)build_ix(a, RU_SEC_ENERGY);
   dz_device_t d;
   ru_val_t v;
   ru_val_state_t st = RU_VAL_UNKNOWN;
   bool have = n > 0;
-  if (have) { a->energy_sel %= n; sec_find(a, RU_SEC_ENERGY, a->energy_sel, &d, &v, &st); }
+  if (have) {
+    a->energy_sel %= n;
+    bool sc;
+    if (!ix_get(a, (size_t)a->energy_sel, &d, &v, &st, &sc)) have = false;
+  }
   lv_obj_t *s = section_screen(a, have && st == RU_VAL_STALE);
   if (!have) {
     title(s, "ENERGY");
@@ -838,144 +921,6 @@ static lv_obj_t *build_energy(ru_dzapp_t *a) {
   if (st == RU_VAL_STALE) label_u(s, v.valid ? stale_text(&v, a->now) : "STALE", ru_font_small(), t->warn, 0, 33);
   if (n > 1) tap_zone(s, cb_cycle_energy, a);
   fb_label(a, s, 38);
-  pager_dots(a, s);
-  return s;
-}
-
-/* ---- climate: every sensor as pages of readings, plus an overview list when there are many ---- */
-
-#define CL_OVERVIEW_FROM 4 /* from this many devices on, page 0 is a compact list of all of them */
-
-static void cb_cl_pick(lv_obj_t *w, void *ud) {
-  (void)w;
-  row_t *r = ud;
-  r->app->weather_sel = r->setting; /* the page of that device */
-  r->app->sig = 0;
-}
-
-/* tapping the hero of a thermostat or mode page opens its control screen */
-static void cb_cl_open(lv_event_t *e) {
-  ru_dzapp_t *a = lv_event_get_user_data(e);
-  ru_dzapp_open(a, a->cl_open_idx, false);
-}
-
-static lv_obj_t *build_weather(ru_dzapp_t *a) {
-  const ru_theme_t *t = ru_theme();
-  int n = sec_find(a, RU_SEC_WEATHER, -1, NULL, NULL, NULL);
-  dz_device_t d;
-  ru_val_t v;
-  ru_val_state_t st = RU_VAL_UNKNOWN;
-  bool have = n > 0, over = n >= CL_OVERVIEW_FROM;
-  int pages = n + (over ? 1 : 0), page = 0;
-  if (have) { a->weather_sel = a->weather_sel < 0 ? 0 : a->weather_sel % pages; page = a->weather_sel; }
-  bool on_over = over && page == 0;
-  int k = page - (over ? 1 : 0);
-  if (have && !on_over) sec_find(a, RU_SEC_WEATHER, k, &d, &v, &st);
-  bool any_stale = have && !on_over && st == RU_VAL_STALE;
-  dz_units_t un;
-  get_units(a, &un);
-  ru_cl_units_t cu;
-  ru_cl_units(&un, &cu);
-  if (have && on_over) {
-    for (int i = 0; i < n; i++) { dz_device_t dd; ru_val_t vv; ru_val_state_t ss; sec_find(a, RU_SEC_WEATHER, i, &dd, &vv, &ss); any_stale = any_stale || ss == RU_VAL_STALE; }
-  }
-  lv_obj_t *s = section_screen(a, any_stale);
-  if (!have) {
-    title(s, "CLIMATE");
-    label_u(s, "NO SENSORS", ru_font_body(), t->text_dim, 0, 0);
-    pager_dots(a, s);
-    return s;
-  }
-  if (on_over) {
-    static ru_cl_item_t items[MAX_ROWS];
-    static lv_obj_t *tiles[MAX_ROWS];
-    int m = n < MAX_ROWS ? n : MAX_ROWS;
-    for (int i = 0; i < m; i++) {
-      dz_device_t dd;
-      ru_val_t vv;
-      ru_val_state_t ss;
-      sec_find(a, RU_SEC_WEATHER, i, &dd, &vv, &ss);
-      char nm[40];
-      ru_dzv_upper(nm, sizeof nm, dd.name);
-      ru_dzv_clamp(items[i].name, sizeof items[i].name, nm, 22);
-      ru_dzv_value_text_u(&dd, &un, items[i].value, sizeof items[i].value, &items[i].known);
-      items[i].st = ss;
-    }
-    ru_climate_overview(s, "CLIMATE", items, m, tiles, MAX_ROWS);
-    /* the headline under the title: the room temperature (the same device the home hero uses), only when there is one */
-    for (int i = 0; i < n; i++) {
-      dz_device_t hd;
-      ru_val_t hv;
-      ru_val_state_t hs;
-      sec_find(a, RU_SEC_WEATHER, i, &hd, &hv, &hs);
-      if (!dz_dev_room_temp(&hd) || hd.cap == DZ_CAP_THERMOSTAT) continue;
-      ru_cl_view_t hc;
-      ru_cl_build(&hd, &cu, &hc);
-      if (hc.known && hc.hero[0]) {
-        char head[40];
-        snprintf(head, sizeof head, "TEMP %s", hc.hero);
-        label_u(s, head, ru_font_small(), hs == RU_VAL_STALE ? t->stale : t->text_dim, 0, -34.5f);
-      }
-      break;
-    }
-    ru_climate_next_zone(s, cb_cycle_weather, a);
-    a->nrows = 0;
-    for (int i = 0; i < m && a->nrows < MAX_ROWS; i++) {
-      row_t *r = &a->rows[a->nrows];
-      r->app = a; r->scene = false; r->setting = i + 1; /* page index in the pager */
-      r->idx[0] = 0;
-      ru_value_tile_on_tap(tiles[i], cb_cl_pick, r);
-      a->row_tiles[a->nrows++] = tiles[i];
-    }
-    pager_dots(a, s);
-    return s;
-  }
-  ru_cl_view_t cv;
-  if (d.cap == DZ_CAP_THERMOSTAT || d.cap == DZ_CAP_MODE) {
-    /* a control: its page shows the state; a tap opens the dial or the mode selector */
-    memset(&cv, 0, sizeof cv);
-    cv.ring = -1.0f;
-    char nm[40];
-    ru_dzv_upper(nm, sizeof nm, d.name);
-    ru_dzv_clamp(cv.name, sizeof cv.name, nm, 18);
-    cv.battery_low = ru_cl_battery_low(&d);
-    if (d.cap == DZ_CAP_THERMOSTAT) {
-      dz_device_t ps;
-      ru_val_t pv;
-      ru_val_state_t pst;
-      bool plan = !dz_dev_room_temp(&d) && dz_model_plan_temp(a->model, &d, &ps, &pv, &pst, a->now);
-      ru_cl_thermo_t th;
-      ru_cl_thermo(&d, &un, plan ? &ps : NULL, a->allow_control, &th);
-      cv.page = RU_CLP_SETPOINT;
-      cv.known = th.has_setpoint;
-      ru_cl_thermo_text(&th, th.setpoint, cv.hero, sizeof cv.hero);
-      snprintf(cv.caption, sizeof cv.caption, "SETPOINT");
-      if (th.control && th.hi > th.lo) cv.ring = (th.setpoint - th.lo) / (th.hi - th.lo);
-      if (th.has_now) { char x[24]; ru_cl_thermo_text(&th, th.now, x, sizeof x); snprintf(cv.line[cv.n_lines++].text, sizeof cv.line[0].text, "NOW %s", x); }
-      else if (th.is_temp) snprintf(cv.line[cv.n_lines++].text, sizeof cv.line[0].text, "NOW --");
-      if (th.control) snprintf(cv.line[cv.n_lines++].text, sizeof cv.line[0].text, "TAP TO ADJUST");
-      else { snprintf(cv.line[cv.n_lines].text, sizeof cv.line[0].text, "READ ONLY  %s", th.reason); cv.line[cv.n_lines++].warn = false; }
-    } else {
-      cv.page = RU_CLP_TEXT;
-      cv.known = d.data[0] != 0;
-      snprintf(cv.text, sizeof cv.text, "%s", d.data);
-      snprintf(cv.caption, sizeof cv.caption, "MODE");
-      snprintf(cv.line[cv.n_lines++].text, sizeof cv.line[0].text, "%s", d.controllable && a->allow_control ? "TAP TO CHANGE" : "READ ONLY");
-    }
-    snprintf(a->cl_open_idx, sizeof a->cl_open_idx, "%s", d.idx);
-  } else {
-    ru_cl_build(&d, &cu, &cv);
-  }
-  char age[24], stale[40];
-  ru_age_format(ru_val_age_ms(&v, a->now), age, sizeof age);
-  snprintf(stale, sizeof stale, v.valid ? "UPDATED %s" : "STALE", age);
-  ru_dzv_upper(stale, sizeof stale, stale);
-  /* the counter counts devices over all pages: with the overview as page 0, device k is "k+1/n+1" */
-  ru_cl_page_ctx_t ctx = { .v = &cv, .st = st, .stale_text = stale, .k = k, .n = pages };
-  ru_climate_draw_page(s, &ctx);
-  if (d.cap == DZ_CAP_THERMOSTAT || d.cap == DZ_CAP_MODE) ru_climate_tap_zone(s, cb_cl_open, a);
-  else if (pages > 1) ru_climate_tap_zone(s, cb_cycle_weather, a);
-  if (pages > 1) ru_climate_next_zone(s, cb_cycle_weather, a);
   pager_dots(a, s);
   return s;
 }
@@ -1411,10 +1356,12 @@ static void build_and_show(ru_dzapp_t *a) {
     case RU_VIEW_SUB: s = build_sub(a); break;
     default:
       switch (a->section) {
-        case RU_SEC_DEVICES: s = build_devices(a); break;
-        case RU_SEC_SCENES: s = build_scenes(a); break;
+        case RU_SEC_LIGHTS:
+        case RU_SEC_SCENES: s = build_tiles_section(a, a->section); break;
+        case RU_SEC_TEMP:
+        case RU_SEC_WEATHER:
+        case RU_SEC_UTILITY: s = build_rows_section(a, a->section); break;
         case RU_SEC_ENERGY: s = build_energy(a); break;
-        case RU_SEC_WEATHER: s = build_weather(a); break;
         case RU_SEC_SETTINGS: s = build_settings(a); break;
         default: s = build_home(a); break;
       }
@@ -1432,7 +1379,7 @@ static uint64_t screen_sig(ru_dzapp_t *a) {
   h = fnv(h, &a->view, sizeof a->view);
   h = fnv(h, &a->section, sizeof a->section);
   h = fnv(h, &a->energy_sel, sizeof a->energy_sel);
-  h = fnv(h, &a->weather_sel, sizeof a->weather_sel);
+  h = fnv(h, &a->page, sizeof a->page);
   h = fnv(h, &a->fb.st, sizeof a->fb.st);
   h = fnv(h, a->fb.text, strlen(a->fb.text));
   size_t total = dz_model_count(a->model);
@@ -1451,6 +1398,9 @@ static uint64_t screen_sig(ru_dzapp_t *a) {
     h = fnv(h, d.status, strlen(d.status));
     h = fnv(h, &st, sizeof st);
     h = fnv(h, &scene, sizeof scene);
+    h = fnv(h, &d.favorite, sizeof d.favorite); /* membership and order of the pages */
+    h = fnv(h, &d.tabs, sizeof d.tabs);
+    { uint16_t o = dz_model_order_at(a->model, i); h = fnv(h, &o, sizeof o); }
     h = fnv(h, &d.level, sizeof d.level);
     h = fnv(h, &d.level_int, sizeof d.level_int);
     h = fnv(h, &d.setpoint, sizeof d.setpoint);
@@ -1479,22 +1429,50 @@ static uint64_t screen_sig(ru_dzapp_t *a) {
 
 void ru_dzapp_show_section(ru_dzapp_t *a, ru_section_t s) {
   if (s >= RU_SEC_COUNT || !ru_dzapp_section_available(a, s)) s = RU_SEC_HOME;
+  /* the page is kept when the same section is shown again (back from a detail or a hold), reset when it changes */
+  if (s != a->section) a->page = 0;
   a->section = s;
   a->view = RU_VIEW_HOME;
   build_and_show(a);
   a->sig = screen_sig(a);
 }
 
-void ru_dzapp_home(ru_dzapp_t *a) { ru_dzapp_show_section(a, RU_SEC_HOME); }
+void ru_dzapp_home(ru_dzapp_t *a) {
+  a->page = 0;
+  ru_dzapp_show_section(a, RU_SEC_HOME);
+}
 ru_section_t ru_dzapp_section(const ru_dzapp_t *a) { return a->section; }
+int ru_dzapp_page(const ru_dzapp_t *a) { return a->page; }
+int ru_dzapp_pages(const ru_dzapp_t *a) { return a->pages; }
 
-void ru_dzapp_step_section(ru_dzapp_t *a, int dir) {
+bool ru_dzapp_step_section(ru_dzapp_t *a, int dir) {
+  unsigned mask = avail_mask(a);
   int s = (int)a->section;
-  for (int i = 0; i < RU_SEC_COUNT; i++) {
-    s = (s + (dir >= 0 ? 1 : RU_SEC_COUNT - 1)) % RU_SEC_COUNT;
-    if (ru_dzapp_section_available(a, (ru_section_t)s)) break;
-  }
+  do s += dir >= 0 ? 1 : -1; while (s >= 0 && s < RU_SEC_COUNT && !(mask >> s & 1u));
+  if (s < 0 || s >= RU_SEC_COUNT) return false; /* no wrap: the first and the last section are ends */
   ru_dzapp_show_section(a, (ru_section_t)s);
+  return true;
+}
+
+static bool page_step(ru_dzapp_t *a, int dir) {
+  int p = a->page + (dir >= 0 ? 1 : -1);
+  if (a->pages < 2 || p < 0 || p >= a->pages) return false;
+  page_go(a, p);
+  return true;
+}
+
+bool ru_dzapp_swipe(ru_dzapp_t *a, ru_dir_t dir, int x0, int y0) {
+  if (a->view != RU_VIEW_HOME) return false; /* detail, hold and sub screens do not swipe */
+  if (a->now < a->interact_until) return false; /* a slider is held */
+  float c = (float)ru_theme_geom()->diameter / 2, dx = (float)x0 - c, dy = (float)y0 - c;
+  if (dx * dx + dy * dy >= 0.81f * c * c) return false; /* started in the rim: the shell owns it */
+  switch (dir) {
+    case RU_DIR_LEFT: return ru_dzapp_step_section(a, 1);
+    case RU_DIR_RIGHT: return ru_dzapp_step_section(a, -1);
+    case RU_DIR_UP: return page_step(a, 1);
+    case RU_DIR_DOWN: return page_step(a, -1);
+    default: return false;
+  }
 }
 
 void ru_dzapp_open(ru_dzapp_t *a, const char *idx, bool is_scene) {
@@ -1510,11 +1488,6 @@ void ru_dzapp_pick_mode(ru_dzapp_t *a, int slot) { cb_mode(NULL, slot, true, a);
 
 void ru_dzapp_select(ru_dzapp_t *a, ru_section_t s, int n) {
   if (s == RU_SEC_ENERGY) a->energy_sel = n < 0 ? 0 : n;
-  else if (s == RU_SEC_WEATHER) {
-    /* n = the n-th climate device; with an overview list, page 0 is the list (n < 0 selects it) */
-    int cnt = sec_find(a, RU_SEC_WEATHER, -1, NULL, NULL, NULL);
-    a->weather_sel = n < 0 ? 0 : n + (cnt >= CL_OVERVIEW_FROM ? 1 : 0);
-  }
   a->sig = 0;
 }
 
@@ -1630,6 +1603,7 @@ void ru_dzapp_destroy(ru_dzapp_t *a) {
   if (!a) return;
   ru_dzapp_net_stop(a);
   if (a->timer) lv_timer_delete(a->timer);
+  free(a->ix);
   if (a->req_q) ru_queue_destroy(a->req_q);
   if (a->res_q) ru_queue_destroy(a->res_q);
   free(a);

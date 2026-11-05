@@ -1,0 +1,42 @@
+menu "dzPanel task stacks"
+    # Every ru_task_create() task gets its stack size from here (ru_osal_freertos.c, lookup by task name); a name that is not
+    # listed uses RU_TASK_STACK_DEFAULT. Stacks are allocated from internal RAM. Defaults equal the former fixed 10240.
+    # Heap-log high-water marks measured on the Guition board (heaplog "stack-free-min", 10240 byte stacks, normal workload):
+    # ru_wifi 9228 free (uses ~1.0 KB), ui_bridge 5512 (~4.7 KB), dz_service 5452 (~4.8 KB), ru_console 3688 (~6.5 KB).
+
+    config RU_TASK_STACK_DEFAULT
+        int "Stack bytes of ru_task_create tasks without their own setting (dz-net, boot_health)"
+        range 3072 32768
+        default 10240
+
+    config RU_TASK_STACK_WIFI
+        int "Stack bytes of the ru_wifi task"
+        range 3072 32768
+        default 10240
+        help
+            Measured use about 1.0 KB (min free 9228 of 10240). Guition uses 4608.
+
+    config RU_TASK_STACK_UI_BRIDGE
+        int "Stack bytes of the ui_bridge task"
+        range 3072 32768
+        default 10240
+        help
+            Measured use about 4.7 KB (min free 5512 of 10240). Guition uses 7168 (about 2.4 KB margin).
+
+    config RU_TASK_STACK_DZ_SERVICE
+        int "Stack bytes of the dz_service task (Domoticz polling, plain http or TLS)"
+        range 3072 32768
+        default 10240
+        help
+            Measured use about 4.8 KB over plain http (min free 5452 of 10240). A TLS (https) request needs about 8 KB on this
+            task (see dz_transport_esp.h): keep the default 10240 for https setups. Guition uses 7168 and only polls plain
+            http on the LAN with this image.
+
+    config RU_TASK_STACK_CONSOLE
+        int "Stack bytes of the ru_console task"
+        range 3072 32768
+        default 10240
+        help
+            Measured use about 6.5 KB (min free 3688 of 10240): keep 10240.
+
+endmenu

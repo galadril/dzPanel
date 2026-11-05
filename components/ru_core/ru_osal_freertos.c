@@ -10,8 +10,9 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-#ifndef RU_TASK_STACK_BYTES
-#define RU_TASK_STACK_BYTES 10240
+#include "sdkconfig.h"
+#ifndef RU_TASK_STACK_BYTES /* host-independent override for the unlisted tasks */
+#define RU_TASK_STACK_BYTES CONFIG_RU_TASK_STACK_DEFAULT
 #endif
 #ifndef RU_TASK_PRIORITY
 #define RU_TASK_PRIORITY 5
@@ -67,6 +68,20 @@ void ru_queue_destroy(ru_queue_t *q) {
   free(q);
 }
 
+/* The single place that decides a task's stack: per-name Kconfig sizes (components/ru_core/Kconfig), everything else
+ * (dz-net, boot_health, ...) uses the default. Stacks come from internal RAM. */
+static uint32_t stack_for(const char *name) {
+  static const struct { const char *name; uint32_t bytes; } k_stacks[] = {
+      {"ru_wifi", CONFIG_RU_TASK_STACK_WIFI},
+      {"ui_bridge", CONFIG_RU_TASK_STACK_UI_BRIDGE},
+      {"dz_service", CONFIG_RU_TASK_STACK_DZ_SERVICE},
+      {"ru_console", CONFIG_RU_TASK_STACK_CONSOLE},
+  };
+  for (size_t i = 0; name && i < sizeof k_stacks / sizeof k_stacks[0]; i++)
+    if (!strcmp(name, k_stacks[i].name)) return k_stacks[i].bytes;
+  return RU_TASK_STACK_BYTES;
+}
+
 struct ru_task { ru_task_fn fn; void *arg; SemaphoreHandle_t done; char name[16]; };
 static void task_tramp(void *p) {
   ru_task_t *t = p;
@@ -82,7 +97,7 @@ ru_task_t *ru_task_create(const char *name, ru_task_fn fn, void *arg) {
   if (name) strncpy(t->name, name, sizeof t->name - 1);
   t->done = xSemaphoreCreateBinary();
   if (!t->done) { free(t); return NULL; }
-  if (xTaskCreate(task_tramp, t->name[0] ? t->name : "ru_task", RU_TASK_STACK_BYTES, t, RU_TASK_PRIORITY, NULL) != pdPASS) {
+  if (xTaskCreate(task_tramp, t->name[0] ? t->name : "ru_task", stack_for(t->name), t, RU_TASK_PRIORITY, NULL) != pdPASS) {
     vSemaphoreDelete(t->done);
     free(t);
     return NULL;

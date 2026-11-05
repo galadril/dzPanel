@@ -15,15 +15,19 @@
 #include "lvgl.h"
 #include "ru_dzview.h"
 #include "ru_fb.h"
+#include "ru_gesture.h"
 #include "ru_theme.h"
 #include "ru_widgets.h"
 
 typedef struct ru_dzapp ru_dzapp_t;
 
-/* The apps (sections). Each one is a ru_app_t in ru_apps_table.c. Scenes, Energy and Weather are hidden (not
- * available) when the model has nothing for them. */
+/* The pages (sections), in the order of the Domoticz web UI: Favourites (RU_SEC_HOME), Lights, Scenes/Groups,
+ * Temperature, Weather, Utility, Energy, Settings. Each one is a ru_app_t in ru_apps_table.c. Every page except Home and
+ * Settings is hidden (not available) when the model has nothing for it. Membership of Lights / Temperature / Weather /
+ * Utility comes from dz_device_t.tabs (dz_tabs_of), order from dz_model_order. */
 typedef enum {
-  RU_SEC_HOME, RU_SEC_DEVICES, RU_SEC_SCENES, RU_SEC_ENERGY, RU_SEC_WEATHER, RU_SEC_SETTINGS, RU_SEC_COUNT
+  RU_SEC_HOME, RU_SEC_LIGHTS, RU_SEC_SCENES, RU_SEC_TEMP, RU_SEC_WEATHER, RU_SEC_UTILITY, RU_SEC_ENERGY, RU_SEC_SETTINGS,
+  RU_SEC_COUNT
 } ru_section_t;
 const char *ru_section_name(ru_section_t s);
 
@@ -80,7 +84,7 @@ ru_view_t ru_dzapp_view(const ru_dzapp_t *a);
 const char *ru_dzapp_current_idx(const ru_dzapp_t *a);
 const char *ru_dzapp_banner(const ru_dzapp_t *a); /* connection banner text shown on home, "" when fine */
 lv_obj_t *ru_dzapp_screen(const ru_dzapp_t *a);
-size_t ru_dzapp_home_rows(const ru_dzapp_t *a);
+size_t ru_dzapp_home_rows(const ru_dzapp_t *a); /* tiles / rows of the current section screen (the current page) */
 const char *ru_dzapp_toast(const ru_dzapp_t *a); /* the visible result message, "" when none */
 /* Tap the n-th home row exactly as a finger would. */
 bool ru_dzapp_tap_row(ru_dzapp_t *a, size_t n);
@@ -89,7 +93,17 @@ bool ru_dzapp_tap_row(ru_dzapp_t *a, size_t n);
 bool ru_dzapp_section_available(ru_dzapp_t *a, ru_section_t s);
 void ru_dzapp_show_section(ru_dzapp_t *a, ru_section_t s); /* unavailable section: falls back to Home */
 ru_section_t ru_dzapp_section(const ru_dzapp_t *a);
-void ru_dzapp_step_section(ru_dzapp_t *a, int dir);        /* +1 / -1 over the available sections (swipe) */
+/* +1 / -1 to the next / previous available section. No wrap: false (and no change) at the first / last. */
+bool ru_dzapp_step_section(ru_dzapp_t *a, int dir);
+/* THE decision point for a swipe in the CONTENT zone (the shell forwards RU_G_SWIPE with zone CONTENT; the rim
+ * recogniser keeps the rest). finger left/right = next/previous section, finger up/down = next/previous page of a
+ * list. (x0, y0) is where the finger went down (screen px). Refused (false, nothing changes) when it started in the
+ * rim (r >= 0.90 R), while a slider is held (interact window), and on any screen that is not a section (detail,
+ * confirm, sub) or at the end of the sections / pages. true = it moved. */
+bool ru_dzapp_swipe(ru_dzapp_t *a, ru_dir_t dir, int x0, int y0);
+/* Current page (0-based) and number of pages of the current list screen (1 for screens that are not paged). */
+int ru_dzapp_page(const ru_dzapp_t *a);
+int ru_dzapp_pages(const ru_dzapp_t *a);
 void ru_dzapp_open_sub(ru_dzapp_t *a, ru_sub_t sub);
 
 /* ---- feedback, platform hooks, test hooks ---- */
@@ -107,8 +121,8 @@ bool ru_dzapp_row_info(const ru_dzapp_t *a, size_t n, ru_dzapp_row_info_t *out);
 /* The confirm screen in progress: the verb ("ACTIVATE", "SWITCH OFF"...) and the command it will send. */
 const char *ru_dzapp_confirm_verb(const ru_dzapp_t *a);
 dz_cmd_kind_t ru_dzapp_confirm_kind(const ru_dzapp_t *a);
-/* Energy and Weather (climate) show one device at a time; a tap on the hero cycles. This picks the n-th device (tests,
- * driver). Climate with 4 or more devices starts with an overview list page: n < 0 selects that page. */
+/* Energy shows one meter at a time; a tap on the gauge cycles. This picks the n-th meter (tests, driver). Other sections
+ * ignore it. */
 void ru_dzapp_select(ru_dzapp_t *a, ru_section_t s, int n);
 /* Test hook: choose the slot-th mode in the open mode device's selector exactly as the wheel would (opens the hold). */
 void ru_dzapp_pick_mode(ru_dzapp_t *a, int slot);
