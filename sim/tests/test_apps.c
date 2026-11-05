@@ -258,11 +258,11 @@ static void feedback(int size) {
   r.fail = DZ_FAIL_FORBIDDEN;
   ru_dzapp_inject_result(a, &r);
   ru_dzapp_ui_tick(a, f.T);
-  CHECK(shows(a, "TOKEN CANNOT SWITCH") && !shows(a, "DONE"));
+  CHECK(shows(a, "NO SWITCH RIGHTS") && !shows(a, "DONE"));
   /* a problem stays visible after a confirmation would have faded */
   f.T += RU_FB_CONFIRMED_SHOW_MS + 10;
   ru_dzapp_ui_tick(a, f.T);
-  CHECK(shows(a, "TOKEN CANNOT SWITCH"));
+  CHECK(shows(a, "NO SWITCH RIGHTS"));
   f.T += RU_FB_PROBLEM_SHOW_MS;
   ru_dzapp_ui_tick(a, f.T);
   CHECK(ru_dzapp_feedback(a)->st == RU_FB_IDLE);

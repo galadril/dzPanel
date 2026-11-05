@@ -19,7 +19,7 @@ void ru_fb_begin(ru_fb_t *f, const char *idx, bool scene, uint32_t now_ms) {
 
 static const char *fail_text(dz_fail_t x) {
   switch (x) {
-    case DZ_FAIL_FORBIDDEN: return "TOKEN CANNOT SWITCH";
+    case DZ_FAIL_FORBIDDEN: return "NO SWITCH RIGHTS";
     case DZ_FAIL_UNAUTHORIZED: return "TOKEN REJECTED";
     case DZ_FAIL_TRANSPORT: return "NO CONNECTION";
     case DZ_FAIL_SERVER: return "SERVER ERROR";

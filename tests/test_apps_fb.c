@@ -46,7 +46,7 @@ int main(void) {
   /* failures name the reason */
   r = res(DZ_OUT_FAILED, DZ_FAIL_FORBIDDEN);
   ru_fb_on_result(&f, &r, 30000);
-  CHECK(f.st == RU_FB_FAILED && !strcmp(ru_fb_text(&f), "TOKEN CANNOT SWITCH"));
+  CHECK(f.st == RU_FB_FAILED && !strcmp(ru_fb_text(&f), "NO SWITCH RIGHTS"));
   r = res(DZ_OUT_FAILED, DZ_FAIL_TRANSPORT);
   ru_fb_on_result(&f, &r, 30000);
   CHECK(!strcmp(ru_fb_text(&f), "NO CONNECTION"));
