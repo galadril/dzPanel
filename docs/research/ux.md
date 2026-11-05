@@ -492,6 +492,21 @@ Face B "Orbit": seconds bead around rim, time smaller, the day progress as faint
 - Detail screen (dimmer): big arc slider along the rim (drag the bead), centre = % and name, +/- buttons, tap centre = on/off.
 - Lock action: hold-to-confirm (9.6). Read-only mode (MVP): rows show a lock glyph instead of switch.
 
+### 10.4a Domoticz page model (as built)
+
+The Domoticz app is a row of pages that follows the Domoticz web UI. One dot per visible page (current one larger) sits at the bottom.
+
+```
+FAVOURITES  LIGHTS  SCENES  TEMPERATURE  WEATHER  UTILITY  ENERGY  SETTINGS
+```
+
+- **Visibility.** Favourites and Settings always. Every other page is hidden while the model has nothing for it. Membership comes from the Domoticz tab of each device (`dz_device_t.tabs`, table in `docs/research/domoticz-api.md`): LIGHTS = light tab (not scenes or groups), SCENES = the scene/group entries, TEMPERATURE / WEATHER / UTILITY = those tabs (a Temp + Humidity + Baro device is on both TEMPERATURE and WEATHER; devices on no tab only show on Favourites when they are favourites). ENERGY = meters with a usage or day total, one at a time with its gauge (unchanged).
+- **Order.** The server's order (`dz_model_order`); devices that arrive by delta and are new sort last until the next full refresh.
+- **Favourites** = the favourites only, in dashboard order: scenes and groups, lights, temperature, weather, utility, the rest. No hero gauge. "NO FAVOURITES" when empty; the "STALE DATA" line stays.
+- **Layout.** LIGHTS, SCENES and FAVOURITES are a 3 x 2 grid of state tiles (25u x 21u, 1.5u gaps: 78u wide, inside the 79u chord at +-23u), 6 per page. TEMPERATURE, WEATHER and UTILITY are value rows (13u high, name left, value right), 4 per page. A page indicator "2/4" sits under the list (it is a button: next page, round to the first). Nothing scrolls; there is no cap on the number of devices. At most 6 tiles (or 4 rows) of LVGL objects exist per screen: the index list (8 bytes per entry, one pass over the model) is the only per-device memory.
+- **Gestures.** Finger left/right = next/previous page (section), no wrap. Finger up/down = next/previous list page, no wrap. One decision point, `ru_dzapp_swipe`, fed by the shell's recogniser for CONTENT-zone swipes; it refuses starts in the rim (r >= 0.90 R), while a slider is held and on detail, hold-to-confirm and settings sub screens. The rim keeps BACK / HOME. A drag that ends on the tile it started on is not a tap.
+- **Return.** A tap opens the existing detail (or the hold screen for scenes and groups). BACK returns to the same page and list page; leaving the page forgets the list page.
+
 ### 10.5 Energy dashboard (solar / grid / battery ring)
 ```
           ☀ 2.1 kW                top (12 o'clock, chord-safe)

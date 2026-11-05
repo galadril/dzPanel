@@ -228,10 +228,13 @@ The shell lives on LVGL's top layer, above any app, so apps never see it.
 ```
                  [ Quick settings ]        swipe down from top edge
                          ▲
- [Clock] ◂▸ [ HOME ] ◂▸ [Energy] ◂▸ [Domoticz] ◂▸ [Settings]    swipe left / right
+ [Favourites] ◂▸ [Lights] ◂▸ [Scenes] ◂▸ [Temperature] ◂▸ [Weather] ◂▸ [Utility] ◂▸ [Energy] ◂▸ [Settings]
+                                                   swipe left / right (no wrap); empty pages hidden
+                  swipe up / down: the pages of a list ("2/4"), 3x2 tiles or 4 rows a page
                          ▼
                    [ Launcher ]            swipe up from bottom edge
 
+ Content swipes (left/right/up/down) are decided in ONE place, ru_dzapp_swipe; the rim recogniser keeps back and home.
  Back:  swipe right from the left edge, or the visible back pill "< BACK" ("< DEVICE NAME" on dial pages, "< CANCEL" on confirm);
         square panels add a corner chevron at the top left (56 px, outside the circle)
  Home:  long-press the rim, or tap the home pill at 6 o'clock
@@ -332,7 +335,7 @@ A round AMOLED in a dark room is a ring of light floating in black. Halo leans i
 
 ### Screens designed so far
 
-Boot splash, Wi-Fi setup (phone provisioning first), four home faces, Domoticz overview and detail, **Energy ring** (solar, grid and battery segments around a home-load hero), notification stack, settings and first-run. Wireframes, state patterns (loading, stale, error, offline, empty) and the design-review checklist are in [`docs/research/ux.md`](docs/research/ux.md). The contrast ratios, chord widths and throughput figures there have **not been checked with tools or on hardware**.
+Boot splash, Wi-Fi setup (phone provisioning first), four home faces, Domoticz overview and detail, **Energy ring** (solar, grid and battery segments around a home-load hero), notification stack, settings and first-run. Wireframes, state patterns (loading, stale, error, offline, empty) and the design-review checklist are in [`docs/research/ux.md`](docs/research/ux.md) (section 10.4a is the Domoticz page model as built). The contrast ratios, chord widths and throughput figures there have **not been checked with tools or on hardware**.
 
 ---
 

@@ -120,27 +120,38 @@ static void test_full_flow(void) {
   pump(a, 60, 1500);
   CHECK(dz_client_state(&C) == DZ_CS_OK);
   CHECK(!strcmp(ru_dzapp_banner(a), ""));
-  size_t rows = ru_dzapp_home_rows(a);
+  int pages = ru_dzapp_pages(a);
+  size_t rows = 0;
+  for (int pg = 0; pg < pages; pg++) {
+    ru_dzapp_home(a);
+    for (int k = 0; k < pg; k++) CHECK(ru_dzapp_swipe(a, RU_DIR_UP, 233, 233));
+    rows += ru_dzapp_home_rows(a);
+  }
   CHECK(rows >= 10 && rows <= 48);
   CHECK((size_t)dz_model_count(&M) >= rows);
+  ru_dzapp_home(a);
   screen_ok("home with data");
   sim_save_png(&S, SHOT_DIR "/dzapp_home_live.png", true);
 
-  /* every row opens a detail screen that stays inside the circle: sweeps every capability the mock offers */
+  /* every row of every favourites page opens a detail screen that stays inside the circle: sweeps every capability the mock offers */
   unsigned caps_seen = 0;
-  for (size_t i = 0; i < rows; i++) {
-    ru_dzapp_home(a);
-    CHECK(ru_dzapp_tap_row(a, i));
-    /* a device opens its detail; a Scene or Group goes straight to its hold screen */
-    CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL || ru_dzapp_view(a) == RU_VIEW_CONFIRM);
-    /* the screen belongs to a real model entry (either namespace), and its capability is one we have drawn */
-    dz_device_t d; ru_val_t v; ru_val_state_t st;
-    bool found = dz_model_get(&M, ru_dzapp_current_idx(a), false, &d, &v, &st, T) ||
-                 dz_model_get(&M, ru_dzapp_current_idx(a), true, &d, &v, &st, T);
-    CHECK(found);
-    if (found) caps_seen |= 1u << d.cap;
-    sim_advance(50);
-    screen_ok("detail");
+  for (int pg = 0; pg < pages; pg++) {
+    size_t n = 0;
+    for (size_t i = 0;; i++) {
+      ru_dzapp_home(a);
+      for (int k = 0; k < pg; k++) ru_dzapp_swipe(a, RU_DIR_UP, 233, 233);
+      n = ru_dzapp_home_rows(a);
+      if (i >= n) break;
+      CHECK(ru_dzapp_tap_row(a, i));
+      CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL || ru_dzapp_view(a) == RU_VIEW_CONFIRM);
+      dz_device_t d; ru_val_t v; ru_val_state_t st;
+      bool found = dz_model_get(&M, ru_dzapp_current_idx(a), false, &d, &v, &st, T) ||
+                   dz_model_get(&M, ru_dzapp_current_idx(a), true, &d, &v, &st, T);
+      CHECK(found);
+      if (found) caps_seen |= 1u << d.cap;
+      sim_advance(50);
+      screen_ok("detail");
+    }
   }
   CHECK(__builtin_popcount(caps_seen) >= 6); /* the mock exposes many capabilities: all of them got a valid screen */
   ru_dzapp_home(a);

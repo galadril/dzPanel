@@ -9,6 +9,9 @@ static int g_px, g_py;
 static bool g_down;
 static lv_display_t *g_disp;
 static lv_indev_t *g_indev;
+static sim_touch_hook_t g_hook;
+static void *g_hook_ud;
+void sim_set_touch_hook(sim_touch_hook_t fn, void *ud) { g_hook = fn; g_hook_ud = ud; }
 
 #ifdef RU_SIM_SDL
 extern uint32_t sim_sdl_ticks(void);
@@ -49,6 +52,7 @@ bool sim_init_ex(sim_t *s, int size, bool square) {
   g_clock = 0;
   g_real_clock = false;
   g_down = false;
+  g_hook = NULL;
   lv_init();
   lv_tick_set_cb(tick_cb);
   g_disp = lv_display_create(size, size);
@@ -78,6 +82,7 @@ void sim_advance(uint32_t ms) {
     uint32_t step = ms > 16 ? 16 : ms;
     g_clock += step;
     ms -= step;
+    if (g_hook) g_hook(g_px, g_py, g_down, g_clock, g_hook_ud);
     lv_timer_handler();
   }
 }

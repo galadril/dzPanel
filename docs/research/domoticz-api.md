@@ -42,6 +42,20 @@ Everything is `GET /json.htm?type=command&param=<name>&...`, with the Bearer hea
 | Scenes and groups | `getscenes` | Separate namespace from device idx |
 | Server time and sunrise | `getconfig` / `getsunrisesunset` *(check)* | For the clock and weather screens |
 
+### Web UI tabs (which page a device is on)
+
+The Domoticz web UI lists a device on a tab chosen from its JSON `Type` and `SubType` strings. dzPanel mirrors it in `components/int_domoticz/dz_tabs.c` (`dz_tabs_of`, mirrors `Helper.cpp` IsLightOrSwitch / IsTemp / IsWeather / IsUtility) and the parser stores the result in `dz_device_t.tabs`. A device can be on several tabs or on none. Scenes and groups are their own list (`getscenes`).
+
+| Tab (dzPanel page) | `getdevices` filter | Types (SubType decides where noted) |
+|---|---|---|
+| Lights (LIGHTS) | `light` | Light/Switch, Lighting 1-6, Color Switch, Fan, Security, Curtain, Blinds, Chime, RFY, Thermostat 2/3/4, Remote & IR, Home Confort, FS20, Hunter, Honeywell; Heating Evohome / Relay |
+| Temperature (TEMPERATURE) | `temp` | Temp, Humidity, Temp + Humidity, Temp + Humidity + Baro, Temp + Baro, Thermostat 1, Thermostat 6, Heating Zone / Hot Water, RFXSensor Temperature, General System temperature, Wind TFA, UV TFA |
+| Weather (WEATHER) | `weather` | Temp + Humidity + Baro, Temp + Baro, Rain, Wind, UV, General Visibility / Barometer / Solar Radiation |
+| Utility (UTILITY) | `utility` | P1 Smart Meter, Lux, Current, Energy, Power, Usage, YouLess Meter, Air Quality, Weight, RFXMeter, Setpoint, General kWh / Voltage / Current / Text / Percentage / counters / Waterflow / Custom Sensor / Alert / Pressure / Soil Moisture / Leaf Wetness / Sound Level / Fan / Distance, RFXSensor Voltage / A/D |
+| none | none | Type "Thermostat" (SubType SetPoint), unknown Type/SubType pairs: shown on Favourites only |
+
+The ENERGY page of dzPanel is not a Domoticz tab: it is the energy devices (those with a usage or day counter) in a gauge view; they are also on UTILITY. Order inside every page is the server's own order (`dz_model_order`, the position in the last complete full response).
+
 ### Control (needs User rights)
 
 | Action | Call |

@@ -90,11 +90,15 @@ static lv_obj_t *build_safe_screen(unsigned fails) {
   return s;
 }
 
-/* ---------- gestures: the shell owns the rim ---------- */
+/* ---------- gestures: ONE recogniser; the shell owns the rim, ru_dzapp_swipe decides the content swipes ---------- */
 
 static void shell_gesture(const ru_gesture_event_t *g) {
-  if (g->zone != RU_ZONE_RIM) return; /* content gestures belong to the apps (LVGL handles them in ru_dzapp) */
   if (!atomic_load(&U.app_active)) return;
+  if (g->zone != RU_ZONE_RIM) {
+    /* sections (finger left/right) and list pages (up/down); LVGL has no gesture handler left, so no double fire */
+    if (g->type == RU_G_SWIPE) ru_dzapp_swipe(U.app, g->dir, (int)g->x0, (int)g->y0);
+    return;
+  }
   ru_nav_input_t in;
   if (!ru_nav_input_from_gesture(g, &in)) return;
   switch (in.type) {

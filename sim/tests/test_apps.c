@@ -92,6 +92,7 @@ static ru_dzapp_t *start(appfx_t *f, const char *dir, appfx_set_t set, uint32_t 
   return a;
 }
 static void finish(appfx_t *f, ru_dzapp_t *a) {
+  appfx_gestures_detach();
   ru_dzapp_destroy(a);
   appfx_unload(f);
 }
@@ -321,9 +322,10 @@ static void honesty(int size) {
     "{\"idx\":\"3\",\"Name\":\"RealZero\",\"Type\":\"Temp\",\"SubType\":\"LaCrosse TX3\",\"Data\":\"0.0 C\",\"Temp\":0.0,\"Favorite\":1}]}";
   a = start(&f, FIXTURE_DIR, APPFX_EMPTY, 600000, true);
   CHECK(dz_model_apply(&f.model, devs, strlen(devs), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
-  ru_dzapp_show_section(a, RU_SEC_DEVICES);
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
   ru_dzapp_row_info_t ri;
   CHECK(ru_dzapp_row_info(a, (size_t)row_of(a, "1"), &ri) && !strcmp(ri.sub, "--"));
+  ru_dzapp_show_section(a, RU_SEC_UTILITY);
   CHECK(ru_dzapp_row_info(a, (size_t)row_of(a, "2"), &ri) && !strcmp(ri.sub, "--"));
   CHECK(shows(a, "--"));
   sim_render();
@@ -376,11 +378,11 @@ static void sections(int size) {
   ru_dzapp_destroy(a);
   appfx_unload(&f);
 
-  /* weather from the real fixture; the pager skips hidden sections; settings never show the token */
+  /* the weather page from the real fixture; the pager skips hidden sections; settings never show the token */
   a = start(&f, FIXTURE_DIR, APPFX_REAL, 600000, true);
   CHECK(ru_dzapp_section_available(a, RU_SEC_WEATHER));
   ru_dzapp_show_section(a, RU_SEC_WEATHER);
-  CHECK(shows(a, "HUMIDITY") || shows(a, "TEMP"));
+  CHECK(shows(a, "WEATHER") && ru_dzapp_home_rows(a) > 0);
   ru_dzapp_show_section(a, RU_SEC_SETTINGS);
   CHECK(shows(a, "CONNECTED") && shows(a, "SET") && shows(a, "****") && shows(a, "CONTROL") && !shows(a, TOKEN));
   CHECK(!shows(a, "fixture"));
@@ -389,26 +391,25 @@ static void sections(int size) {
   ru_dzapp_open_sub(a, RU_SUB_ABOUT);
   CHECK(shows(a, "LVGL 9.4") && !shows(a, TOKEN));
   ru_dzapp_show_section(a, RU_SEC_HOME);
-  for (int i = 0; i < RU_SEC_COUNT; i++) {
-    ru_section_t before = ru_dzapp_section(a);
-    ru_dzapp_step_section(a, 1);
-    CHECK(ru_dzapp_section(a) != before);
+  int laps = 0;
+  while (ru_dzapp_step_section(a, 1)) {
     CHECK(ru_dzapp_section_available(a, ru_dzapp_section(a)));
+    laps++;
   }
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME); /* a full lap */
+  CHECK(ru_dzapp_section(a) == RU_SEC_SETTINGS && laps >= 3); /* no wrap: Settings is the end */
+  while (ru_dzapp_step_section(a, -1)) {}
+  CHECK(ru_dzapp_section(a) == RU_SEC_HOME);                  /* and Home the other end */
 
-  /* a swipe left pages to the next section */
+  /* a swipe left pages to the next section, through the same recogniser as the device */
   ru_dzapp_show_section(a, RU_SEC_HOME);
   int c = size / 2;
-  sim_pointer(c + 90, c - 100, true);
-  sim_advance(40);
-  for (int k = 1; k <= 8; k++) { sim_pointer(c + 90 - k * 22, c - 100, true); sim_advance(16); }
-  sim_pointer(c - 90, c - 100, false);
-  sim_advance(100);
-  CHECK(ru_dzapp_section(a) == RU_SEC_DEVICES);
+  appfx_gestures_attach(a, size, g_square);
+  appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_LIGHTS);
+  appfx_gestures_detach();
 
   /* a switch device detail: tapping the toggle sends a plain On/Off (safe: no hold), pending afterwards */
-  ru_dzapp_show_section(a, RU_SEC_DEVICES);
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
   char idx[12];
   bool sc;
   CHECK(appfx_find(&f, DZ_CAP_ONOFF, -1, idx, &sc));
@@ -425,7 +426,7 @@ static void sections(int size) {
   ru_dzapp_set_conn(a, DZ_CS_CONNECTING); ru_dzapp_ui_tick(a, f.T); CHECK(!strcmp(ru_dzapp_banner(a), "CONNECTING..."));
   ru_dzapp_set_conn(a, DZ_CS_OK);        ru_dzapp_ui_tick(a, f.T); CHECK(!strcmp(ru_dzapp_banner(a), ""));
 
-  /* the six apps register with the runtime and show their section */
+  /* the eight apps register with the runtime and show their section */
   ru_heap_t heap;
   ru_heap_init(&heap, 0);
   ru_runtime_t rt;
@@ -436,6 +437,9 @@ static void sections(int size) {
   CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_ENERGY) == RU_OK && ru_dzapp_section(a) == RU_SEC_ENERGY);
   CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_SETTINGS) == RU_OK && ru_dzapp_section(a) == RU_SEC_SETTINGS);
   CHECK(!strcmp(ru_runtime_foreground(&rt)->id, RU_APP_ID_SETTINGS));
+  CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_TEMP) == RU_OK && ru_dzapp_section(a) == RU_SEC_TEMP);
+  CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_UTILITY) == RU_OK && ru_dzapp_section(a) == RU_SEC_UTILITY);
+  CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_LIGHTS) == RU_OK && ru_dzapp_section(a) == RU_SEC_LIGHTS);
   CHECK(ru_apps_available(RU_SEC_HOME) && ru_apps_available(RU_SEC_WEATHER));
   ru_runtime_shutdown(&rt);
   ru_apps_unbind();
@@ -471,40 +475,35 @@ static void climate_units(int size) {
     {APPFX_CLIMATE_IMPERIAL, {DEGF, "mph", NULL}, {DEGC, "m/s", NULL}},
     {APPFX_CLIMATE_NOUNITS, {"21.5", "3.4", NULL}, {DEGF, DEGC, "mph"}},
   };
+  static const ru_section_t pages[] = {RU_SEC_HOME, RU_SEC_TEMP, RU_SEC_WEATHER, RU_SEC_UTILITY};
   for (size_t r = 0; r < 3; r++) {
     appfx_t f;
     ru_dzapp_t *a = start(&f, FIXTURE_DIR, runs[r].set, 600000, true);
-    CHECK(ru_dzapp_section_available(a, RU_SEC_WEATHER));
-    ru_dzapp_show_section(a, RU_SEC_WEATHER);
-    bool saw[3] = {false, false, false}, saw_no_ms = false;
+    CHECK(ru_dzapp_section_available(a, RU_SEC_WEATHER) && ru_dzapp_section_available(a, RU_SEC_TEMP));
+    bool saw[3] = {false, false, false};
+    /* the detail page of every device follows the unit rules (the readings page of a sensor) */
     for (int k = 0; k < CL_N; k++) {
-      int at = appfx_climate_index(&f, CL_IDX[k]);
-      CHECK(at == k); /* the section lists the whole set, nothing hidden */
-      ru_dzapp_select(a, RU_SEC_WEATHER, at);
+      ru_dzapp_open(a, CL_IDX[k], false);
       ru_dzapp_ui_tick(a, f.T);
       screen_ok(&s, a, CL_IDX[k], size);
       for (int u = 0; u < 3; u++) {
         if (runs[r].yes[u] && shows(a, runs[r].yes[u])) saw[u] = true;
         if (runs[r].no[u]) CHECK(!shows(a, runs[r].no[u]));
       }
-      if (runs[r].set == APPFX_CLIMATE_NOUNITS) { CHECK(!shows(a, "m/s") && !shows(a, DEGC) ); saw_no_ms = true; }
-      /* the detail screen of the same device follows the same unit rules */
-      ru_dzapp_open(a, CL_IDX[k], false);
-      ru_dzapp_ui_tick(a, f.T);
-      screen_ok(&s, a, CL_IDX[k], size);
-      for (int u = 0; u < 3; u++) if (runs[r].no[u]) CHECK(!shows(a, runs[r].no[u]));
-      ru_dzapp_show_section(a, RU_SEC_WEATHER);
+      if (runs[r].set == APPFX_CLIMATE_NOUNITS) CHECK(!shows(a, "m/s") && !shows(a, DEGC));
     }
     CHECK(saw[0] && saw[1] && (runs[r].yes[2] == NULL || saw[2]));
-    (void)saw_no_ms;
-    /* the overview list and the devices list: no hard-coded unit either */
-    ru_dzapp_select(a, RU_SEC_WEATHER, -1);
-    ru_dzapp_ui_tick(a, f.T);
-    CHECK(shows(a, "CLIMATE"));
-    screen_ok(&s, a, "overview", size);
-    for (int u = 0; u < 3; u++) if (runs[r].no[u]) CHECK(!shows(a, runs[r].no[u]));
-    ru_dzapp_show_section(a, RU_SEC_DEVICES);
-    for (int u = 0; u < 3; u++) if (runs[r].no[u]) CHECK(!shows(a, runs[r].no[u]));
+    /* every page of the home grid and the lists: no hard-coded unit either */
+    for (size_t p = 0; p < sizeof pages / sizeof pages[0]; p++) {
+      ru_dzapp_show_section(a, RU_SEC_SETTINGS); /* a different section first: the page starts at 0 */
+      ru_dzapp_show_section(a, pages[p]);
+      int np = ru_dzapp_pages(a);
+      for (int pg = 0; pg < np; pg++) {
+        for (int u = 0; u < 3; u++) if (runs[r].no[u]) CHECK(!shows(a, runs[r].no[u]));
+        screen_ok(&s, a, "page", size);
+        if (pg + 1 < np) CHECK(ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2));
+      }
+    }
     finish(&f, a);
   }
   sim_shutdown(&s);
@@ -515,55 +514,44 @@ static void climate_pages(int size) {
   CHECK(init_sim(&s, size));
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
-  /* overview first (many sensors); a tap on a row opens that sensor's page */
+  /* the Temperature page: temperature-tab sensors, 4 rows a page; a tap opens the readings page */
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  CHECK(ru_dzapp_pages(a) == 3 && ru_dzapp_home_rows(a) == 4 && shows(a, "TEMPERATURE") && shows(a, "1/3") && shows(a, "TEMP SENSOR"));
+  CHECK(ru_dzapp_tap_row(a, 0));
+  ru_dzapp_ui_tick(a, f.T);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && shows(a, "21.5" DEGC) && shows(a, "TEMP"));
+  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_TEMP);
+  /* a device on two tabs (Temp + Humidity + Baro) is on both pages; Wind TFA too */
+  CHECK(row_of(a, "103") >= 0 || (ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2) && row_of(a, "103") >= 0));
   ru_dzapp_show_section(a, RU_SEC_WEATHER);
-  CHECK(ru_dzapp_home_rows(a) == (size_t)CL_N && shows(a, "CLIMATE"));
-  CHECK(shows(a, "TEMP SENSOR") || ru_dzapp_home_rows(a) > 0);
-  CHECK(ru_dzapp_tap_row(a, 4)); /* the wind sensor */
+  CHECK(shows(a, "WEATHER"));
+  bool on_weather = row_of(a, "103") >= 0 || (ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2) && row_of(a, "103") >= 0);
+  CHECK(on_weather);
+  /* readings pages (detail) of the sensors, as before */
+  ru_dzapp_open(a, "104", false);
   ru_dzapp_ui_tick(a, f.T);
   CHECK(shows(a, "WIND SENSOR") && shows(a, "3.4") && shows(a, "m/s") && shows(a, "NW") && shows(a, "GUST 6.1 m/s"));
   CHECK(shows(a, "SENSOR TEMP 12.0" DEGC)); /* its own thermometer, labelled as such */
-  CHECK(shows(a, "5/27"));
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "100"));
-  ru_dzapp_ui_tick(a, f.T);
-  CHECK(shows(a, "21.5" DEGC) && shows(a, "TEMP"));
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "103"));
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "103", false);
   CHECK(shows(a, "HUMIDITY 52%") && shows(a, "NORMAL") && shows(a, "1009 hPa") && shows(a, "SUNNY") && shows(a, "DEW POINT 10.0" DEGC));
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "101"));
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "101", false);
   CHECK(shows(a, "71%") && shows(a, "WET"));
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "105"));
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "105", false);
   CHECK(shows(a, "12.5") && shows(a, "RATE 0.4") && !shows(a, "mm"));   /* Domoticz gives rain no unit in the field: none shown */
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "106"));
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "106", false);
   CHECK(shows(a, "UV INDEX") && shows(a, "MODERATE") && shows(a, "SENSOR TEMP"));
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "107"));
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "107", false);
   CHECK(shows(a, "123") && shows(a, "Lux"));
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "108"));
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "108", false);
   CHECK(shows(a, "850") && shows(a, "ppm") && shows(a, "FAIR"));
-  /* a type nobody has seen still shows its number with its unit */
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "116"));
-  ru_dzapp_ui_tick(a, f.T);
+  /* a type nobody has seen still shows its number with its unit (it is on no page: a favourite on Home only) */
+  ru_dzapp_open(a, "116", false);
   CHECK(shows(a, "UNSEEN SENSOR") && shows(a, "7.5") && shows(a, "zorp"));
-  ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(&f, "113"));
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "113", false);
   CHECK(shows(a, "All good"));
-  /* a next-page tap at the top cycles through the pages */
-  int before = 0;
-  (void)before;
-  ru_dzapp_select(a, RU_SEC_WEATHER, 0);
-  ru_dzapp_ui_tick(a, f.T);
-  CHECK(shows(a, "TEMP SENSOR"));
-  click_at(size / 2, size / 2 - ru_u(38));
-  ru_dzapp_ui_tick(a, f.T);
-  CHECK(shows(a, "HUMIDITY SENSOR") && shows(a, "2/27"));
   finish(&f, a);
 
-  /* a wind sensor's own temperature is never the weather temperature: with only wind and UV, home has no temperature hero */
+  /* a wind sensor's own temperature is never shown as a weather temperature: wind and UV rows show their own reading */
   const char *devs =
     "{\"status\":\"OK\",\"result\":["
     "{\"idx\":\"1\",\"Name\":\"W\",\"Type\":\"Wind\",\"SubType\":\"TFA\",\"Speed\":\"2.0\",\"Gust\":\"3.0\",\"Direction\":90,\"DirectionStr\":\"E\",\"Temp\":12.5,\"Chill\":10.0,\"Favorite\":1},"
@@ -574,17 +562,18 @@ static void climate_pages(int size) {
   dz_model_set_units(&f.model, &u);
   ru_dzapp_ui_tick(a, f.T + 1);
   ru_dzapp_show_section(a, RU_SEC_HOME);
-  CHECK(shows(a, "dzPanel") && !shows(a, "12.5") && !shows(a, "19.5"));
-  ru_dzapp_show_section(a, RU_SEC_DEVICES);
-  CHECK(!shows(a, "12.5" DEGC) && !shows(a, "19.5" DEGC));
+  CHECK(!shows(a, "12.5") && !shows(a, "19.5"));
+  ru_dzapp_show_section(a, RU_SEC_WEATHER);
+  CHECK(!shows(a, "19.5" DEGC) && row_of(a, "2") >= 0);
   finish(&f, a);
 
   /* stale sensor: marked, numbers dimmed, never silently shown as fresh */
   a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 300000, true);
   f.T += 420000;
   ru_dzapp_ui_tick(a, f.T);
-  ru_dzapp_show_section(a, RU_SEC_WEATHER);
-  ru_dzapp_select(a, RU_SEC_WEATHER, 0);
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  screen_ok(&s, a, "stale rows", size);
+  ru_dzapp_open(a, "100", false);
   ru_dzapp_ui_tick(a, f.T);
   CHECK(shows(a, "UPDATED") && shows(a, "MIN AGO"));
   screen_ok(&s, a, "stale", size);
@@ -598,15 +587,11 @@ static void climate_pages(int size) {
     "{\"idx\":\"3\",\"Name\":\"None\",\"Type\":\"Temp\",\"Temp\":22.0,\"BatteryLevel\":255}]}";
   a = start(&f, FIXTURE_DIR, APPFX_EMPTY, 600000, true);
   CHECK(dz_model_apply(&f.model, bat, strlen(bat), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
-  ru_dzapp_show_section(a, RU_SEC_WEATHER);
-  ru_dzapp_select(a, RU_SEC_WEATHER, 0);
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "1", false);
   CHECK(shows(a, "BATTERY LOW"));
-  ru_dzapp_select(a, RU_SEC_WEATHER, 1);
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "2", false);
   CHECK(!shows(a, "BATTERY"));
-  ru_dzapp_select(a, RU_SEC_WEATHER, 2);
-  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_open(a, "3", false);
   CHECK(!shows(a, "BATTERY"));
   finish(&f, a);
   sim_shutdown(&s);
@@ -789,22 +774,22 @@ static void back_double_fire(int size) {
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
   if (g_square) {
-    ru_dzapp_show_section(a, RU_SEC_WEATHER);
+    ru_dzapp_show_section(a, RU_SEC_UTILITY);
     ru_dzapp_open(a, "118", false);
     sim_render();
     lv_obj_t *old_chev = find_corner_box(ru_dzapp_screen(a));
     CHECK(old_chev != NULL);
     CHECK(ru_dzapp_back(a)); /* what shell_gesture does */
-    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_UTILITY);
     if (old_chev) lv_obj_send_event(old_chev, LV_EVENT_CLICKED, NULL); /* the old screen is still alive: no timer ran */
-    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER); /* one step, not two */
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_UTILITY); /* one step, not two */
     /* a click on the live chevron still works */
     ru_dzapp_open(a, "118", false);
     sim_render();
     lv_obj_t *chev = find_corner_box(ru_dzapp_screen(a));
     CHECK(chev != NULL);
     if (chev) lv_obj_send_event(chev, LV_EVENT_CLICKED, NULL);
-    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_UTILITY);
   }
   finish(&f, a);
   sim_shutdown(&s);
@@ -837,7 +822,7 @@ static void long_name_pill(int size) {
     appfx_t f;
     ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
     CHECK(dz_model_apply(&f.model, out, total, DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
-    ru_dzapp_show_section(a, RU_SEC_WEATHER);
+    ru_dzapp_show_section(a, RU_SEC_UTILITY);
     ru_dzapp_open(a, "118", false);
     sim_render();
     CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
@@ -861,17 +846,17 @@ static void nav_back_tests(int size) {
   /* logic */
   ru_dzapp_home(a);
   CHECK(!ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_HOME); /* Home: nowhere to go */
-  ru_dzapp_show_section(a, RU_SEC_DEVICES);
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
   CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_HOME);
-  ru_dzapp_show_section(a, RU_SEC_WEATHER);
+  ru_dzapp_show_section(a, RU_SEC_UTILITY);
   ru_dzapp_open(a, "118", false);
   CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
-  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER); /* detail -> its section */
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_UTILITY); /* detail -> its section */
   ru_dzapp_open(a, "118", false);
   tap_plus(size);
   CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM);
   CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_DETAIL && !strcmp(ru_dzapp_current_idx(a), "118")); /* confirm -> detail */
-  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_UTILITY);
   ru_dzapp_show_section(a, RU_SEC_SETTINGS);
   ru_dzapp_open_sub(a, RU_SUB_BRIGHTNESS);
   CHECK(ru_dzapp_view(a) == RU_VIEW_SUB);
@@ -902,22 +887,22 @@ static void nav_back_tests(int size) {
   /* clicks: dial pages (name pill at +40u or -40u), the confirm pill, the square corner chevron */
   static const struct { const char *idx; float dy; } dial[] = { { "118", 40 }, { "125", 40 }, { "104", -40.5f } };
   for (size_t i = 0; i < 3; i++) {
-    ru_dzapp_show_section(a, RU_SEC_WEATHER);
+    ru_dzapp_show_section(a, RU_SEC_UTILITY);
     ru_dzapp_open(a, dial[i].idx, false);
     sim_render();
     click_at(c, c + ru_u(dial[i].dy));
-    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_UTILITY);
     if (g_square) {
       ru_dzapp_open(a, dial[i].idx, false);
       sim_render();
       click_at(36, 36);
-      CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+      CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_UTILITY);
     } else {
       lv_area_t r;
       CHECK(!ru_dzapp_back_rect(a, &r));
     }
   }
-  ru_dzapp_show_section(a, RU_SEC_WEATHER);
+  ru_dzapp_show_section(a, RU_SEC_UTILITY);
   ru_dzapp_open(a, "118", false);
   tap_plus(size);
   CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM);
@@ -944,11 +929,290 @@ static void nav_back_tests(int size) {
   char idx[12];
   bool sc;
   CHECK(appfx_find(&f, DZ_CAP_ONOFF, -1, idx, &sc));
-  ru_dzapp_show_section(a, RU_SEC_DEVICES);
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
   ru_dzapp_open(a, idx, false);
   sim_render();
   click_at(c, c + ru_u(42));
-  CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_DEVICES);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_LIGHTS);
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
+
+/* ---- pages: order, membership, hidden sections, paging, swipes, return to the page ---- */
+
+static const char *const SEC_NAMES[RU_SEC_COUNT] = { "FAVOURITES", "LIGHTS", "SCENES", "TEMPERATURE", "WEATHER", "UTILITY", "ENERGY", "SETTINGS" };
+
+/* the sections the pager walks, forward from Home, as a bit mask */
+static unsigned walk_mask(ru_dzapp_t *a) {
+  unsigned m = 1u << ru_dzapp_section(a);
+  ru_dzapp_home(a);
+  m = 1u;
+  while (ru_dzapp_step_section(a, 1)) m |= 1u << ru_dzapp_section(a);
+  ru_dzapp_home(a);
+  return m;
+}
+
+static void page_model(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  appfx_t f;
+  const unsigned ALL = (1u << RU_SEC_COUNT) - 1;
+  const unsigned BASE = 1u << RU_SEC_HOME | 1u << RU_SEC_SETTINGS;
+  CHECK(!strcmp(ru_section_name(RU_SEC_HOME), "FAVOURITES") && !strcmp(ru_section_name(RU_SEC_TEMP), "TEMPERATURE"));
+  for (int i = 0; i < RU_SEC_COUNT; i++) CHECK(!strcmp(ru_section_name((ru_section_t)i), SEC_NAMES[i]));
+
+  /* order and hide-when-empty: nothing at all, one light, the full mock */
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_EMPTY, 600000, true);
+  CHECK(walk_mask(a) == BASE);
+  const char *one = "{\"status\":\"OK\",\"result\":[{\"idx\":\"1\",\"Name\":\"L\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\",\"Favorite\":0}]}";
+  CHECK(dz_model_apply(&f.model, one, strlen(one), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
+  CHECK(walk_mask(a) == (BASE | 1u << RU_SEC_LIGHTS));
+  ru_dzapp_home(a);
+  CHECK(shows(a, "NO FAVOURITES") && ru_dzapp_home_rows(a) == 0); /* not a favourite: Home stays empty */
+  finish(&f, a);
+  a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
+  CHECK(walk_mask(a) == ALL);
+  /* order of the walk is the Domoticz order */
+  ru_dzapp_home(a);
+  int last = 0;
+  while (ru_dzapp_step_section(a, 1)) { CHECK((int)ru_dzapp_section(a) > last); last = (int)ru_dzapp_section(a); }
+  CHECK(last == RU_SEC_SETTINGS);
+  for (int i = 0; i < RU_SEC_COUNT; i++) {
+    ru_dzapp_show_section(a, (ru_section_t)i);
+    CHECK(i == RU_SEC_SETTINGS ? shows(a, "SETTINGS") : shows(a, SEC_NAMES[i]) || i == RU_SEC_ENERGY);
+    screen_ok(&s, a, SEC_NAMES[i], size);
+  }
+  finish(&f, a);
+
+  /* the Home grid: dashboard order scenes, lights, temperature, weather, utility, others; 6 tiles a page */
+  a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
+  static const struct { const char *idx; bool scene; } want[] = {
+    {"1", true}, {"2", true}, {"3", true}, {"4", true}, {"1", false}, {"2", false}, {"3", false}, {"4", false}, {"5", false},
+    {"6", false}, {"7", false}, {"11", false}, {"12", false}, {"30", false}, {"13", false}, {"14", false}, {"20", false}, {"10", false}};
+  ru_dzapp_home(a);
+  CHECK(ru_dzapp_pages(a) == 3 && ru_dzapp_page(a) == 0 && shows(a, "1/3"));
+  size_t k = 0;
+  for (int pg = 0; pg < 3; pg++) {
+    CHECK(ru_dzapp_home_rows(a) == (size_t)(pg < 2 ? 6 : 6));
+    ru_dzapp_row_info_t ri;
+    for (size_t r = 0; ru_dzapp_row_info(a, r, &ri); r++, k++) {
+      CHECK(k < sizeof want / sizeof want[0]);
+      if (k < sizeof want / sizeof want[0]) CHECK(!strcmp(ri.idx, want[k].idx) && ri.scene == want[k].scene);
+    }
+    screen_ok(&s, a, "home page", size);
+    if (pg < 2) CHECK(ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2));
+  }
+  CHECK(k == sizeof want / sizeof want[0]);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2)); /* the last page is an end */
+  CHECK(ru_dzapp_page(a) == 2 && shows(a, "3/3"));
+  finish(&f, a);
+
+  /* no favourites: the fallback text, no page indicator, no tiles */
+  a = start(&f, FIXTURE_DIR, APPFX_MOCK_NOFAV, 600000, true);
+  ru_dzapp_home(a);
+  CHECK(shows(a, "NO FAVOURITES") && ru_dzapp_home_rows(a) == 0 && ru_dzapp_pages(a) == 1);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2));
+  screen_ok(&s, a, "nofav", size);
+  finish(&f, a);
+
+  /* classification decides membership: THB on Temperature AND Weather, a thermostat on no page (Home only) */
+  const char *cls =
+    "{\"status\":\"OK\",\"result\":["
+    "{\"idx\":\"1\",\"Name\":\"THB\",\"Type\":\"Temp + Humidity + Baro\",\"SubType\":\"THB1 - BTHR918\",\"Temp\":20.0,\"Humidity\":50,\"Barometer\":1010,\"Data\":\"20.0 C, 50 %, 1010 hPa\",\"Favorite\":1},"
+    "{\"idx\":\"2\",\"Name\":\"Thermo\",\"Type\":\"Thermostat\",\"SubType\":\"SetPoint\",\"SetPoint\":\"21.5\",\"Data\":\"21.5\",\"Favorite\":1},"
+    "{\"idx\":\"3\",\"Name\":\"Lamp\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"On\",\"Favorite\":0},"
+    "{\"idx\":\"4\",\"Name\":\"Meter\",\"Type\":\"General\",\"SubType\":\"kWh\",\"Data\":\"1.5 kWh\",\"Favorite\":0}]}";
+  a = start(&f, FIXTURE_DIR, APPFX_EMPTY, 600000, true);
+  CHECK(dz_model_apply(&f.model, cls, strlen(cls), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
+  static const struct { ru_section_t sec; const char *in[2], *out[3]; } cm[] = {
+    { RU_SEC_HOME, {"1", "2"}, {"3", "4", NULL} },
+    { RU_SEC_LIGHTS, {"3", NULL}, {"1", "2", "4"} },
+    { RU_SEC_TEMP, {"1", NULL}, {"2", "3", "4"} },
+    { RU_SEC_WEATHER, {"1", NULL}, {"2", "3", "4"} },
+    { RU_SEC_UTILITY, {"4", NULL}, {"1", "2", "3"} },
+  };
+  for (size_t c = 0; c < sizeof cm / sizeof cm[0]; c++) {
+    ru_dzapp_show_section(a, cm[c].sec);
+    for (int i = 0; i < 2; i++) if (cm[c].in[i]) CHECK(row_of(a, cm[c].in[i]) >= 0);
+    for (int i = 0; i < 3; i++) if (cm[c].out[i]) CHECK(row_of(a, cm[c].out[i]) < 0);
+  }
+  finish(&f, a);
+
+  /* the order is dz_model_order, not the slot in the model: a second full response reorders, delta additions go last */
+  a = start(&f, FIXTURE_DIR, APPFX_EMPTY, 600000, true);
+  const char *o1 = "{\"status\":\"OK\",\"result\":["
+    "{\"idx\":\"1\",\"Name\":\"A\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\"},"
+    "{\"idx\":\"2\",\"Name\":\"B\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\"},"
+    "{\"idx\":\"3\",\"Name\":\"C\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\"}]}";
+  const char *o2 = "{\"status\":\"OK\",\"result\":["
+    "{\"idx\":\"3\",\"Name\":\"C\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\"},"
+    "{\"idx\":\"1\",\"Name\":\"A\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\"},"
+    "{\"idx\":\"2\",\"Name\":\"B\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\"}]}";
+  CHECK(dz_model_apply(&f.model, o1, strlen(o1), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  ru_dzapp_row_info_t ri;
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "1") && ru_dzapp_row_info(a, 2, &ri) && !strcmp(ri.idx, "3"));
+  CHECK(dz_model_apply(&f.model, o2, strlen(o2), DZ_COMMIT_FULL_DEVICES, f.T + 10, NULL, NULL) == DZ_OK);
+  ru_dzapp_ui_tick(a, f.T + 10);
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "3") && ru_dzapp_row_info(a, 1, &ri) && !strcmp(ri.idx, "1") &&
+        ru_dzapp_row_info(a, 2, &ri) && !strcmp(ri.idx, "2"));
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
+/* centre of the n-th tile (0..5) of the 3x2 grid, screen px */
+static void tile_centre(int n, int size, int *x, int *y) {
+  int c = size / 2, tw = ru_u(25), th = ru_u(21), gap = ru_u(1.5f);
+  int col = n % 3, row = n / 3;
+  *x = c - (3 * tw + 2 * gap) / 2 + col * (tw + gap) + tw / 2;
+  *y = c + ru_u(-1.0f) - (2 * th + gap) / 2 + row * (th + gap) + th / 2;
+}
+
+static void paging(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  appfx_t f;
+  int c = size / 2;
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_MANY, 600000, true);
+
+  /* more than 64 devices: no cap. 100 lights = 17 pages of 6; the last page has the 4 left over */
+  CHECK(ru_dzapp_section_available(a, RU_SEC_LIGHTS));
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  CHECK(ru_dzapp_pages(a) == 17 && ru_dzapp_page(a) == 0 && ru_dzapp_home_rows(a) == 6 && shows(a, "1/17") && shows(a, "LIGHTS"));
+  ru_dzapp_row_info_t ri;
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "1") && ru_dzapp_row_info(a, 5, &ri) && !strcmp(ri.idx, "6"));
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_DOWN, c, c)); /* the first page is an end */
+  CHECK(ru_dzapp_swipe(a, RU_DIR_UP, c, c) && ru_dzapp_page(a) == 1 && shows(a, "2/17"));
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "7"));
+  CHECK(ru_dzapp_swipe(a, RU_DIR_DOWN, c, c) && ru_dzapp_page(a) == 0 && shows(a, "1/17"));
+  /* the indicator is a button too: next page */
+  /* a real tap on the n/N label, found in the tree */
+  for (int i = 0; i < 16; i++) CHECK(ru_dzapp_swipe(a, RU_DIR_UP, c, c));
+  CHECK(ru_dzapp_page(a) == 16 && ru_dzapp_home_rows(a) == 4 && shows(a, "17/17"));
+  CHECK(ru_dzapp_row_info(a, 3, &ri) && !strcmp(ri.idx, "100"));
+  screen_ok(&s, a, "last page", size);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_UP, c, c) && ru_dzapp_page(a) == 16);
+  /* objects per screen stay small: one page of tiles, never one per device */
+  CHECK(ru_dzapp_home_rows(a) <= 8);
+
+  /* tap -> detail -> back lands on the same section and page */
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  for (int i = 0; i < 16; i++) CHECK(ru_dzapp_swipe(a, RU_DIR_DOWN, c, c));
+  for (int i = 0; i < 2; i++) CHECK(ru_dzapp_swipe(a, RU_DIR_UP, c, c));
+  CHECK(ru_dzapp_page(a) == 2 && ru_dzapp_row_info(a, 1, &ri) && !strcmp(ri.idx, "14"));
+  int tx, ty;
+  tile_centre(1, size, &tx, &ty);
+  sim_render();
+  click_at(tx, ty);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && !strcmp(ru_dzapp_current_idx(a), "14"));
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_LIGHTS && ru_dzapp_page(a) == 2);
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "13"));
+  /* leaving the section forgets the page; a new visit starts on page 1 */
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  CHECK(ru_dzapp_page(a) == 0);
+
+  /* Temperature rows: 30 sensors, 4 a page, 8 pages; the Utility page has the 20 meters */
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  CHECK(ru_dzapp_pages(a) == 8 && ru_dzapp_home_rows(a) == 4 && shows(a, "1/8") && shows(a, "TEMP 101"));
+  screen_ok(&s, a, "temp rows", size);
+  ru_dzapp_show_section(a, RU_SEC_UTILITY);
+  CHECK(ru_dzapp_pages(a) == 5 && shows(a, "1/5") && shows(a, "METER 131"));
+  screen_ok(&s, a, "utility rows", size);
+  /* Home: 8 favourites = 2 pages (6 + 2); a short last page is centred, nothing outside the circle */
+  ru_dzapp_home(a);
+  CHECK(ru_dzapp_pages(a) == 2 && ru_dzapp_home_rows(a) == 6);
+  CHECK(ru_dzapp_swipe(a, RU_DIR_UP, c, c) && ru_dzapp_home_rows(a) == 2);
+  screen_ok(&s, a, "home short page", size);
+  /* the n/N indicator is a button */
+  {
+    ru_dzapp_home(a);
+    sim_render();
+    int ix = c, iy = c + ru_u(26.5f);
+    click_at(ix, iy);
+    CHECK(ru_dzapp_page(a) == 1 && shows(a, "2/2"));
+    click_at(ix, iy);
+    CHECK(ru_dzapp_page(a) == 0 && shows(a, "1/2")); /* round to the first */
+  }
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
+static void swipes(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  appfx_t f;
+  int c = size / 2, R = size / 2;
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
+  appfx_gestures_attach(a, size, g_square);
+  ru_dzapp_home(a);
+  sim_render();
+
+  /* finger left = next section, finger right = previous; Home has no previous (no wrap) */
+  appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_LIGHTS);
+  appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_SCENES); /* one step per swipe, never two */
+  appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_LIGHTS);
+  appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_HOME);
+  appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_HOME); /* no wrap to Settings */
+  /* to the last section and no further */
+  for (int i = 0; i < 12; i++) appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_SETTINGS);
+
+  /* vertical swipes: pages of a list (Home has 3 pages) */
+  ru_dzapp_home(a);
+  appfx_drag(c, c + 60, c, c - 60, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_HOME && ru_dzapp_page(a) == 1);
+  appfx_drag(c, c - 60, c, c + 60, 8);
+  CHECK(ru_dzapp_page(a) == 0);
+  appfx_drag(c, c - 60, c, c + 60, 8);
+  CHECK(ru_dzapp_page(a) == 0 && ru_dzapp_section(a) == RU_SEC_HOME);
+
+  /* a drag that starts on a tile and ends inside it is a swipe, not a tap */
+  int tx, ty;
+  tile_centre(0, size, &tx, &ty);
+  ru_dzapp_home(a);
+  sim_render();
+  appfx_drag(tx + 30, ty, tx - 30, ty, 6);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_HOME);
+  ru_dzapp_home(a);
+
+  /* a swipe that starts in the rim is not a content swipe: refused by ru_dzapp_swipe itself, even if forwarded */
+  int rx = c + (int)(0.95f * (float)R);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, rx, c) && ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_UP, c, c - (int)(0.92f * (float)R)));
+  CHECK(ru_dzapp_swipe(a, RU_DIR_LEFT, c + (int)(0.80f * (float)R), c));
+  ru_dzapp_home(a);
+
+  /* the left rim swipe is BACK (the shell): from a section it goes Home ONCE, the section does not also step */
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  sim_render();
+  int lx = c - (int)(0.96f * (float)R);
+  appfx_drag(lx, c, lx + 130, c, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_HOME && ru_dzapp_view(a) == RU_VIEW_HOME);
+  /* and on Home it does nothing at all */
+  appfx_drag(lx, c, lx + 130, c, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_HOME);
+
+  /* swipes are for section screens only: not on a detail, not on the hold screen */
+  char idx[12];
+  bool sc;
+  CHECK(appfx_find(&f, DZ_CAP_ONOFF, -1, idx, &sc));
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  ru_dzapp_open(a, idx, false);
+  sim_render();
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, c, c) && ru_dzapp_view(a) == RU_VIEW_DETAIL);
+  appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && ru_dzapp_section(a) == RU_SEC_LIGHTS);
+  CHECK(appfx_find(&f, DZ_CAP_SCENE, -1, idx, &sc));
+  ru_dzapp_show_section(a, RU_SEC_SCENES);
+  CHECK(ru_dzapp_tap_row(a, 0) && ru_dzapp_view(a) == RU_VIEW_CONFIRM);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, c, c) && !ru_dzapp_swipe(a, RU_DIR_UP, c, c) && ru_dzapp_view(a) == RU_VIEW_CONFIRM);
   finish(&f, a);
   sim_shutdown(&s);
 }
@@ -965,6 +1229,9 @@ int main(void) {
     honesty(size);
     sections(size);
     backend_path(size);
+    page_model(size);
+    paging(size);
+    swipes(size);
     climate_units(size);
     climate_pages(size);
     climate_thermostat(size);

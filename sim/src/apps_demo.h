@@ -28,18 +28,25 @@ typedef enum {
   APPFX_EMPTY,   /* nothing at all */
   APPFX_CLIMATE_METRIC,   /* HAND-WRITTEN climate set (tests/fixtures/README.md), TempSign C and WindSign m/s */
   APPFX_CLIMATE_IMPERIAL, /* the same set as a Fahrenheit / mph install */
-  APPFX_CLIMATE_NOUNITS   /* the metric devices but getconfig never read: units unknown, bare numbers */
+  APPFX_CLIMATE_NOUNITS,  /* the metric devices but getconfig never read: units unknown, bare numbers */
+  APPFX_MOCK_NOFAV,       /* as MOCK, no favourites at all */
+  APPFX_MANY              /* generated: 100 lights (the first 8 favourites), 30 temperature, 20 utility; idx 1..150 in that order */
 } appfx_set_t;
 
 /* ttl_ms: how long an entry stays fresh. Returns false on any failure. */
 bool appfx_load(appfx_t *f, const char *fixture_dir, appfx_set_t set, uint32_t ttl_ms);
 void appfx_unload(appfx_t *f);
-/* First climate device (climate section order) with this idx; -1 when absent. Tests and the driver select pages with it. */
-int appfx_climate_index(appfx_t *f, const char *idx);
 /* First entry with this capability and (if state >= 0) this dz_device_state; copies its idx. */
 bool appfx_find(appfx_t *f, dz_cap_t cap, int state, char *idx, bool *scene);
 /* Replace the scenes with a literal getscenes document (tests). */
 bool appfx_apply_scenes(appfx_t *f, const char *json);
+
+/* Feed the simulator's pointer to a ru_gesture recogniser exactly like the device shell does: rim edge swipes go BACK /
+ * HOME, content swipes go to ru_dzapp_swipe. Call detach before destroying the app. */
+void appfx_gestures_attach(ru_dzapp_t *a, int diameter, bool square);
+void appfx_gestures_detach(void);
+/* a drag of `n` 16 ms steps from (x0,y0) to (x1,y1), through the pointer (and so through the gesture hook) */
+void appfx_drag(int x0, int y0, int x1, int y1, int steps);
 
 extern const char *const apps_demo_names[];
 extern const int apps_demo_count;

@@ -180,7 +180,7 @@ static size_t build_ix(ru_dzapp_t *a, ru_section_t s) {
     a->ix[a->ix_n].i = (uint16_t)i;
     a->ix_n++;
   }
-  qsort(a->ix, a->ix_n, sizeof *a->ix, ix_cmp);
+  if (a->ix_n > 1) qsort(a->ix, a->ix_n, sizeof *a->ix, ix_cmp);
   return a->ix_n;
 }
 

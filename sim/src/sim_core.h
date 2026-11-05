@@ -29,6 +29,11 @@ bool sim_panel_square(void);
 /* synthetic pointer; takes effect on the next sim_advance */
 void sim_pointer(int x, int y, bool down);
 
+/* Optional raw touch sink, called once per 16 ms step of sim_advance with the pointer state (and the virtual time), before
+ * LVGL runs. The device feeds the same samples to ru_gesture; a test or driver installs one to do the same. NULL removes. */
+typedef void (*sim_touch_hook_t)(int x, int y, bool down, uint32_t t_ms, void *ud);
+void sim_set_touch_hook(sim_touch_hook_t fn, void *ud);
+
 /* force a full redraw and run LVGL until settled */
 void sim_render(void);
 

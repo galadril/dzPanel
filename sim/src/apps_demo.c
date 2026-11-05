@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ru_gesture.h"
+#include "ru_nav.h"
 #include "ru_theme.h"
 
 static char *slurp(const char *path, size_t *n) {
@@ -34,7 +36,7 @@ static bool replace_once(char **buf, size_t *n, const char *from, const char *to
 }
 
 /* NOUNITS only: an install that reports no unit anywhere (no getconfig, and the devices carry no vunit either). */
-static bool g_strip_vunit;
+static bool g_strip_vunit, g_strip_fav;
 
 /* Load a fixture file, apply up to two textual Status tweaks (test data only), commit it to the model. */
 static bool apply_file(appfx_t *f, const char *dir, const char *name, dz_commit_t mode, const char *from1, const char *to1,
@@ -48,6 +50,7 @@ static bool apply_file(appfx_t *f, const char *dir, const char *name, dz_commit_
   if (from1) ok = replace_once(&b, &n, from1, to1);
   if (ok && from2) ok = replace_once(&b, &n, from2, to2);
   while (ok && g_strip_vunit && replace_once(&b, &n, "\"vunit\"", "\"xunit\"")) {}
+  while (ok && g_strip_fav && replace_once(&b, &n, "\"Favorite\":1", "\"Favorite\":0")) {}
   int changed = 0;
   ok = ok && dz_model_apply(&f->model, b, n, mode, f->T, NULL, &changed) == DZ_OK;
   free(b);
@@ -107,6 +110,27 @@ bool appfx_load(appfx_t *f, const char *dir, appfx_set_t set, uint32_t ttl_ms) {
       }
       return true;
     }
+    case APPFX_MOCK_NOFAV: {
+      g_strip_fav = true;
+      bool ok = apply_file(f, dir, "mock_getdevices.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL) &&
+                apply_file(f, dir, "mock_getscenes.json", DZ_COMMIT_FULL_SCENES, NULL, NULL, NULL, NULL);
+      g_strip_fav = false;
+      return ok;
+    }
+    case APPFX_MANY: {
+      static char doc[60000];
+      size_t n = (size_t)snprintf(doc, sizeof doc, "{\"status\":\"OK\",\"result\":[");
+      for (int i = 1; i <= 150; i++) {
+        const char *type = i <= 100 ? "Light/Switch" : i <= 130 ? "Temp" : "General";
+        const char *sub = i <= 100 ? "Switch" : i <= 130 ? "LaCrosse TX3" : "kWh";
+        n += (size_t)snprintf(doc + n, sizeof doc - n,
+                              "%s{\"idx\":\"%d\",\"Name\":\"%s %03d\",\"Type\":\"%s\",\"SubType\":\"%s\",%s\"Favorite\":%d}", i > 1 ? "," : "", i,
+                              i <= 100 ? "Lamp" : i <= 130 ? "Temp" : "Meter", i, type, sub,
+                              i <= 100 ? "\"Status\":\"Off\",\"Data\":\"Off\"," : i <= 130 ? "\"Temp\":20.5,\"Data\":\"20.5 C\"," : "\"Data\":\"3.5 kWh\",\"Usage\":\"120 Watt\",", i <= 8);
+      }
+      n += (size_t)snprintf(doc + n, sizeof doc - n, "]}");
+      return dz_model_apply(&f->model, doc, n, DZ_COMMIT_FULL_DEVICES, f->T, NULL, NULL) == DZ_OK;
+    }
     case APPFX_EMPTY:
     default: return true;
   }
@@ -124,11 +148,11 @@ void appfx_unload(appfx_t *f) {
 /* ------------------------------------------------------------------ screens */
 
 const char *const apps_demo_names[] = {
-  "home", "home_connecting", "home_offline", "home_token", "home_stale", "home_empty",
-  "devices", "scenes", "scenes_mixed", "energy", "energy_counter", "weather", "settings", "settings_conn", "settings_bright",
-  "settings_about",
-  "home_climate", "home_climate_f", "climate_overview", "climate_temp", "climate_temp_hum_baro", "climate_hum", "climate_wind", "climate_rain", "climate_uv",
-  "climate_lux", "climate_air", "climate_value", "climate_text", "climate_unseen", "climate_page_setpoint", "climate_page_mode",
+  "home", "home_connecting", "home_offline", "home_token", "home_stale", "home_empty", "home_favs_many", "home_favs_none",
+  "lights", "lights_many", "scenes", "scenes_mixed", "temperature", "weather", "utility", "energy", "energy_counter", "settings", "settings_conn",
+  "settings_bright", "settings_about",
+  "home_climate", "home_climate_f", "climate_temp", "climate_temp_hum_baro", "climate_hum", "climate_wind", "climate_rain", "climate_uv",
+  "climate_lux", "climate_air", "climate_value", "climate_text", "climate_unseen",
   "climate_temp_f", "climate_wind_f", "climate_nounits", "climate_stale",
   "detail_climate_wind", "detail_thermo6", "detail_setpoint_plan", "detail_setpoint_nonow", "detail_radiator", "detail_evohome",
   "detail_mode", "detail_setpoint_f", "detail_setpoint_nounits",
@@ -138,19 +162,6 @@ const char *const apps_demo_names[] = {
   "fb_pending", "fb_confirmed", "fb_unconfirmed", "fb_failed",
 };
 const int apps_demo_count = (int)(sizeof apps_demo_names / sizeof apps_demo_names[0]);
-
-int appfx_climate_index(appfx_t *f, const char *idx) {
-  int k = 0;
-  size_t total = dz_model_count(&f->model);
-  for (size_t i = 0; i < total; i++) {
-    dz_device_t d; ru_val_t v; ru_val_state_t st; bool sc;
-    if (!dz_model_at(&f->model, i, &d, &v, &st, &sc, f->T) || sc) continue;
-    if (!(d.cap == DZ_CAP_TEMP || d.cap == DZ_CAP_WEATHER || d.cap == DZ_CAP_SENSOR || d.cap == DZ_CAP_THERMOSTAT || d.cap == DZ_CAP_MODE)) continue;
-    if (!strcmp(d.idx, idx)) return k;
-    k++;
-  }
-  return -1;
-}
 
 bool appfx_find(appfx_t *f, dz_cap_t cap, int state, char *idx, bool *scene) {
   size_t total = dz_model_count(&f->model);
@@ -186,6 +197,9 @@ static appfx_set_t set_for(const char *n) {
       !strcmp(n, "detail_radiator") || !strcmp(n, "detail_evohome") || !strcmp(n, "detail_mode") || !strcmp(n, "confirm_setpoint") ||
       !strcmp(n, "confirm_mode"))
     return APPFX_CLIMATE_METRIC;
+  if (!strcmp(n, "home_favs_none")) return APPFX_MOCK_NOFAV;
+  if (!strcmp(n, "home_favs_many")) return APPFX_MOCK;
+  if (!strcmp(n, "lights_many")) return APPFX_MANY;
   if (!strcmp(n, "scenes_mixed") || !strncmp(n, "confirm_group", 13) || !strncmp(n, "fb_", 3)) return APPFX_MOCK_MIXED;
   if (!strncmp(n, "detail_", 7) && strcmp(n, "detail_info") != 0) return APPFX_MOCK;
   if (!strcmp(n, "confirm_scene") || !strcmp(n, "confirm_lock")) return APPFX_MOCK;
@@ -211,12 +225,17 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
   char idx[12];
   bool sc = false;
   ru_section_t sec = RU_SEC_HOME;
-  if (!strcmp(n, "devices")) sec = RU_SEC_DEVICES;
+  if (!strncmp(n, "lights", 6)) sec = RU_SEC_LIGHTS;
   else if (!strncmp(n, "scenes", 6) || !strncmp(n, "fb_", 3)) sec = RU_SEC_SCENES;
+  else if (!strcmp(n, "temperature")) sec = RU_SEC_TEMP;
+  else if (!strcmp(n, "weather")) sec = RU_SEC_WEATHER;
+  else if (!strcmp(n, "utility")) sec = RU_SEC_UTILITY;
   else if (!strncmp(n, "energy", 6)) sec = RU_SEC_ENERGY;
-  else if (!strcmp(n, "weather") || !strncmp(n, "climate_", 8)) sec = RU_SEC_WEATHER;
   else if (!strncmp(n, "settings", 8)) sec = RU_SEC_SETTINGS;
   ru_dzapp_show_section(a, sec);
+  /* a later page of a long list: the swipe a finger would make */
+  if (!strcmp(n, "home_favs_many")) ru_dzapp_swipe(a, RU_DIR_UP, c, c);
+  if (!strcmp(n, "lights_many")) for (int k = 0; k < 4; k++) ru_dzapp_swipe(a, RU_DIR_UP, c, c);
 
   if (!strcmp(n, "energy_counter")) {
     /* the energy device that has no power reading: its hero is the day total with the unit Domoticz reports */
@@ -230,14 +249,14 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
       k++;
     }
   } else if (!strncmp(n, "climate_", 8)) {
+    /* the readings page of one sensor: the detail view of the Temperature / Weather pages */
     static const struct { const char *name, *idx; } pick[] = {
       {"climate_temp", "100"}, {"climate_temp_hum_baro", "103"}, {"climate_hum", "101"}, {"climate_wind", "104"},
       {"climate_rain", "105"}, {"climate_uv", "106"}, {"climate_lux", "107"}, {"climate_air", "108"}, {"climate_value", "112"},
-      {"climate_text", "113"}, {"climate_unseen", "116"}, {"climate_page_setpoint", "118"}, {"climate_page_mode", "125"},
+      {"climate_text", "113"}, {"climate_unseen", "116"},
       {"climate_temp_f", "103"}, {"climate_wind_f", "104"}, {"climate_nounits", "104"}, {"climate_stale", "100"}};
-    if (!strcmp(n, "climate_overview")) ru_dzapp_select(a, RU_SEC_WEATHER, -1);
     for (size_t k = 0; k < sizeof pick / sizeof pick[0]; k++)
-      if (!strcmp(n, pick[k].name)) ru_dzapp_select(a, RU_SEC_WEATHER, appfx_climate_index(f, pick[k].idx));
+      if (!strcmp(n, pick[k].name)) ru_dzapp_open(a, pick[k].idx, false);
   } else if (!strncmp(n, "detail_", 7) && (strstr(n, "thermo6") || strstr(n, "setpoint") || strstr(n, "radiator") || strstr(n, "evohome") ||
                                            strstr(n, "mode") || strstr(n, "climate_wind"))) {
     static const struct { const char *name, *idx; } det[] = {
@@ -284,6 +303,58 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
   }
   ru_dzapp_ui_tick(a, f->T);
   return a;
+}
+
+/* ------------------------------------------------------------------ gestures like the device shell */
+
+static struct { ru_gesture_t g; ru_dzapp_t *app; } G;
+
+static void route(const ru_gesture_event_t *e) {
+  if (!G.app) return;
+  if (e->zone != RU_ZONE_RIM) {
+    if (e->type == RU_G_SWIPE) ru_dzapp_swipe(G.app, e->dir, (int)e->x0, (int)e->y0);
+    return;
+  }
+  ru_nav_input_t in;
+  if (!ru_nav_input_from_gesture(e, &in)) return;
+  if (in.type == RU_NAV_IN_BACK) ru_dzapp_back(G.app);
+  else if (in.type == RU_NAV_IN_GO_HOME || in.type == RU_NAV_IN_HOME_ACTION) ru_dzapp_home(G.app);
+}
+
+static void touch_hook(int x, int y, bool down, uint32_t t_ms, void *ud) {
+  (void)ud;
+  ru_touch_t t = { (int16_t)x, (int16_t)y, t_ms, down, 1, 0 };
+  ru_gesture_event_t ev[RU_GESTURE_MAX_EVENTS];
+  int n = ru_gesture_feed(&G.g, &t, ev, RU_GESTURE_MAX_EVENTS);
+  for (int i = 0; i < n; i++) route(&ev[i]);
+  n = ru_gesture_tick(&G.g, t_ms, ev, RU_GESTURE_MAX_EVENTS);
+  for (int i = 0; i < n; i++) route(&ev[i]);
+}
+
+void appfx_gestures_attach(ru_dzapp_t *a, int diameter, bool square) {
+  ru_gesture_cfg_t cfg;
+  if (square) ru_gesture_cfg_square(&cfg, diameter);
+  else ru_gesture_cfg_default(&cfg, diameter);
+  memset(&G, 0, sizeof G);
+  ru_gesture_init(&G.g, diameter, &cfg);
+  G.app = a;
+  sim_set_touch_hook(touch_hook, NULL);
+}
+
+void appfx_gestures_detach(void) {
+  sim_set_touch_hook(NULL, NULL);
+  G.app = NULL;
+}
+
+void appfx_drag(int x0, int y0, int x1, int y1, int steps) {
+  sim_pointer(x0, y0, true);
+  sim_advance(40);
+  for (int k = 1; k <= steps; k++) {
+    sim_pointer(x0 + (x1 - x0) * k / steps, y0 + (y1 - y0) * k / steps, true);
+    sim_advance(16);
+  }
+  sim_pointer(x1, y1, false);
+  sim_advance(100);
 }
 
 int apps_demo_shot(sim_t *s, const char *dir, const char *name, const char *path) {
