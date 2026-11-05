@@ -26,10 +26,13 @@ static struct {
   volatile int wifi_result; /* 0 none, 1 ok, 2 failed */
   volatile bool improv_on;
   bool started;
+  volatile uint32_t tx_drops;
+  uint32_t tx_drops_logged;
+  uint32_t tx_drop_log_ms;
 } C;
 
 #if CONFIG_ESP_CONSOLE_UART
-enum { UART_RX_BUF = 512, UART_TX_BUF = 2048 };
+enum { UART_RX_BUF = 4096 /* RU+CFG lines reach RU_CFGLINE_MAX (2048); the task can stall 15-35 s in Wi-Fi join */, UART_TX_BUF = 2048 };
 #define CON_UART ((uart_port_t)CONFIG_ESP_CONSOLE_UART_NUM)
 #endif
 
@@ -48,7 +51,9 @@ static void tx_write(const void *d, size_t n) {
   /* uart_write_bytes() blocks when the TX ring buffer is full (a stalled line, logs piling up). Only write what fits
    * right now; a message that does not fit is dropped whole, so a frame is never cut in half. */
   size_t room = 0;
-  if (uart_get_tx_buffer_free_size(CON_UART, &room) == ESP_OK && room >= n) uart_write_bytes(CON_UART, d, n);
+  /* The ring stores item headers/alignment and logs share it, so keep a margin or uart_write_bytes could still block. */
+  if (uart_get_tx_buffer_free_size(CON_UART, &room) == ESP_OK && room >= n + 16) uart_write_bytes(CON_UART, d, n);
+  else C.tx_drops++; /* reported from console_task, never from here (logging would re-enter this path) */
 #endif
   ru_mutex_unlock(C.tx);
 }
@@ -123,6 +128,14 @@ static void console_task(void *arg) {
     }
     if (!C.improv_on && ru_improv_in_packet(&C.improv)) ru_improv_reset(&C.improv); /* detached with no more input */
     ru_console_tick(&C.con, now);
+#if CONFIG_ESP_CONSOLE_UART
+    if (C.tx_drops != C.tx_drops_logged && now - C.tx_drop_log_ms >= 10000) {
+      uint32_t d = C.tx_drops;
+      C.tx_drop_log_ms = now;
+      ESP_LOGW(TAG, "console TX dropped %u message(s) (ring full)", (unsigned)(d - C.tx_drops_logged));
+      C.tx_drops_logged = d;
+    }
+#endif
     int r = C.wifi_result;
     if (r) { C.wifi_result = 0; ru_improv_wifi_result(&C.improv, r == 1); }
   }
