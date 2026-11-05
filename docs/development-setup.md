@@ -65,17 +65,18 @@ Practical notes:
 
 ### Heap diagnostics (RU_HEAP_LOG)
 
-`CONFIG_RU_HEAP_LOG` (default n, y in the Guition defaults) enables a log task (3 KB stack, period `CONFIG_RU_HEAP_LOG_PERIOD_S`, default 5 s) and a failed-allocation hook. Only numbers and fixed task names are logged. Line format:
+`CONFIG_RU_HEAP_LOG` (default n, y in the Guition defaults) enables a log task (4 KB stack, period `CONFIG_RU_HEAP_LOG_PERIOD_S`, default 5 s) and a failed-allocation hook. Only numbers and fixed task names are logged. Line format:
 
 ```
-I (12345) heap: int free 71234 big 31744 min 60112 | psram free 7800000 big 7700000 min 7790000 | stack-free-min ru_wifi=2100 ru_console=5000 ui_bridge=4000 dz_service=3000 dz-net=3500 boot_health=7000 lvgl=4000 swdraw=5000 heaplog=1400
+I (12345) heap: int free <N> big <N> min <N> | psram free <N> big <N> min <N> | stack-free-min ru_wifi=<n> ru_console=<n> ui_bridge=<n> dz_service=<n> heaplog=<n> alloc-fail-dropped=0
 ```
 
-- `int` is internal RAM (`MALLOC_CAP_INTERNAL|8BIT`), `psram` is external RAM: `free` now, `big` largest single block, `min` lowest free value since boot.
-- `stack-free-min` is the least free stack in bytes each task has ever had (high-water mark): a small value means the stack is nearly used up. Tasks that do not exist are omitted.
+- `int` is internal RAM (`MALLOC_CAP_INTERNAL|8BIT`), `psram` is external RAM: `free` now, `big` largest single block, `min` approximate lowest free value since boot (sum of per-heap minima, so not an exact simultaneous low-water mark). The line values above are placeholders (`<N>`/`<n>`), not measurements. `int` uses `INTERNAL|8BIT`, whereas the `ru_hal` lines use `INTERNAL` only, so their numbers differ slightly.
+- `stack-free-min` is the least free stack in bytes each task has ever had (high-water mark): a small value means the stack is nearly used up. Only permanent tasks are listed (`ru_wifi`, `ru_console`, `ui_bridge`, `dz_service`; transient ones could exit while being inspected); tasks not yet created are omitted.
 - Internal `min` approaching the 32 KB reserve (or 0) is the warning sign for the Wi-Fi `ESP_ERR_NO_MEM` abort.
-- A failed allocation logs `E (..) heap: alloc failed: size N caps 0x... in <function>`.
-- The `ru_hal` boot lines (`boot`, `after hal`, `ui up`, `network up`) also print `min free ever`.
+- A failed allocation logs `E (..) heap: alloc failed: size N caps 0x...`, at most one line per 200 ms; suppressed ones are counted in `alloc-fail-dropped`. The caller function is not printed (its string may be unreadable with the flash cache disabled when rodata is in PSRAM).
+- The `ru_hal` boot lines (`boot`, `after hal`, `ui up`, `network up`) also print `min int N psram M` (internal and PSRAM minima).
+- New `sdkconfig.defaults` values apply only on a FRESH configure: delete `firmware/build-<board>/sdkconfig` (or the whole build dir) to pick up changed defaults. The build-dir stamp already prevents board mix-ups.
 
 ## 5. Flashing
 
