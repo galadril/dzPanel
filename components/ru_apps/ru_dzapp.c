@@ -329,7 +329,15 @@ bool ru_dzapp_back(ru_dzapp_t *a) {
   return true;
 }
 
-static void cb_back(lv_event_t *e) { ru_dzapp_back(lv_event_get_user_data(e)); }
+/* A swipe that starts on the corner chevron can fire the shell's BACK (rim sector) and still end inside the chevron:
+ * LVGL then delivers CLICKED to the OLD screen's chevron, which show() frees only asynchronously. Taking that click
+ * would step back a second time (detail -> section -> Home). So a click only counts when its target lives on the screen
+ * that is shown now (a stale screen is not a->scr). */
+static void cb_back(lv_event_t *e) {
+  ru_dzapp_t *a = lv_event_get_user_data(e);
+  if (lv_obj_get_screen((lv_obj_t *)lv_event_get_target(e)) != a->scr) return;
+  ru_dzapp_back(a);
+}
 
 #define BACK_CORNER_PX 56
 #define BACK_CORNER_POS 8

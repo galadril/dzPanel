@@ -770,6 +770,85 @@ static void backend_path(int size) {
   sim_shutdown(&s);
 }
 
+/* the clickable 56 px corner box of the current screen (square panels) */
+static lv_obj_t *find_corner_box(lv_obj_t *o) {
+  if (lv_obj_has_flag(o, LV_OBJ_FLAG_CLICKABLE) && lv_obj_get_x(o) == 8 && lv_obj_get_y(o) == 8 && lv_obj_get_width(o) == 56) return o;
+  uint32_t n = lv_obj_get_child_count(o);
+  for (uint32_t i = 0; i < n; i++) {
+    lv_obj_t *r = find_corner_box(lv_obj_get_child(o, i));
+    if (r) return r;
+  }
+  return NULL;
+}
+
+/* A swipe from the corner chevron: the shell's BACK fires, then the finger lifts inside the old chevron and LVGL
+ * delivers CLICKED to it before the old screen is freed. That must not be a second step back. */
+static void back_double_fire(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  appfx_t f;
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
+  if (g_square) {
+    ru_dzapp_show_section(a, RU_SEC_WEATHER);
+    ru_dzapp_open(a, "118", false);
+    sim_render();
+    lv_obj_t *old_chev = find_corner_box(ru_dzapp_screen(a));
+    CHECK(old_chev != NULL);
+    CHECK(ru_dzapp_back(a)); /* what shell_gesture does */
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+    if (old_chev) lv_obj_send_event(old_chev, LV_EVENT_CLICKED, NULL); /* the old screen is still alive: no timer ran */
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER); /* one step, not two */
+    /* a click on the live chevron still works */
+    ru_dzapp_open(a, "118", false);
+    sim_render();
+    lv_obj_t *chev = find_corner_box(ru_dzapp_screen(a));
+    CHECK(chev != NULL);
+    if (chev) lv_obj_send_event(chev, LV_EVENT_CLICKED, NULL);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+  }
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
+/* A device name of 29 characters on the +40u dial pill: dots, nothing lit outside the circle. */
+static void long_name_pill(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  char path[512];
+  snprintf(path, sizeof path, "%s/mock_climate_metric.json", FIXTURE_DIR);
+  FILE *fp = fopen(path, "rb");
+  CHECK(fp != NULL);
+  if (!fp) { sim_shutdown(&s); return; }
+  static char buf[200000];
+  size_t n = fread(buf, 1, sizeof buf - 1, fp);
+  fclose(fp);
+  buf[n] = 0;
+  char *p = strstr(buf, "\"Name\": \"Plain Setpoint\"");
+  CHECK(p != NULL);
+  static char out[200000];
+  if (p) {
+    const char *newn = "\"Name\": \"LIVING ROOM CEILING LIGHT BIG\"";
+    size_t head = (size_t)(p - buf), oldl = strlen("\"Name\": \"Plain Setpoint\"");
+    memcpy(out, buf, head);
+    size_t nl = strlen(newn);
+    memcpy(out + head, newn, nl);
+    memcpy(out + head + nl, p + oldl, n - head - oldl);
+    size_t total = n - oldl + nl;
+    appfx_t f;
+    ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
+    CHECK(dz_model_apply(&f.model, out, total, DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
+    ru_dzapp_show_section(a, RU_SEC_WEATHER);
+    ru_dzapp_open(a, "118", false);
+    sim_render();
+    CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
+    CHECK(shows(a, "LIVING") && shows(a, "...") && !shows(a, "BIG")); /* cut with dots, not clipped mid-glyph */
+    CHECK(outside_lit(&s, a) == 0);
+    CHECK(sim_count_lit(&s) > 300);
+    finish(&f, a);
+  }
+  sim_shutdown(&s);
+}
+
 /* ---- one way back: ru_dzapp_back and the visible back controls ---- */
 
 static void nav_back_tests(int size) {
@@ -890,6 +969,8 @@ int main(void) {
     climate_pages(size);
     climate_thermostat(size);
     nav_back_tests(size);
+    back_double_fire(size);
+    long_name_pill(size);
   }
   MT_DONE();
 }
