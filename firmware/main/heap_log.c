@@ -48,11 +48,46 @@ static void failed_alloc_cb(size_t size, uint32_t caps, const char *fn) {
   ESP_DRAM_LOGE("heap", "alloc failed: size %u caps 0x%x", (unsigned)size, (unsigned)caps);
 }
 
+#define LOW_FREE_BYTES 24576
+#define LOW_RATE_MS 60000
+#define SAMPLE_MS 100
+#define IC (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+
+static const char *volatile s_last_tag = "none"; /* static strings only: the heap task reads it from another task */
+
+/* One "low" line when internal free is below LOW_FREE_BYTES, at most once per LOW_RATE_MS. Numbers and a fixed tag only. */
+static void check_low(void) {
+  static TickType_t last;
+  static bool have;
+  size_t f = heap_caps_get_free_size(IC);
+  if (f >= LOW_FREE_BYTES) return;
+  TickType_t now = xTaskGetTickCount();
+  if (have && (now - last) < pdMS_TO_TICKS(LOW_RATE_MS)) return;
+  have = true;
+  last = now;
+  ESP_LOGW(TAG, "low int free %u big %u min %u after mark %s", (unsigned)f, (unsigned)heap_caps_get_largest_free_block(IC),
+           (unsigned)heap_caps_get_minimum_free_size(IC), s_last_tag);
+}
+
+void ru_heap_log_mark(const char *tag) {
+  s_last_tag = tag;
+  ESP_LOGI(TAG, "mark %s int free %u big %u min %u", tag, (unsigned)heap_caps_get_free_size(IC),
+           (unsigned)heap_caps_get_largest_free_block(IC), (unsigned)heap_caps_get_minimum_free_size(IC));
+}
+
+void ru_heap_log_mark_res(const char *tag, int status, int err, unsigned bytes, unsigned elapsed_ms) {
+  s_last_tag = tag;
+  ESP_LOGI(TAG, "mark %s int free %u big %u min %u status %d err %d bytes %u ms %u", tag, (unsigned)heap_caps_get_free_size(IC),
+           (unsigned)heap_caps_get_largest_free_block(IC), (unsigned)heap_caps_get_minimum_free_size(IC), status, err, bytes,
+           elapsed_ms);
+}
+
 static void heap_task(void *arg) {
   (void)arg;
   const TickType_t period = pdMS_TO_TICKS(CONFIG_RU_HEAP_LOG_PERIOD_S * 1000);
+  TickType_t next = xTaskGetTickCount();
   for (;;) {
-    const uint32_t ic = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const uint32_t ic = IC;
     size_t n = (size_t)snprintf(g_line, sizeof g_line, "int free %u big %u min %u | psram free %u big %u min %u | stack-free-min",
                                 (unsigned)heap_caps_get_free_size(ic), (unsigned)heap_caps_get_largest_free_block(ic),
                                 (unsigned)heap_caps_get_minimum_free_size(ic),
@@ -73,7 +108,11 @@ static void heap_task(void *arg) {
       (void)w;
     }
     ESP_LOGI(TAG, "%s", g_line);
-    vTaskDelay(period);
+    next += period;
+    while ((int32_t)(next - xTaskGetTickCount()) > 0) { /* sample often so a short burst below 24 KB is still caught */
+      check_low();
+      vTaskDelay(pdMS_TO_TICKS(SAMPLE_MS));
+    }
   }
 }
 

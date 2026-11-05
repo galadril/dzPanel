@@ -76,6 +76,9 @@ I (12345) heap: int free <N> big <N> min <N> | psram free <N> big <N> min <N> | 
 - Internal `min` approaching the 32 KB reserve (or 0) is the warning sign for the Wi-Fi `ESP_ERR_NO_MEM` abort.
 - A failed allocation logs `E (..) heap: alloc failed: size N caps 0x...`, at most one line per 200 ms; suppressed ones are counted in `alloc-fail-dropped`. The caller function is not printed (its string may be unreadable with the flash cache disabled when rodata is in PSRAM).
 - The `ru_hal` boot lines (`boot`, `after hal`, `ui up`, `network up`) also print `min int N psram M` (internal and PSRAM minima).
+- Request marks (firmware/main/svc_glue.c wraps the Domoticz transport, only under RU_HEAP_LOG): `I heap: mark <tag> int free N big N min N` before each HTTP request and `... status S err E bytes B ms M` after it. Tags are fixed words (`get devs light begin`, `get devs full end`, `get scenes begin`, `cmd switch end`, `probe begin`, ...); URLs and headers are never logged. `min` is the lowest internal free ever.
+- `W heap: low int free N big N min N after mark <tag>`: internal free fell below 24 KB (sampled every 100 ms), at most once per 60 s; the tag is the most recent mark, so it names the request (or the gap after it) in which the dip happened.
+- Task stack sizes are Kconfig values (`RU_TASK_STACK_*` in components/ru_core/Kconfig, applied by `ru_task_create` by task name); the Guition defaults are smaller than the 10240 default, see the measurements in that file.
 - New `sdkconfig.defaults` values apply only on a FRESH configure: delete `firmware/build-<board>/sdkconfig` (or the whole build dir) to pick up changed defaults. The build-dir stamp already prevents board mix-ups.
 
 ## 5. Flashing

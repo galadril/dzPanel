@@ -1,6 +1,7 @@
 #include "svc_glue.h"
 
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "boot_health.h"
@@ -8,6 +9,8 @@
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "heap_log.h"
 #include "ru_cfg.h"
 #include "ru_console_esp.h"
 #include "ru_wifi_esp.h"
@@ -23,6 +26,65 @@ static dz_probe_ctx_t g_probe;
 static atomic_bool g_cfg_set, g_wifi_set;
 static bool g_with_service;
 
+#if CONFIG_RU_HEAP_LOG
+/* Diagnostics only: wraps the esp_http_client transport so each Domoticz HTTP request logs a begin and an end heap mark (internal
+ * free/largest/lowest-ever, then status, error code, bytes and elapsed ms). The tag is a fixed word chosen from the "param=" and
+ * "filter=" parts of the URL; the URL itself, its query values and the headers are never logged. */
+typedef struct { dz_transport_t base; dz_transport_t *inner; bool probe; } mark_tr_t;
+
+typedef struct { const char *needle; const char *begin; const char *end; } mark_tag_t;
+static const mark_tag_t k_poll_tags[] = {
+    {"param=getdevices&filter=light", "get devs light begin", "get devs light end"},
+    {"param=getdevices&filter=temp", "get devs temp begin", "get devs temp end"},
+    {"param=getdevices&filter=weather", "get devs weather begin", "get devs weather end"},
+    {"param=getdevices&filter=utility", "get devs utility begin", "get devs utility end"},
+    {"param=getdevices&rid=", "get dev one begin", "get dev one end"},
+    {"lastupdate=", "get devs delta begin", "get devs delta end"},
+    {"param=getdevices", "get devs full begin", "get devs full end"},
+    {"param=getscenes", "get scenes begin", "get scenes end"},
+    {"param=getplans", "get plans begin", "get plans end"},
+    {"param=getconfig", "get config begin", "get config end"},
+    {"param=getversion", "get version begin", "get version end"},
+    {"param=switchlight", "cmd switch begin", "cmd switch end"},
+    {"param=switchscene", "cmd scene begin", "cmd scene end"},
+    {"param=setsetpoint", "cmd setpoint begin", "cmd setpoint end"},
+    {"param=thermostatstate", "cmd thermostat begin", "cmd thermostat end"},
+};
+
+static dz_net_err_t mark_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms, char *buf,
+                             size_t cap, dz_http_result_t *out) {
+  mark_tr_t *m = (mark_tr_t *)t;
+  const char *begin = m->probe ? "probe begin" : "get other begin", *end = m->probe ? "probe end" : "get other end";
+  for (size_t i = 0; !m->probe && url && i < sizeof k_poll_tags / sizeof k_poll_tags[0]; i++)
+    if (strstr(url, k_poll_tags[i].needle)) { begin = k_poll_tags[i].begin; end = k_poll_tags[i].end; break; }
+  ru_heap_log_mark(begin);
+  int64_t t0 = esp_timer_get_time();
+  dz_net_err_t e = m->inner->get(m->inner, url, headers, timeout_ms, buf, cap, out);
+  ru_heap_log_mark_res(end, out->status, (int)e, (unsigned)out->len, (unsigned)((esp_timer_get_time() - t0) / 1000));
+  return e;
+}
+static void mark_destroy(dz_transport_t *t) {
+  mark_tr_t *m = (mark_tr_t *)t;
+  if (m->inner && m->inner->destroy) m->inner->destroy(m->inner);
+  free(m);
+}
+static void mark_set_insecure(dz_transport_t *t, bool allow) { dz_transport_esp_set_insecure_lan(((mark_tr_t *)t)->inner, allow); }
+static dz_transport_t *transport_create(bool probe) {
+  dz_transport_t *in = dz_transport_esp_create(false);
+  mark_tr_t *m = calloc(1, sizeof *m);
+  if (!in || !m) { if (in) in->destroy(in); free(m); return NULL; }
+  m->base.get = mark_get;
+  m->base.destroy = mark_destroy;
+  m->inner = in;
+  m->probe = probe;
+  return &m->base;
+}
+#define TRANSPORT_SET_INSECURE mark_set_insecure
+#else
+static dz_transport_t *transport_create(bool probe) { (void)probe; return dz_transport_esp_create(false); }
+#define TRANSPORT_SET_INSECURE dz_transport_esp_set_insecure_lan
+#endif
+
 dz_service_t *svc_service(void) { return g_svc; }
 bool svc_cfg_set(void) { return atomic_load(&g_cfg_set); }
 bool svc_provisioned(void) { return atomic_load(&g_cfg_set) && atomic_load(&g_wifi_set); }
@@ -36,13 +98,13 @@ bool svc_init(ru_kv_t *kv, ru_bus_t *bus, bool with_service) {
   ru_wifi_creds_t wc;
   atomic_store(&g_wifi_set, ru_wifi_creds_load(kv, &wc) == RU_CFG_OK);
   ru_wifi_creds_wipe(&wc);
-  g_probe_tr = dz_transport_esp_create(false); /* the RU+CFG connection test must not share the polling transport */
+  g_probe_tr = transport_create(true); /* the RU+CFG connection test must not share the polling transport */
   if (!with_service) return true;
 
   dz_service_cfg_t c;
   memset(&c, 0, sizeof c);
-  c.transport = dz_transport_esp_create(false);
-  c.set_insecure_lan = dz_transport_esp_set_insecure_lan;
+  c.transport = transport_create(false);
+  c.set_insecure_lan = TRANSPORT_SET_INSECURE;
   c.bus = bus;
   c.entries_cap = MODEL_CAP;
   c.stage_cap = MODEL_CAP;
@@ -128,7 +190,7 @@ void svc_start(void) {
   if (!ru_wifi_esp_start(&wc)) ESP_LOGE(TAG, "Wi-Fi start failed");
 
   g_probe.transport = g_probe_tr;
-  g_probe.set_insecure = dz_transport_esp_set_insecure_lan;
+  g_probe.set_insecure = TRANSPORT_SET_INSECURE;
   g_probe.wifi_up = wifi_up_cb;
   ru_console_esp_cfg_t cc;
   memset(&cc, 0, sizeof cc);
