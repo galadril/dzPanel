@@ -9,6 +9,7 @@
 #include "ru_cfg.h"
 #include "ru_hal.h"
 #include "svc_glue.h"
+#include "heap_log.h"
 #include "ui_shell.h"
 
 static const char *TAG = "roundos";
@@ -24,6 +25,7 @@ void app_main(void) {
   }
   ru_kv_t *kv = ru_kv_nvs_get();
   bool safe = bh_boot_begin(kv);
+  ru_heap_log_start();
   ru_hal_heap_log("boot");
 
   ru_hal_err_t he = ru_hal_init();

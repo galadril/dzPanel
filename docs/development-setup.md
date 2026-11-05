@@ -63,6 +63,20 @@ Practical notes:
 - Builds are slow: run `idf.py build` in the background and wait on the log.
 - The unmodified Waveshare LVGL demo for the 1.75" board builds with this setup (about 1 MB, 12% of an 8 MB slot).
 
+### Heap diagnostics (RU_HEAP_LOG)
+
+`CONFIG_RU_HEAP_LOG` (default n, y in the Guition defaults) enables a log task (3 KB stack, period `CONFIG_RU_HEAP_LOG_PERIOD_S`, default 5 s) and a failed-allocation hook. Only numbers and fixed task names are logged. Line format:
+
+```
+I (12345) heap: int free 71234 big 31744 min 60112 | psram free 7800000 big 7700000 min 7790000 | stack-free-min ru_wifi=2100 ru_console=5000 ui_bridge=4000 dz_service=3000 dz-net=3500 boot_health=7000 lvgl=4000 swdraw=5000 heaplog=1400
+```
+
+- `int` is internal RAM (`MALLOC_CAP_INTERNAL|8BIT`), `psram` is external RAM: `free` now, `big` largest single block, `min` lowest free value since boot.
+- `stack-free-min` is the least free stack in bytes each task has ever had (high-water mark): a small value means the stack is nearly used up. Tasks that do not exist are omitted.
+- Internal `min` approaching the 32 KB reserve (or 0) is the warning sign for the Wi-Fi `ESP_ERR_NO_MEM` abort.
+- A failed allocation logs `E (..) heap: alloc failed: size N caps 0x... in <function>`.
+- The `ru_hal` boot lines (`boot`, `after hal`, `ui up`, `network up`) also print `min free ever`.
+
 ## 5. Flashing
 
 `docs/flashing.md`. **No board has been flashed**: nothing in the firmware has run on hardware.

@@ -1,0 +1,17 @@
+menu "RoundOS diagnostics"
+
+    config RU_HEAP_LOG
+        bool "Periodic heap and task-stack log line, and failed-allocation log"
+        default n
+        help
+            Logs one compact line every RU_HEAP_LOG_PERIOD_S seconds with internal and PSRAM free / largest block /
+            minimum-free-ever and the minimum free stack bytes of the main tasks, and logs every failed heap
+            allocation (size, caps, caller function). Numbers only, no configuration or credentials are printed.
+
+    config RU_HEAP_LOG_PERIOD_S
+        int "Heap log period (seconds)"
+        depends on RU_HEAP_LOG
+        range 1 3600
+        default 5
+
+endmenu

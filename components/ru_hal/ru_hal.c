@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "lvgl.h"
 
@@ -70,9 +71,17 @@ void ru_hal_set_touch_sink(ru_hal_touch_cb_t cb, void *ud) {
 }
 
 void ru_hal_heap_log(const char *tag) {
+#if CONFIG_RU_HEAP_LOG
+  ESP_LOGI(TAG, "%s heap: internal free %u (largest %u), psram free %u (largest %u), min free ever %u", tag ? tag : "",
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM), (unsigned)esp_get_minimum_free_heap_size());
+#else
   ESP_LOGI(TAG, "%s heap: internal free %u (largest %u), psram free %u (largest %u)", tag ? tag : "",
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+#endif
 }
