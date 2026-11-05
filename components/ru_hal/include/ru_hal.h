@@ -1,7 +1,8 @@
-/* ru_hal: thin hardware layer over the Waveshare BSP. App code never calls the BSP; it calls this.
+/* ru_hal: thin hardware layer. The board-specific half (ru_hal_port.h) lives in components/boards/<board>.
+ * App code never calls a BSP; it calls this.
  * Compiles on ESP-IDF only (the host build uses the SDL simulator instead).
  *
- *   ru_hal_init()           display + touch + LVGL port (LVGL task, tick, draw buffers) via the BSP
+ *   ru_hal_init()           display + touch + LVGL port (LVGL task, tick, draw buffers) via the board port
  *   ru_hal_lock/unlock()    guard every LVGL call made outside the LVGL task
  *   ru_hal_set_brightness() 0..100 percent
  *   ru_hal_set_touch_sink() receive every touch sample as an ru_touch_t for ru_gesture
@@ -18,13 +19,13 @@ extern "C" {
 
 typedef struct {
   const char *id;       /* "amoled_175" */
-  int diameter;         /* px, 466 for the 1.75" */
+  int diameter;         /* px: side of the D x D drawing area (466 round, 480 square) */
   int safe_inset_px;    /* content kept this far inside the circle edge */
-  bool round;           /* physical shape (2.16" is unverified) */
+  bool round;           /* true: circular glass inscribed in D x D; false: square panel */
   bool has_touch;
   bool has_brightness;
-  /* Informational today: BSP 3.0.1 fixes the LVGL buffers at 2 x 50 lines in PSRAM (esp_lvgl_adapter).
-   * These fields become real knobs if the HAL stops using bsp_display_start(). */
+  /* Informational today: the amoled-175 BSP 3.0.1 fixes the LVGL buffers at 2 x 50 lines in PSRAM (esp_lvgl_adapter).
+   * These fields become real knobs if a port stops using the BSP's display start. */
   bool draw_buf_psram;
   int draw_buf_lines;
   uint32_t flash_mb;

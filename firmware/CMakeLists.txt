@@ -26,5 +26,28 @@ if(_ver_len GREATER 31)
   message(FATAL_ERROR "version '${PROJECT_VER}' is ${_ver_len} chars; esp_app_desc holds 31")
 endif()
 
+# Board selection (build time). Pass -DRU_BOARD=<board>, or use tools/build_fw.sh <board>. Each board has
+# components/boards/<board>/ (component "ru_board": profile + ru_hal_port.h implementation) and
+# firmware/boards/<board>/sdkconfig.defaults. Use one build directory per board: sdkconfig lives inside it.
+set(RU_BOARD amoled-175 CACHE STRING "Target board: amoled-175 | guition-4848s040")
+set(_ru_boards amoled-175 guition-4848s040)
+if(NOT RU_BOARD IN_LIST _ru_boards)
+  message(FATAL_ERROR "unknown RU_BOARD '${RU_BOARD}': want one of ${_ru_boards}")
+endif()
+if(NOT EXISTS ${CMAKE_CURRENT_LIST_DIR}/../components/boards/${RU_BOARD}
+   OR NOT EXISTS ${CMAKE_CURRENT_LIST_DIR}/boards/${RU_BOARD}/sdkconfig.defaults)
+  message(FATAL_ERROR "board '${RU_BOARD}' has no driver yet: components/boards/${RU_BOARD} or "
+                      "firmware/boards/${RU_BOARD}/sdkconfig.defaults is missing")
+endif()
+list(APPEND EXTRA_COMPONENT_DIRS ${CMAKE_CURRENT_LIST_DIR}/../components/boards/${RU_BOARD})
+set(SDKCONFIG_DEFAULTS "sdkconfig.defaults;boards/${RU_BOARD}/sdkconfig.defaults")
+set(SDKCONFIG ${CMAKE_BINARY_DIR}/sdkconfig)
+# All boards are ESP32-S3. A fresh build dir has no sdkconfig to take the target from, so state it (no set-target needed).
+if(NOT DEFINED IDF_TARGET AND NOT DEFINED ENV{IDF_TARGET})
+  set(IDF_TARGET esp32s3)
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+# Per-board component-manager lock file (IDF >= 5.x build property, resolved against the project dir).
+idf_build_set_property(DEPENDENCIES_LOCK dependencies.lock.${RU_BOARD})
 project(roundos)
