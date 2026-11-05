@@ -33,6 +33,14 @@ static long count_bright(const sim_t *s) {
   return n;
 }
 
+/* lit pixels outside the circle. Round: always zero tolerance. Square: only the declared corner back rectangle is exempt. */
+static long outside_lit(const sim_t *s, ru_dzapp_t *a) {
+  lv_area_t r;
+  bool has = ru_dzapp_back_rect(a, &r);
+  CHECK(!has || g_square); /* a round panel never declares an exception */
+  return has ? sim_count_outside_lit_except(s, &r) : sim_count_outside_lit(s);
+}
+
 static bool tree_has_text(lv_obj_t *o, const char *needle) {
   if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return false;
   if (lv_obj_check_type(o, &lv_label_class)) {
@@ -75,6 +83,7 @@ static ru_dzapp_t *start(appfx_t *f, const char *dir, appfx_set_t set, uint32_t 
   CHECK(appfx_load(f, dir, set, ttl));
   ru_dzapp_t *a = ru_dzapp_create(&f->model, &f->client, control);
   CHECK(a != NULL);
+  ru_dzapp_set_display_info(a, "sim", !g_square);
   f->T += 1000;
   ru_dzapp_set_conn(a, DZ_CS_OK);
   ru_dzapp_set_cmd_spy(a, spy_cb, NULL);
@@ -117,8 +126,14 @@ static void all_screens(int size) {
     CHECK(a != NULL);
     if (!a) { appfx_unload(&f); continue; }
     sim_render();
-    long out = sim_count_outside_lit(&s), in = sim_count_lit(&s), br = count_bright(&s);
+    long out = outside_lit(&s, a), in = sim_count_lit(&s), br = count_bright(&s);
     printf("  %-20s@%d lit=%ld bright=%.1f%%\n", nm, size, in, 100.0 * (double)br / (double)area);
+    {
+      lv_area_t r;
+      bool deep = ru_dzapp_view(a) != RU_VIEW_HOME;
+      CHECK(ru_dzapp_back_rect(a, &r) == (g_square && deep));
+      if (g_square && deep) CHECK(sim_count_lit_in(&s, &r) > 40); /* the corner chevron is drawn */
+    }
     CHECK(out == 0);               /* nothing outside the circle (rim, tiles, labels) */
     CHECK(in > 300);               /* not blank */
     CHECK(br < area * 12 / 100);   /* DESIGN.md: at most 12% lit */
@@ -438,7 +453,7 @@ static void sections(int size) {
 static void screen_ok(sim_t *s, ru_dzapp_t *a, const char *what, int size) {
   long area = (long)(3.14159f * (float)size * (float)size / 4);
   sim_render();
-  long out = sim_count_outside_lit(s), in = sim_count_lit(s), br = count_bright(s);
+  long out = outside_lit(s, a), in = sim_count_lit(s), br = count_bright(s);
   if (out != 0 || in <= 300 || br >= area * 12 / 100) printf("  BAD %s@%d out=%ld lit=%ld bright=%.1f%%\n", what, size, out, in, 100.0 * (double)br / (double)area);
   CHECK(out == 0 && in > 300 && br < area * 12 / 100);
   CHECK(!shows(a, TOKEN) && !shows(a, "HEATING"));
@@ -755,6 +770,110 @@ static void backend_path(int size) {
   sim_shutdown(&s);
 }
 
+/* ---- one way back: ru_dzapp_back and the visible back controls ---- */
+
+static void nav_back_tests(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  appfx_t f;
+  int c = size / 2;
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
+
+  /* logic */
+  ru_dzapp_home(a);
+  CHECK(!ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_HOME); /* Home: nowhere to go */
+  ru_dzapp_show_section(a, RU_SEC_DEVICES);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_HOME);
+  ru_dzapp_show_section(a, RU_SEC_WEATHER);
+  ru_dzapp_open(a, "118", false);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER); /* detail -> its section */
+  ru_dzapp_open(a, "118", false);
+  tap_plus(size);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_DETAIL && !strcmp(ru_dzapp_current_idx(a), "118")); /* confirm -> detail */
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+  ru_dzapp_show_section(a, RU_SEC_SETTINGS);
+  ru_dzapp_open_sub(a, RU_SUB_BRIGHTNESS);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_SUB);
+  ru_dzapp_open(a, "125", false); /* aim the mode command at a device, then raise its confirm from the sub screen */
+  ru_dzapp_open_sub(a, RU_SUB_BRIGHTNESS);
+  ru_dzapp_pick_mode(a, 2);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_SUB);                     /* confirm -> sub */
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_SETTINGS); /* sub -> Settings */
+  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(!ru_dzapp_back(a));
+
+  /* the other device's feedback line does not show on an open detail */
+  {
+    dz_cmd_result_t r;
+    memset(&r, 0, sizeof r);
+    strcpy(r.idx, "104");
+    r.kind = DZ_CMD_SETPOINT;
+    r.outcome = DZ_OUT_CONFIRMED;
+    ru_dzapp_inject_result(a, &r);
+    ru_dzapp_open(a, "118", false);
+    CHECK(!shows(a, "DONE"));
+    ru_dzapp_open(a, "104", false);
+    CHECK(shows(a, "DONE"));
+    ru_dzapp_home(a);
+  }
+
+  /* clicks: dial pages (name pill at +40u or -40u), the confirm pill, the square corner chevron */
+  static const struct { const char *idx; float dy; } dial[] = { { "118", 40 }, { "125", 40 }, { "104", -40.5f } };
+  for (size_t i = 0; i < 3; i++) {
+    ru_dzapp_show_section(a, RU_SEC_WEATHER);
+    ru_dzapp_open(a, dial[i].idx, false);
+    sim_render();
+    click_at(c, c + ru_u(dial[i].dy));
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+    if (g_square) {
+      ru_dzapp_open(a, dial[i].idx, false);
+      sim_render();
+      click_at(36, 36);
+      CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_WEATHER);
+    } else {
+      lv_area_t r;
+      CHECK(!ru_dzapp_back_rect(a, &r));
+    }
+  }
+  ru_dzapp_show_section(a, RU_SEC_WEATHER);
+  ru_dzapp_open(a, "118", false);
+  tap_plus(size);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM);
+  click_at(c, c + ru_u(42)); /* CANCEL pill: back to the detail, not the section */
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
+  if (g_square) {
+    tap_plus(size);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM);
+    click_at(36, 36);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
+    click_at(36, 36);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_HOME);
+  }
+  /* a sub screen: the BACK pill leads to Settings */
+  ru_dzapp_show_section(a, RU_SEC_SETTINGS);
+  ru_dzapp_open_sub(a, RU_SUB_ABOUT);
+  sim_render();
+  click_at(c, c + ru_u(42));
+  CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_SETTINGS);
+  finish(&f, a);
+
+  /* a non-dial detail: the BACK pill at +42u */
+  a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
+  char idx[12];
+  bool sc;
+  CHECK(appfx_find(&f, DZ_CAP_ONOFF, -1, idx, &sc));
+  ru_dzapp_show_section(a, RU_SEC_DEVICES);
+  ru_dzapp_open(a, idx, false);
+  sim_render();
+  click_at(c, c + ru_u(42));
+  CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_DEVICES);
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
 int main(void) {
   static const struct { int size; bool square; } runs[3] = { { 466, false }, { 480, false }, { 480, true } };
   for (int i = 0; i < 3; i++) {
@@ -770,6 +889,7 @@ int main(void) {
     climate_units(size);
     climate_pages(size);
     climate_thermostat(size);
+    nav_back_tests(size);
   }
   MT_DONE();
 }

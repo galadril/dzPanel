@@ -99,8 +99,7 @@ static void shell_gesture(const ru_gesture_event_t *g) {
   if (!ru_nav_input_from_gesture(g, &in)) return;
   switch (in.type) {
     case RU_NAV_IN_BACK:
-      if (ru_dzapp_view(U.app) != RU_VIEW_HOME) ru_dzapp_show_section(U.app, ru_dzapp_section(U.app));
-      else if (ru_dzapp_section(U.app) != RU_SEC_HOME) ru_dzapp_home(U.app);
+      ru_dzapp_back(U.app); /* false on Home: nothing to do */
       break;
     case RU_NAV_IN_GO_HOME:
     case RU_NAV_IN_HOME_ACTION:

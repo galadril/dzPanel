@@ -105,6 +105,25 @@ long sim_count_outside_lit(const sim_t *s) {
   return n;
 }
 
+long sim_count_outside_lit_except(const sim_t *s, const lv_area_t *r) {
+  long n = 0;
+  for (int y = 0; y < s->size; y++)
+    for (int x = 0; x < s->size; x++) {
+      if ((s->fb[y * s->size + x] & 0xFFFFFF) == 0 || !sim_outside_circle(s->size, x, y)) continue;
+      if (r && x >= r->x1 && x <= r->x2 && y >= r->y1 && y <= r->y2) continue;
+      n++;
+    }
+  return n;
+}
+
+long sim_count_lit_in(const sim_t *s, const lv_area_t *r) {
+  long n = 0;
+  for (int y = r->y1; y <= r->y2; y++)
+    for (int x = r->x1; x <= r->x2; x++)
+      if (x >= 0 && y >= 0 && x < s->size && y < s->size && (s->fb[y * s->size + x] & 0xFFFFFF) != 0) n++;
+  return n;
+}
+
 long sim_count_lit(const sim_t *s) {
   long n = 0;
   for (int y = 0; y < s->size; y++)

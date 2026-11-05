@@ -195,16 +195,22 @@ static void start_confirm(ru_dzapp_t *a, const dz_device_t *d, const req_msg_t *
 
 /* Shared gate for every command: control allowed, device known, not locked out, data fresh. Then SAFE commands go
  * out at once and CONFIRM commands lead to the hold screen. verb/state are only for the hold screen. */
+static void refused_for(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd_err_t e) {
+  ru_fb_on_refused(&a->fb, e, a->now);
+  snprintf(a->fb.idx, sizeof a->fb.idx, "%s", idx); /* so a detail page shows it only on the device it is about */
+  a->fb.scene = scene;
+}
+
 static void submit_or_confirm(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd_kind_t kind, int level, float sp,
                               const char *verb, bool show_state) {
   dz_device_t d;
   ru_val_t v;
   ru_val_state_t st;
-  if (!get_entry(a, idx, scene, &d, &v, &st)) { ru_fb_on_refused(&a->fb, DZ_CMDE_UNKNOWN_DEVICE, a->now); return; }
-  if (!a->allow_control) { ru_fb_on_refused(&a->fb, DZ_CMDE_CONTROL_DISABLED, a->now); return; }
+  if (!get_entry(a, idx, scene, &d, &v, &st)) { refused_for(a, idx, scene, DZ_CMDE_UNKNOWN_DEVICE); return; }
+  if (!a->allow_control) { refused_for(a, idx, scene, DZ_CMDE_CONTROL_DISABLED); return; }
   dz_risk_t risk = dz_cmd_risk(&d, kind);
-  if (risk == DZ_RISK_LOCKED) { ru_fb_on_refused(&a->fb, d.is_protected ? DZ_CMDE_PROTECTED : DZ_CMDE_NOT_CONTROLLABLE, a->now); return; }
-  if (st != RU_VAL_OK) { ru_fb_on_refused(&a->fb, DZ_CMDE_STALE, a->now); return; } /* do not make the user hold for nothing */
+  if (risk == DZ_RISK_LOCKED) { refused_for(a, idx, scene, d.is_protected ? DZ_CMDE_PROTECTED : DZ_CMDE_NOT_CONTROLLABLE); return; }
+  if (st != RU_VAL_OK) { refused_for(a, idx, scene, DZ_CMDE_STALE); return; } /* do not make the user hold for nothing */
   req_msg_t m;
   memset(&m, 0, sizeof m);
   m.req.kind = kind;
@@ -299,43 +305,115 @@ static lv_color_t fb_color(const ru_fb_t *f) {
 static void fb_label(ru_dzapp_t *a, lv_obj_t *scr, float dy_u) {
   const char *txt = ru_fb_text(&a->fb);
   if (!txt[0]) return;
+  if (a->view == RU_VIEW_DETAIL && strcmp(a->fb.idx, a->cur_idx) != 0) return; /* feedback of another device */
   label_u(scr, txt, ru_font_small(), fb_color(&a->fb), 0, dy_u);
 }
 
 /* ------------------------------------------------------------------ navigation chrome */
 
-static void cb_back(lv_event_t *e) {
-  ru_dzapp_t *a = lv_event_get_user_data(e);
-  if (a->view == RU_VIEW_CONFIRM && a->ret_view == RU_VIEW_DETAIL) { a->view = RU_VIEW_DETAIL; build_and_show(a); }
-  else if (a->view == RU_VIEW_CONFIRM && a->ret_view == RU_VIEW_SUB) { a->view = RU_VIEW_SUB; build_and_show(a); }
-  else ru_dzapp_show_section(a, a->section);
+/* The one way back, for the on-screen controls, the confirm hold and the shell's BACK gesture. false = nowhere to go
+ * (already on Home). Confirm returns to where it came from; a detail or sub screen to its section (a sub screen to
+ * Settings); a section to Home. */
+bool ru_dzapp_back(ru_dzapp_t *a) {
+  switch (a->view) {
+    case RU_VIEW_CONFIRM:
+      if (a->ret_view == RU_VIEW_DETAIL || a->ret_view == RU_VIEW_SUB) { a->view = a->ret_view; build_and_show(a); }
+      else ru_dzapp_show_section(a, a->section);
+      return true;
+    case RU_VIEW_DETAIL: ru_dzapp_show_section(a, a->section); return true;
+    case RU_VIEW_SUB: ru_dzapp_show_section(a, RU_SEC_SETTINGS); return true;
+    default: break;
+  }
+  if (a->section == RU_SEC_HOME) return false;
+  ru_dzapp_home(a);
+  return true;
 }
 
-static lv_obj_t *back_button(ru_dzapp_t *a, lv_obj_t *scr, const char *text) {
-  lv_obj_t *b = ru_cont_new(scr, 0, 0, ru_u(24), ru_u(9));
-  lv_obj_align(b, LV_ALIGN_CENTER, 0, ru_u(42));
+static void cb_back(lv_event_t *e) { ru_dzapp_back(lv_event_get_user_data(e)); }
+
+#define BACK_CORNER_PX 56
+#define BACK_CORNER_POS 8
+
+bool ru_dzapp_back_rect(const ru_dzapp_t *a, lv_area_t *r) {
+  if (!a->square || a->view == RU_VIEW_HOME) return false;
+  if (r) {
+    r->x1 = BACK_CORNER_POS;
+    r->y1 = BACK_CORNER_POS;
+    r->x2 = BACK_CORNER_POS + BACK_CORNER_PX - 1;
+    r->y2 = BACK_CORNER_POS + BACK_CORNER_PX - 1;
+  }
+  return true;
+}
+
+/* A '<' drawn with lv_line (no glyph: the font subset need not have one). The points live with the object. */
+static void chev_free(lv_event_t *e) { lv_free(lv_event_get_user_data(e)); }
+static lv_obj_t *chevron(lv_obj_t *parent, int cw, int ch, lv_color_t c, int x, int y) {
+  lv_point_precise_t *pt = lv_malloc(3 * sizeof *pt);
+  pt[0] = (lv_point_precise_t){ (lv_value_precise_t)cw, 0 };
+  pt[1] = (lv_point_precise_t){ 0, (lv_value_precise_t)(ch / 2) };
+  pt[2] = (lv_point_precise_t){ (lv_value_precise_t)cw, (lv_value_precise_t)ch };
+  lv_obj_t *l = lv_line_create(parent);
+  lv_line_set_points(l, pt, 3);
+  lv_obj_add_event_cb(l, chev_free, LV_EVENT_DELETE, pt);
+  lv_obj_set_style_line_width(l, 2, 0);
+  lv_obj_set_style_line_color(l, c, 0);
+  lv_obj_set_style_line_rounded(l, true, 0);
+  lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_pos(l, x, y);
+  return l;
+}
+
+static lv_obj_t *outlined(lv_obj_t *scr, int w, int h, int radius) {
+  const ru_theme_t *t = ru_theme();
+  lv_obj_t *b = lv_obj_create(scr);
+  lv_obj_remove_style_all(b);
+  lv_obj_set_size(b, w, h);
+  lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_t *l = lv_label_create(b);
-  lv_label_set_text(l, text);
-  lv_obj_set_style_text_font(l, ru_font_small(), 0);
-  lv_obj_set_style_text_color(l, ru_theme()->text_dim, 0);
-  lv_obj_center(l);
-  lv_obj_add_event_cb(b, cb_back, LV_EVENT_CLICKED, a);
+  lv_obj_set_style_radius(b, radius, 0);
+  lv_obj_set_style_border_width(b, 1, 0);
+  lv_obj_set_style_border_color(b, ru_dim(t->text_dim, 150), 0);
+  lv_obj_set_style_border_color(b, t->accent, LV_STATE_PRESSED);
   return b;
 }
 
-/* Dial screens use the whole face, so the device name doubles as the back control (the shell's edge swipe is the real one). */
-static void name_back(ru_dzapp_t *a, lv_obj_t *scr, const char *text, float dy_u) {
-  lv_obj_t *b = ru_cont_new(scr, 0, 0, ru_u(40), ru_u(9));
-  lv_obj_align(b, LV_ALIGN_CENTER, 0, ru_u(dy_u));
-  lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+/* The visible back control of every detail, sub and confirm screen: an outlined pill "< LABEL" dy pixels from the
+ * centre. On a square panel there is also a corner chevron at the top left, outside the inscribed circle. */
+static lv_obj_t *nav_back_f(ru_dzapp_t *a, lv_obj_t *scr, const char *label, int dy, const lv_font_t *f) {
+  const ru_theme_t *t = ru_theme();
+  int cw = ru_u(1.5f), ch = ru_u(3.0f), pad = ru_u(2.6f), gap = ru_u(1.6f);
+  int h = ru_u(9);
+  lv_obj_t *b = outlined(scr, LV_SIZE_CONTENT, h, LV_RADIUS_CIRCLE);
+  lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_hor(b, pad, 0);
+  lv_obj_set_style_pad_column(b, gap, 0);
+  lv_obj_align(b, LV_ALIGN_CENTER, 0, dy);
+  chevron(b, cw, ch, t->text_dim, 0, 0);
   lv_obj_t *l = lv_label_create(b);
-  lv_label_set_text(l, text);
-  lv_obj_set_style_text_font(l, ru_font_body(), 0);
-  lv_obj_set_style_text_color(l, ru_theme()->text_dim, 0);
-  lv_obj_center(l);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_style_max_width(l, ru_u(34), 0);
+  lv_obj_set_height(l, lv_font_get_line_height(f)); /* one line: a name that is too long ends in dots */
+  lv_label_set_text(l, label);
+  lv_obj_set_style_text_font(l, f, 0);
+  lv_obj_set_style_text_color(l, t->text_dim, 0);
   lv_obj_add_event_cb(b, cb_back, LV_EVENT_CLICKED, a);
+  lv_area_t r;
+  if (ru_dzapp_back_rect(a, &r)) {
+    lv_obj_t *c = outlined(scr, BACK_CORNER_PX, BACK_CORNER_PX, ru_u(3));
+    lv_obj_set_pos(c, r.x1, r.y1);
+    lv_obj_set_ext_click_area(c, 4);
+    chevron(c, ru_u(2.4f), ru_u(5.0f), t->text_dim, (BACK_CORNER_PX - ru_u(2.4f)) / 2 - 1, (BACK_CORNER_PX - ru_u(5.0f)) / 2 - 1);
+    lv_obj_add_event_cb(c, cb_back, LV_EVENT_CLICKED, a);
+  }
+  return b;
 }
+static lv_obj_t *nav_back(ru_dzapp_t *a, lv_obj_t *scr, const char *label, int dy) { return nav_back_f(a, scr, label, dy, ru_font_small()); }
+
+static void back_button(ru_dzapp_t *a, lv_obj_t *scr, const char *text) { nav_back(a, scr, text, ru_u(42)); }
+
+/* Dial screens use the whole face: the pill reads "< DEVICE NAME" where the name sits (the shell's edge swipe is the other way back). */
+static void name_back(ru_dzapp_t *a, lv_obj_t *scr, const char *text, float dy_u) { nav_back_f(a, scr, text, ru_u(dy_u), ru_font_body()); }
 
 static void cb_gesture(lv_event_t *e) {
   ru_dzapp_t *a = lv_event_get_user_data(e);
@@ -1094,9 +1172,7 @@ static void cb_hold(lv_obj_t *w, ru_hold_event_t ev, void *ud) {
   a->pend.req.confirmed = true;
   post_cmd(a, &a->pend);
   /* back to where the user came from: the result line appears there */
-  if (a->ret_view == RU_VIEW_DETAIL) { a->view = RU_VIEW_DETAIL; build_and_show(a); }
-  else if (a->ret_view == RU_VIEW_SUB) { a->view = RU_VIEW_SUB; build_and_show(a); }
-  else ru_dzapp_show_section(a, a->section);
+  ru_dzapp_back(a);
 }
 
 static lv_obj_t *build_confirm(ru_dzapp_t *a) {

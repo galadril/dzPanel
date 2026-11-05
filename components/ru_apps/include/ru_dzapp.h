@@ -68,6 +68,12 @@ void ru_dzapp_ui_tick(ru_dzapp_t *a, uint32_t now_ms);
 /* Navigation, also used by the gesture layer later. */
 void ru_dzapp_open(ru_dzapp_t *a, const char *idx, bool is_scene);
 void ru_dzapp_home(ru_dzapp_t *a);
+/* One step back: confirm -> where it came from (detail or settings sub), detail -> its section, sub -> Settings,
+ * any other section -> Home. false on Home (nothing to go back to). Used by the on-screen back controls and the shell. */
+bool ru_dzapp_back(ru_dzapp_t *a);
+/* Square panels only: the corner back chevron on a detail, sub or confirm screen, in screen pixels. false on a round
+ * panel or on a section screen (nothing is drawn there). */
+bool ru_dzapp_back_rect(const ru_dzapp_t *a, lv_area_t *r);
 
 /* ---- introspection (tests, screenshots) ---- */
 ru_view_t ru_dzapp_view(const ru_dzapp_t *a);

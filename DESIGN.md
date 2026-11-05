@@ -232,7 +232,8 @@ The shell lives on LVGL's top layer, above any app, so apps never see it.
                          ▼
                    [ Launcher ]            swipe up from bottom edge
 
- Back:  swipe right from the left edge, or the chevron at 12 o'clock
+ Back:  swipe right from the left edge, or the visible back pill "< BACK" ("< DEVICE NAME" on dial pages, "< CANCEL" on confirm);
+        square panels add a corner chevron at the top left (56 px, outside the circle)
  Home:  long-press the rim, or tap the home pill at 6 o'clock
  Rim:   dragging along the outer ring acts as a virtual crown
 ```

@@ -38,6 +38,10 @@ void sim_render(void);
 bool sim_outside_circle(int size, int x, int y);
 /* counts pixels that are not pure black and lie outside the circle (the unmasked buffer) */
 long sim_count_outside_lit(const sim_t *s);
+/* same, but pixels inside the declared rectangle r (square panels: the corner back chevron) do not count */
+long sim_count_outside_lit_except(const sim_t *s, const lv_area_t *r);
+/* counts non-black pixels inside the rectangle (inclusive) */
+long sim_count_lit_in(const sim_t *s, const lv_area_t *r);
 /* counts non-black pixels inside the circle */
 long sim_count_lit(const sim_t *s);
 /* copy fb into dst with everything outside the circle set to black */
