@@ -63,6 +63,14 @@ const check = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); 
     && (await get('param=getscenes', V)).body.result.find((s) => s.idx === '3').Status === 'On'
     && (await get('param=getdevices&filter=all', V)).body.result.find((d) => d.Type === 'Group').Status === 'On');
   check('Scene has no Off', (await get('param=switchscene&idx=1&switchcmd=Off', U)).body.status === 'ERR');
+  for (const f of ['light', 'temp', 'weather', 'utility']) {
+    const r = (await get('param=getdevices&filter=' + f + '&used=true', 'viewer-token')).body.result || [];
+    check('filter=' + f + ' lists some, no scenes', r.length > 0 && r.length < all.body.result.length && r.every((d) => d.Type !== 'Group' && d.Type !== 'Scene'));
+  }
+  const wx = (await get('param=getdevices&filter=weather', 'viewer-token')).body.result.map((d) => d.Type);
+  const tp = (await get('param=getdevices&filter=temp', 'viewer-token')).body.result.map((d) => d.Type);
+  check('THB is on Temperature AND Weather', wx.includes('Temp + Humidity + Baro') && tp.includes('Temp + Humidity + Baro'));
+  check('Thermostat type is not on the Temperature tab', !tp.includes('Thermostat'));
   check('favorite filter', (await get('param=getdevices&filter=all&favorite=1', V)).body.result.every((d) => d.Favorite === 1)
     && (await get('param=getdevices&filter=all&favorite=1', V)).body.result.length < (await get('param=getdevices&filter=all', V)).body.result.length);
   // delta with ActTime cursor

@@ -1,7 +1,10 @@
 /* Dev tool, not a unit test. Reads a live Domoticz through the curl transport and compares it with
  * the parser; optionally proves one control path on group idx 6 only (On, then Off, verified).
  *
- *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check https://host [--control6]
+ *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check https://host [--control6 | --tabs]
+ *
+ * --tabs: compares the server's filter=light|temp|weather|utility membership with dz_tabs_of() and prints a diff
+ * report (by Type / SubType and direction only; no idx, name or URL credentials).
  *
  * The token comes from the environment and is never printed. Only counts and capability names are
  * printed: no device names, idx values, coordinates or raw bodies. At least 5 s between requests. */
@@ -59,9 +62,71 @@ static int scene_status_off(void) {
   return !strcmp(d.status, "Off");
 }
 
+/* ---- --tabs: server filter membership versus dz_tabs_of ---- */
+typedef struct { char idx[12]; char type[24], sub[24]; unsigned tabs; bool scene; } tdev_t;
+typedef struct { tdev_t *v; int n, cap; } tlist_t;
+static bool tab_cb(const dz_device_t *d, void *u) {
+  tlist_t *l = u;
+  if (l->n >= l->cap) return false;
+  tdev_t *t = &l->v[l->n++];
+  snprintf(t->idx, sizeof t->idx, "%s", d->idx);
+  snprintf(t->type, sizeof t->type, "%s", d->type);
+  snprintf(t->sub, sizeof t->sub, "%s", d->subtype);
+  t->tabs = d->tabs;
+  t->scene = dz_cap_is_scene_ns(d->cap);
+  return true;
+}
+
+static int tabs_report(void) {
+  static const struct { const char *name; unsigned bit; } F[] = {
+    { "light", DZ_TAB_LIGHT }, { "temp", DZ_TAB_TEMP }, { "weather", DZ_TAB_WEATHER }, { "utility", DZ_TAB_UTILITY },
+  };
+  static tdev_t allv[CAP], partv[CAP];
+  tlist_t all = { allv, 0, CAP }, part = { partv, 0, CAP };
+  dz_http_result_t r;
+  dz_result_t res;
+  puts("tabs: getdevices filter=all");
+  if (!req("param=getdevices&filter=all&used=true&order=Name", &r)) return 1;
+  if (dz_parse_response(buf, r.len, tab_cb, &all, &res) != DZ_OK) return 1;
+  int devs = 0, none = 0, multi = 0, diffs = 0;
+  for (int i = 0; i < all.n; i++) {
+    if (all.v[i].scene) continue;
+    devs++;
+    unsigned t = all.v[i].tabs;
+    none += t == 0;
+    multi += (t & (t - 1)) != 0;
+  }
+  printf("  devices=%d on-no-tab=%d on-several-tabs=%d\n", devs, none, multi);
+  for (size_t f = 0; f < 4; f++) {
+    char q[96];
+    gap();
+    snprintf(q, sizeof q, "param=getdevices&filter=%s&used=true&order=Name", F[f].name);
+    if (!req(q, &r)) return 1;
+    part.n = 0;
+    if (dz_parse_response(buf, r.len, tab_cb, &part, &res) != DZ_OK) return 1;
+    int local = 0, server = 0, bad = 0;
+    for (int i = 0; i < all.n; i++) {
+      if (all.v[i].scene) continue;
+      bool in_local = (all.v[i].tabs & F[f].bit) != 0, in_server = false;
+      for (int k = 0; k < part.n && !in_server; k++) in_server = !part.v[k].scene && !strcmp(part.v[k].idx, all.v[i].idx);
+      local += in_local;
+      server += in_server;
+      if (in_local != in_server) {
+        bad++;
+        printf("    DIFF %-8s %-24s / %-24s local=%s server=%s\n", F[f].name, all.v[i].type, all.v[i].sub, in_local ? "yes" : "no", in_server ? "yes" : "no");
+      }
+    }
+    printf("  filter=%-8s server=%d local=%d differences=%d\n", F[f].name, server, local, bad);
+    diffs += bad;
+  }
+  printf("tabs: %s\n", diffs ? "DIFFERENCES FOUND" : "all four filters agree with dz_tabs_of");
+  return diffs ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
   const char *url = argc > 1 ? argv[1] : "https://domoticz.hnogames.nl";
   bool control = argc > 2 && !strcmp(argv[2], "--control6");
+  bool tabs = argc > 2 && !strcmp(argv[2], "--tabs");
   char token[DZ_TOKEN_MAX];
   if (!dz_client_token_from_env(token, sizeof token)) { puts("DOMOTICZ_ACCESSTOKEN not set"); return 2; }
   dz_transport_t *tr = dz_transport_curl_create();
@@ -86,6 +151,14 @@ int main(int argc, char **argv) {
   dz_version_parse(vt, &v);
   printf("  parse=%d version=%d.%d build=%d valid=%d\n", pe, v.year, v.minor, v.build, v.valid);
   if (pe != DZ_OK || !v.valid) rc = 1;
+
+  if (tabs) {
+    gap();
+    rc = tabs_report() || rc;
+    dz_model_deinit(&M);
+    dz_transport_destroy(tr);
+    return rc;
+  }
 
   gap();
   puts("2. getdevices (full, all used)");

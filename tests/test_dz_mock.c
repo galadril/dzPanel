@@ -269,6 +269,60 @@ static void test_climate_mock(void) {
   ctl("reset");
 }
 
+/* filter=light|temp|weather|utility: the mock (written independently in JS from Domoticz's Helper.cpp) and dz_tabs_of
+ * must list exactly the same devices, on the basic and on the climate data set. */
+typedef struct { dz_device_t d[96]; int n; } all_t;
+static all_t ALL;
+static bool grab(const dz_device_t *d, void *u) {
+  all_t *a = u;
+  if (a->n < 96) a->d[a->n++] = *d;
+  return true;
+}
+static int fetch_filter(const char *filter, all_t *out) {
+  char url[160];
+  dz_http_result_t r;
+  out->n = 0;
+  snprintf(url, sizeof url, "/json.htm?type=command&param=getdevices&filter=%s&used=true&order=Name", filter);
+  if (get(url, "viewer-token", 3000, rbuf, sizeof rbuf, &r) != DZ_NET_OK || r.status != 200) return -1;
+  return dz_parse_response(rbuf, r.len, grab, out, NULL) == DZ_OK ? out->n : -1;
+}
+static void test_tab_filters(void) {
+  static all_t part;
+  static const struct { const char *name; unsigned bit; } F[] = {
+    { "light", DZ_TAB_LIGHT }, { "temp", DZ_TAB_TEMP }, { "weather", DZ_TAB_WEATHER }, { "utility", DZ_TAB_UTILITY },
+  };
+  for (int pass = 0; pass < 2; pass++) {
+    ctl("reset");
+    if (pass) ctl("set?climate=1");
+    CHECK(fetch_filter("all", &ALL) > 10);
+    int overlaps = 0;
+    for (size_t f = 0; f < 4; f++) {
+      int np = fetch_filter(F[f].name, &part);
+      CHECK(np >= 0);
+      int want = 0;
+      for (int i = 0; i < ALL.n; i++) {
+        if (dz_cap_is_scene_ns(ALL.d[i].cap)) continue; /* filter=all appends scenes and groups (their own idx space) */
+        bool in_tab = (dz_tabs_of(ALL.d[i].type, ALL.d[i].subtype) & F[f].bit) != 0;
+        /* dz_device_t.type is cut at 23 characters, which no Type string reaches; subtype only matters below that */
+        bool listed = false;
+        for (int k = 0; k < part.n; k++) if (!strcmp(part.d[k].idx, ALL.d[i].idx)) listed = true;
+        CHECK(in_tab == listed);
+        if (in_tab != listed) printf("  ^ %s idx %s %s / %s: dz_tabs_of=%d mock=%d\n", F[f].name, ALL.d[i].idx, ALL.d[i].type, ALL.d[i].subtype, in_tab, listed);
+        want += in_tab;
+      }
+      CHECK(np == want && np > 0);
+    }
+    for (int i = 0; i < ALL.n; i++) {
+      if (dz_cap_is_scene_ns(ALL.d[i].cap)) continue;
+      unsigned t = ALL.d[i].tabs;
+      if (t & (t - 1)) overlaps++;
+      CHECK(t == dz_tabs_of(ALL.d[i].type, ALL.d[i].subtype)); /* parsed bits equal the bits of the (short enough) strings */
+    }
+    CHECK(overlaps >= 1); /* THB: Temperature and Weather */
+  }
+  ctl("reset");
+}
+
 int main(void) {
   const char *p = getenv("MOCK_PORT");
   if (!p) { printf("run through tests/run_with_mock.sh\n"); return 2; }
@@ -280,6 +334,7 @@ int main(void) {
   test_client_states();
   test_commands();
   test_climate_mock();
+  test_tab_filters();
   dz_model_deinit(&M);
   dz_transport_destroy(TR);
   MT_DONE();

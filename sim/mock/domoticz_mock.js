@@ -217,6 +217,39 @@ function sunFields() {
     NautTwilightStart: '06:19', NautTwilightEnd: '18:30', AstrTwilightStart: '05:40', AstrTwilightEnd: '19:09', AllowWidgetOrdering: false };
 }
 
+// getdevices filter=light|temp|weather|utility, written from Domoticz main/Helper.cpp (IsLightOrSwitch, IsTemp,
+// IsWeather, IsUtility) and WebServer.cpp (the filter=light extras), on the JSON Type/SubType strings of RFXNames.cpp.
+// Deliberately NOT shared with the C table in components/int_domoticz/dz_tabs.c: the two must agree (tests check it).
+const TABS = { light: 1, temp: 1, weather: 1, utility: 1 };
+const GENERAL_UTILITY = ['kWh', 'Voltage', 'Current', 'Text', 'Percentage', 'Counter Incremental', 'Managed Counter', 'Waterflow',
+  'Custom Sensor', 'Alert', 'Pressure', 'Soil Moisture', 'Leaf Wetness', 'Sound Level', 'Fan', 'Distance'];
+function tabOf(type, sub) {
+  const t = new Set();
+  const isType = (...names) => names.includes(type);
+  // light: IsLightOrSwitch + Evohome controller/relay (Rego 6XX status cannot be told from the counter by string: see dz_tabs.c)
+  if (isType('Lighting 1', 'Lighting 2', 'Lighting 3', 'Lighting 4', 'Lighting 5', 'Lighting 6', 'Fan', 'Color Switch', 'Security',
+    'Curtain', 'Blinds', 'Chime', 'RFY', 'Thermostat 2', 'Thermostat 3', 'Thermostat 4', 'Remote & IR', 'Light/Switch', 'Home Confort',
+    'FS20', 'Hunter', 'Honeywell')) t.add('light');
+  if (type === 'Radiator 1' && sub === 'Smartwares Mode') t.add('light');
+  if (type === 'Heating' && (sub === 'Evohome' || sub === 'Relay')) t.add('light');
+  // temp
+  if (isType('Temp', 'Humidity', 'Temp + Humidity', 'Temp + Humidity + Baro', 'Temp + Baro', 'Thermostat 1', 'Thermostat 6')) t.add('temp');
+  if (type === 'Heating' && (sub === 'Zone' || sub === 'Hot Water')) t.add('temp');
+  if ((type === 'Wind' || type === 'UV') && sub === 'TFA') t.add('temp');   // WIND4 and UV3 are both "TFA"
+  if (type === 'General' && sub === 'System temperature') t.add('temp');
+  if (type === 'RFXSensor' && sub === 'Temperature') t.add('temp');
+  // weather
+  if (isType('Wind', 'Rain', 'Temp + Humidity + Baro', 'Temp + Baro', 'UV')) t.add('weather');
+  if (type === 'General' && ['Visibility', 'Barometer', 'Solar Radiation'].includes(sub)) t.add('weather');
+  // utility
+  if (isType('P1 Smart Meter', 'Lux', 'Current', 'Current/Energy', 'Energy', 'Power', 'YouLess Meter', 'Air Quality', 'Usage', 'Weight', 'RFXMeter')) t.add('utility');
+  if (type === 'Setpoint' && sub === 'SetPoint') t.add('utility');
+  if (type === 'General' && GENERAL_UTILITY.includes(sub)) t.add('utility');
+  if (type === 'RFXSensor' && (sub === 'Voltage' || sub === 'A/D')) t.add('utility');
+  if (type === 'Radiator 1' && sub === 'Smartwares') t.add('utility');
+  return t;
+}
+
 function handleJson(req, res, u) {
   const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
   stats.lastAuth = m ? 'present' : 'absent';
@@ -258,6 +291,8 @@ function handleJson(req, res, u) {
   if (p === 'getconfig') return ok({ title: 'GetConfig', ...CONFIGS[units], Latitude: '12.345678', Longitude: '98.765432', WebUserName: 'mock-user' });
   if (p === 'getdevices') {
     let r = devices;
+    const tab = q.get('filter');
+    if (TABS[tab]) r = r.filter((d) => tabOf(d.Type, d.SubType).has(tab)); // Domoticz GetJSonDevices: scenes only come with filter=all
     if (q.get('rid')) r = r.filter((d) => d.idx === q.get('rid') && d.Type !== 'Group');
     if (q.get('favorite') === '1') r = r.filter((d) => d.Favorite === 1);
     if (q.get('plan')) r = r.filter((d) => (d.PlanIDs || []).includes(Number(q.get('plan'))));
