@@ -209,7 +209,7 @@ static void square_tests(int dia) {
   ru_gesture_cfg_t cfg; ru_gesture_cfg_square(&cfg, dia);
   ru_gesture_t g; ru_gesture_init(&g, dia, &cfg);
   float R = dia / 2.0f, m = 5.0f;
-  /* corner (5,5): zone RIM and accepted. It sits exactly on the BACK/QUICK bearing border (315), so the swipes below
+  /* corner (5,5) is a TIE-BREAK PIN: zone RIM and accepted. It sits exactly on the BACK/QUICK bearing border (315), so the swipes below
    * start a little off the diagonal: (5,20) is bearing ~313 (BACK), (20,5) is ~317 (QUICK). */
   CHECK(ru_gesture_zone_of(&g, m, m) == RU_ZONE_RIM);
   log_t l;
