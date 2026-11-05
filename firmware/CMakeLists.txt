@@ -39,6 +39,19 @@ if(NOT EXISTS ${CMAKE_CURRENT_LIST_DIR}/../components/boards/${RU_BOARD}
   message(FATAL_ERROR "board '${RU_BOARD}' has no driver yet: components/boards/${RU_BOARD} or "
                       "firmware/boards/${RU_BOARD}/sdkconfig.defaults is missing")
 endif()
+# SDKCONFIG_DEFAULTS are only read when sdkconfig is generated, so reusing a build dir for another board would keep
+# the old board's sdkconfig. Stamp the board in the build dir and refuse a mismatch.
+set(_ru_stamp ${CMAKE_BINARY_DIR}/ru_board.stamp)
+if(EXISTS ${_ru_stamp})
+  file(READ ${_ru_stamp} _ru_prev)
+  string(STRIP "${_ru_prev}" _ru_prev)
+  if(NOT _ru_prev STREQUAL RU_BOARD)
+    message(FATAL_ERROR "build dir ${CMAKE_BINARY_DIR} was configured for board '${_ru_prev}', not '${RU_BOARD}'. "
+                        "Use a separate build dir per board (tools/build_fw.sh does) or delete this one.")
+  endif()
+else()
+  file(WRITE ${_ru_stamp} "${RU_BOARD}\n")
+endif()
 list(APPEND EXTRA_COMPONENT_DIRS ${CMAKE_CURRENT_LIST_DIR}/../components/boards/${RU_BOARD})
 set(SDKCONFIG_DEFAULTS "sdkconfig.defaults;boards/${RU_BOARD}/sdkconfig.defaults")
 set(SDKCONFIG ${CMAKE_BINARY_DIR}/sdkconfig)
