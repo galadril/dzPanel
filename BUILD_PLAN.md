@@ -32,7 +32,7 @@ Milestone numbers match the roadmap in `DESIGN.md` section 13.
 
 **Do**
 
-- [ ] Create the repo. Move `docs/PROJECT_DESIGN.md` to `docs/PROJECT_DESIGN.md`. Keep `DESIGN.md` and `BUILD_PLAN.md` at the root.
+- [ ] Create the repo. (The original brief now lives at `docs/PROJECT_DESIGN.md`.) Keep `DESIGN.md` and `BUILD_PLAN.md` at the root.
 - [ ] Move `docs/research/*.md` under `docs/research/` as the permanent record (already there).
 - [ ] Add `README.md`, `CONTRIBUTING.md`, `.gitignore` (include `sdkconfig`, `build/`, `secrets*`, `*.local.*`), issue templates.
 - [ ] **Pick a licence** (ADR-007). Check the licences of any Waveshare code before copying anything.
