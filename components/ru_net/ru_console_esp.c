@@ -2,8 +2,16 @@
 
 #include <string.h>
 
+#include "sdkconfig.h"
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
+#elif CONFIG_ESP_CONSOLE_UART
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
+#else
+#error "ru_console_esp needs CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG or CONFIG_ESP_CONSOLE_UART"
+#endif
 #include "esp_log.h"
 #include "ru_console.h"
 #include "ru_osal.h"
@@ -20,8 +28,15 @@ static struct {
   bool started;
 } C;
 
+#if CONFIG_ESP_CONSOLE_UART
+enum { UART_RX_BUF = 512, UART_TX_BUF = 2048 };
+#define CON_UART ((uart_port_t)CONFIG_ESP_CONSOLE_UART_NUM)
+#endif
+
+/* Transport: write n bytes, never block the caller for long. */
 static void tx_write(const void *d, size_t n) {
   ru_mutex_lock(C.tx);
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
   const uint8_t *p = d;
   while (n) {
     int w = usb_serial_jtag_write_bytes(p, n, pdMS_TO_TICKS(200));
@@ -29,7 +44,38 @@ static void tx_write(const void *d, size_t n) {
     p += w;
     n -= (size_t)w;
   }
+#else
+  /* uart_write_bytes() blocks when the TX ring buffer is full (a stalled line, logs piling up). Only write what fits
+   * right now; a message that does not fit is dropped whole, so a frame is never cut in half. */
+  size_t room = 0;
+  if (uart_get_tx_buffer_free_size(CON_UART, &room) == ESP_OK && room >= n) uart_write_bytes(CON_UART, d, n);
+#endif
   ru_mutex_unlock(C.tx);
+}
+
+static int rx_read(uint8_t *buf, size_t cap, uint32_t ms) {
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+  return usb_serial_jtag_read_bytes(buf, cap, pdMS_TO_TICKS(ms));
+#else
+  return uart_read_bytes(CON_UART, buf, cap, pdMS_TO_TICKS(ms));
+#endif
+}
+
+static bool transport_install(void) {
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+  usb_serial_jtag_driver_config_t dc = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+  if (usb_serial_jtag_driver_install(&dc) != ESP_OK) { ESP_LOGE(TAG, "usb_serial_jtag driver install failed"); return false; }
+  usb_serial_jtag_vfs_use_driver();
+#else
+  /* The IDF console already configured the port (115200 8N1 by default, CONFIG_ESP_CONSOLE_UART_BAUDRATE); the driver
+   * adds the RX/TX ring buffers and the VFS then routes logs through it. */
+  if (uart_driver_install(CON_UART, UART_RX_BUF, UART_TX_BUF, 0, NULL, 0) != ESP_OK) {
+    ESP_LOGE(TAG, "uart driver install failed");
+    return false;
+  }
+  uart_vfs_dev_use_driver(CON_UART);
+#endif
+  return true;
 }
 
 static void improv_write(void *u, const uint8_t *d, size_t n) { (void)u; tx_write(d, n); }
@@ -60,7 +106,7 @@ static void console_task(void *arg) {
   (void)arg;
   uint8_t buf[128];
   for (;;) {
-    int n = usb_serial_jtag_read_bytes(buf, sizeof buf, pdMS_TO_TICKS(20));
+    int n = rx_read(buf, sizeof buf, 20);
     uint32_t now = ru_now_ms();
     if (n > 0) {
       if (!C.improv_on) {
@@ -91,9 +137,7 @@ bool ru_console_esp_start(const ru_console_esp_cfg_t *cfg) {
   C.improv_on = cfg->improv_enabled;
   C.tx = ru_mutex_create();
   if (!C.tx) return false;
-  usb_serial_jtag_driver_config_t dc = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-  if (usb_serial_jtag_driver_install(&dc) != ESP_OK) { ESP_LOGE(TAG, "usb_serial_jtag driver install failed"); return false; }
-  usb_serial_jtag_vfs_use_driver();
+  if (!transport_install()) return false;
   ru_improv_init(&C.improv, &C.cfg.improv, cfg->improv_authorized);
   ru_console_ops_t ops = {on_line, on_overflow, NULL};
   ru_console_init(&C.con, &ops, &C.improv);
