@@ -151,6 +151,7 @@ static void touch_loop(lv_indev_t *indev) {
   }
   lv_obj_t *hl = NULL, *vl = NULL;
   bool was_down = false;
+  int32_t last_x = -1, last_y = -1;
   int tick = 0;
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -167,7 +168,11 @@ static void touch_loop(lv_indev_t *indev) {
       }
       lv_obj_set_pos(hl, 0, p.y);
       lv_obj_set_pos(vl, p.x, 0);
-      ESP_LOGI(TAG, "touch x=%d y=%d -> %s", (int)p.x, (int)p.y, region(p.x, p.y));
+      if (!was_down || p.x != last_x || p.y != last_y) {
+        ESP_LOGI(TAG, "touch x=%d y=%d -> %s", (int)p.x, (int)p.y, region(p.x, p.y));
+        last_x = p.x;
+        last_y = p.y;
+      }
     } else if (was_down) {
       ESP_LOGI(TAG, "touch released");
     }
@@ -196,6 +201,8 @@ void app_main(void) {
   if (ru_port_lock(UINT32_MAX)) {
     s_root = lv_screen_active();
     lv_obj_remove_style_all(s_root);
+    lv_obj_set_style_bg_color(s_root, lv_color_black(), 0); /* remove_style_all leaves the background transparent */
+    lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
     ru_port_unlock();
   }

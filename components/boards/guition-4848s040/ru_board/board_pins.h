@@ -65,7 +65,7 @@
 #endif
 
 /* ---- COLMOD (0x3A) written by the init table. The vendor table (Arduino_GFX) sends 0x60 (RGB666) even though only 16 data
- * lines are wired; it is the value known to work on this board. 0x50 would be the textbook RGB565 value; try it if colours
+ * lines are wired; it is the value used by the Arduino_GFX table for this board and is UNVERIFIED on this hardware. 0x50 would be the textbook RGB565 value; try it if colours
  * look crushed or noisy. The esp_lcd_st7701 component first sends 0x50 (bits_per_pixel = 16), then the table overrides it. ---- */
 #ifndef RU_GUITION_COLMOD
 #define RU_GUITION_COLMOD 0x60

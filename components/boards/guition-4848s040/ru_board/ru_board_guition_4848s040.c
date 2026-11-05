@@ -69,6 +69,8 @@ void ru_port_brightness_set(int percent) {
 }
 int ru_port_brightness_get(void) { return g_brightness; }
 
+/* Startup failures are terminal: ru_port_start returns NULL and the caller never retries, so the error paths in panel_new and
+ * ru_port_start deliberately do not tear down the SPI IO, RGB panel or adapter. */
 /* Panel: 3-wire SPI IO -> esp_lcd_st7701 (vendor init table) -> RGB panel. */
 static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel) {
   const esp_lcd_panel_io_3wire_spi_config_t io_cfg = ST7701_PANEL_IO_3WIRE_SPI_CONFIG(
@@ -164,7 +166,7 @@ static esp_err_t touch_new(esp_lcd_touch_handle_t *out) {
   io_cfg.dev_addr = addr;
   io_cfg.scl_speed_hz = RU_GUITION_TOUCH_I2C_HZ;
   esp_lcd_panel_io_handle_t tio = NULL;
-  ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(g_bus, &io_cfg, &tio), TAG, "touch io");
+  ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(g_bus, &io_cfg, &tio), TAG, "touch io"); /* bus stays up for the probe scan */
   const esp_lcd_touch_config_t tcfg = {
       .x_max = RU_GUITION_HRES,
       .y_max = RU_GUITION_VRES,
@@ -173,7 +175,12 @@ static esp_err_t touch_new(esp_lcd_touch_handle_t *out) {
       .levels = {.reset = 0, .interrupt = 0},
       .flags = {.swap_xy = 0, .mirror_x = 0, .mirror_y = 0},
   };
-  ESP_RETURN_ON_ERROR(esp_lcd_touch_new_i2c_gt911(tio, &tcfg, out), TAG, "gt911");
+  esp_err_t err = esp_lcd_touch_new_i2c_gt911(tio, &tcfg, out);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "gt911: %s", esp_err_to_name(err));
+    esp_lcd_panel_io_del(tio); /* g_bus is kept on purpose: the bring-up probe scans it via ru_guition_touch_bus() */
+    return err;
+  }
   g_tp_addr = addr;
   return ESP_OK;
 }

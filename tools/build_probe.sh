@@ -3,7 +3,9 @@
 # Same IDF environment handling as tools/build_fw.sh.
 set -euo pipefail
 name="${1:?usage: tools/build_probe.sh <probe dir name> [idf.py args]}"; shift
+case "$name" in ""|*[!a-z0-9-]*) echo "build_probe.sh: invalid probe name '$name' (allowed: a-z 0-9 -)" >&2; exit 2;; esac
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[ -f "$root/firmware/bringup/$name/CMakeLists.txt" ] || { echo "build_probe.sh: no probe firmware/bringup/$name" >&2; exit 2; }
 if ! command -v idf.py >/dev/null 2>&1; then
   if [ ! -w /opt/esp/tools ] && [ -d /opt/esp/tools ]; then
     mkdir -p "$HOME/.idf-shadow"

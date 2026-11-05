@@ -18,6 +18,10 @@
 
 static const char *TAG = "ru_console";
 
+/* Security properties: the console has no authentication (physical access to the serial port is the trust boundary; DTR/RTS can
+ * also enter ROM download mode and flash encryption is off). The IDF UART driver's RX ring keeps the raw bytes of RU+CFG/Improv
+ * lines (Wi-Fi password, Domoticz token) in RAM after they are read, and CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y means a crash dump
+ * could contain them. No uart_flush_input after each line: it could drop a pipelined line. */
 static struct {
   ru_console_esp_cfg_t cfg;
   ru_console_t con;
@@ -148,6 +152,7 @@ bool ru_console_esp_start(const ru_console_esp_cfg_t *cfg) {
   C.cfg.improv.write = improv_write;
   C.cfg.improv.user = NULL;
   C.improv_on = cfg->improv_enabled;
+  C.tx_drop_log_ms = ru_now_ms() - 10000u; /* first drop is logged at once; later ones at most every 10 s */
   C.tx = ru_mutex_create();
   if (!C.tx) return false;
   if (!transport_install()) return false;

@@ -115,6 +115,7 @@ Device-side requirements (to implement in firmware):
 - **Wi-Fi before Domoticz** when both are in the line (see above); a Wi-Fi failure ends the line with `wifi_failed`.
 - **Test before saving**: call `getversion` with the token. Save to the secrets NVS namespace only on success, unless the failure is `unreachable` and the line carries `"force":true`.
 - **Never echo the line or the token** to the console, logs or crash dumps. Reply codes carry no secret. Ordinary log lines must not start with `RU+CFG `, so the host can ignore them.
+- **Console security limits (UART console, as on the Guition board):** there is no authentication; physical access to the serial port is the trust boundary (DTR/RTS can also enter ROM download mode, and flash encryption is off). The IDF UART driver's RX ring keeps the raw bytes of `RU+CFG`/Improv lines (Wi-Fi password, token) in RAM after they are read, and `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y` means a crash dump could contain them. The ring is deliberately not flushed per line, since that could drop a pipelined line.
 - Cap the line length (the token is a few hundred bytes; cap at 2 KiB) and the JSON depth.
 - A 15 s timeout for the connection test (plus up to 20 s for a Wi-Fi join); a reply always follows, exactly once.
 

@@ -4,7 +4,9 @@
 # IDF_TOOLS_PATH; on the read-only /opt/esp install a shadow dir of symlinks is used (docs/development-setup.md).
 set -euo pipefail
 board="${1:?usage: tools/build_fw.sh <board> [idf.py args]}"; shift
+case "$board" in ""|*[!a-z0-9-]*) echo "build_fw.sh: invalid board name '$board' (allowed: a-z 0-9 -)" >&2; exit 2;; esac
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[ -d "$root/components/boards/$board" ] || { echo "build_fw.sh: unknown board '$board' (no components/boards/$board)" >&2; exit 2; }
 if ! command -v idf.py >/dev/null 2>&1; then
   if [ ! -w /opt/esp/tools ] && [ -d /opt/esp/tools ]; then
     mkdir -p "$HOME/.idf-shadow"

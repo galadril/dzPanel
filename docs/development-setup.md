@@ -50,7 +50,7 @@ export IDF_TOOLS_PATH=~/.idf-shadow
 tools/build_fw.sh amoled-175            # or guition-4848s040; output in firmware/build-<board>
 ```
 
-The board is chosen at build time with `RU_BOARD` (`tools/build_fw.sh <board>` passes `-DRU_BOARD=<board> -B build-<board>`). Each board has `components/boards/<board>/` (the `ru_board` component), `firmware/boards/<board>/sdkconfig.defaults` and its own `firmware/dependencies.lock.<board>`. Use one build directory per board: the sdkconfig lives in the build dir, and CMake refuses to reuse a build dir for a different board. The Guition bring-up probe is built with `tools/build_probe.sh` (see `firmware/bringup/guition-probe/README.md`).
+The board is chosen at build time with `RU_BOARD` (`tools/build_fw.sh <board>` passes `-DRU_BOARD=<board> -B build-<board>`). Each board has `components/boards/<board>/` (the `ru_board` component), `firmware/boards/<board>/sdkconfig.defaults` and its own `firmware/dependencies.lock.<board>`. Use one build directory per board: the sdkconfig lives in the build dir, and CMake refuses to reuse a build dir for a different board. The Guition bring-up probe is built with `tools/build_probe.sh` (see `firmware/bringup/guition-probe/README.md` and `docs/bringup-guition-4848s040.md`).
 
 On a normal machine with a writable ESP-IDF install, none of the shadow directory is needed.
 
