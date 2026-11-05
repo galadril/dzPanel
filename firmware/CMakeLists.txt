@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-# RoundOS firmware (ESP32-S3). Host code lives in ../components and is shared with the host build.
+# dzPanel firmware (ESP32-S3). Host code lives in ../components and is shared with the host build.
 set(EXTRA_COMPONENT_DIRS
   ${CMAKE_CURRENT_LIST_DIR}/../components/ru_core
   ${CMAKE_CURRENT_LIST_DIR}/../components/ru_data
@@ -11,10 +11,10 @@ set(EXTRA_COMPONENT_DIRS
   ${CMAKE_CURRENT_LIST_DIR}/../components/ru_net
   ${CMAKE_CURRENT_LIST_DIR}/../components/ru_apps
   ${CMAKE_CURRENT_LIST_DIR}/../components/int_domoticz)
-# Version: the VERSION file at the repo root, or the ROUNDOS_VERSION environment variable (CI sets nightlies like
+# Version: the VERSION file at the repo root, or the DZPANEL_VERSION environment variable (CI sets nightlies like
 # 0.1.0-nightly.20261101). It must match what tools/make_manifest.py accepts, and fit esp_app_desc (31 chars).
-if(DEFINED ENV{ROUNDOS_VERSION})
-  set(PROJECT_VER "$ENV{ROUNDOS_VERSION}")
+if(DEFINED ENV{DZPANEL_VERSION})
+  set(PROJECT_VER "$ENV{DZPANEL_VERSION}")
 else()
   file(STRINGS ${CMAKE_CURRENT_LIST_DIR}/../VERSION PROJECT_VER LIMIT_COUNT 1)
 endif()
@@ -66,4 +66,4 @@ endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Per-board component-manager lock file (IDF >= 5.x build property, resolved against the project dir).
 idf_build_set_property(DEPENDENCIES_LOCK dependencies.lock.${RU_BOARD})
-project(roundos)
+project(dzpanel)

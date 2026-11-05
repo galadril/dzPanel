@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-# Guition ESP32-S3-4848S040 bring-up probe: panel, backlight and touch only. No networking, no RoundOS UI.
+# Guition ESP32-S3-4848S040 bring-up probe: panel, backlight and touch only. No networking, no dzPanel UI.
 # It builds the same ru_board component as the firmware, with the same sdkconfig defaults. See README.md.
 set(_fw ${CMAKE_CURRENT_LIST_DIR}/../..)
 set(EXTRA_COMPONENT_DIRS

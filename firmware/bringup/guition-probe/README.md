@@ -1,7 +1,7 @@
 # Guition ESP32-S3-4848S040 bring-up probe
 
 A small IDF project that exercises only the panel (ST7701S over RGB), the backlight and the GT911 touch controller, using the
-same `ru_board` component and sdkconfig defaults as the RoundOS firmware (`RU_BOARD=guition-4848s040`). No networking, no RoundOS UI.
+same `ru_board` component and sdkconfig defaults as the dzPanel firmware (`RU_BOARD=guition-4848s040`). No networking, no dzPanel UI.
 Nothing here has run on the real board yet.
 
 ## Build

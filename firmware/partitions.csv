@@ -1,4 +1,4 @@
-# RoundOS 16 MB layout (DESIGN.md section 10). No factory slot: the bootloader starts ota_0 when otadata is empty.
+# dzPanel 16 MB layout (DESIGN.md section 10). No factory slot: the bootloader starts ota_0 when otadata is empty.
 # Name,    Type, SubType,  Offset,    Size,      Flags
 nvs,       data, nvs,      0x9000,    0x6000,
 otadata,   data, ota,      0xf000,    0x2000,

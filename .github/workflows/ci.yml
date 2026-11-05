@@ -1,4 +1,4 @@
-# CI for RoundOS. NOT YET RUN on GitHub: written from the commands that were run locally
+# CI for dzPanel. NOT YET RUN on GitHub: written from the commands that were run locally
 # (docs/development-setup.md). Action and container tags are unverified; check them on the first run.
 name: ci
 on:
