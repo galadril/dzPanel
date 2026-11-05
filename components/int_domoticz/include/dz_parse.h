@@ -4,6 +4,9 @@
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+
+#include "dz_tabs.h"
 
 /* What a screen can do with a device. Chosen from capability, never from a raw type (DESIGN.md). */
 typedef enum {
@@ -90,6 +93,7 @@ typedef struct {
   char level_names[64]; /* selector names, '|' separated, decoded from base64 */
   int switch_type;      /* SwitchTypeVal, -1 if absent */
   dz_cap_t cap;
+  uint8_t tabs;  /* DZ_TAB_* bits, from the FULL Type/SubType strings (Domoticz web UI tabs); 0 = none */
   bool favorite;
   bool is_protected;  /* needs a passcode: the device never controls these */
   bool timeout;       /* HaveTimeout: the device has stopped reporting */

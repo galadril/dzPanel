@@ -552,6 +552,13 @@ static bool plan_array(sc_t *s, dz_device_t *d) {
   }
 }
 
+/* Whole string for the tab classification; one that does not fit becomes "?" (matches no rule). */
+static void keep_full(char *dst, size_t cap, const char *src) {
+  size_t n = strlen(src);
+  if (n >= cap) { dst[0] = '?'; dst[1] = 0; return; }
+  memcpy(dst, src, n + 1);
+}
+
 /* Parses one device object. Sets *ok=false if the entry is syntactically fine but unusable. */
 static bool parse_device(sc_t *s, dz_device_t *d, int depth) {
   val_t v;
@@ -563,6 +570,8 @@ static bool parse_device(sc_t *s, dz_device_t *d, int depth) {
   s->p++;
   ws(s);
   if (s->p < s->end && *s->p == '}') { s->p++; return true; }
+  char ftype[40], fsub[40]; /* untruncated (type[24], subtype[24] cut long names); longer than 39 matches no rule */
+  ftype[0] = fsub[0] = 0;
   for (;;) {
     ws(s);
     if (!str(s, key, sizeof key)) return false;
@@ -573,12 +582,14 @@ static bool parse_device(sc_t *s, dz_device_t *d, int depth) {
       if (!plan_array(s, d)) return false;
     } else {
       if (!read_value(s, &v, depth + 1)) return false;
+      if (v.t == V_STR && !strcmp(key, "Type")) keep_full(ftype, sizeof ftype, v.s);
+      else if (v.t == V_STR && !strcmp(key, "SubType")) keep_full(fsub, sizeof fsub, v.s);
       assign(d, key, &v);
     }
     ws(s);
     if (s->p >= s->end) return false;
     char c = *s->p++;
-    if (c == '}') return true;
+    if (c == '}') { d->tabs = dz_tabs_of(ftype, fsub); return true; }
     if (c != ',') return false;
   }
 }

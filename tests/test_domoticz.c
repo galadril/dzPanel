@@ -493,6 +493,92 @@ static void test_mutation(void) {
   CHECK(insane == 0);
 }
 
+/* ---- Domoticz web UI tabs: the rules of Helper.cpp IsLightOrSwitch/IsTemp/IsWeather/IsUtility ---- */
+#define TL DZ_TAB_LIGHT
+#define TT DZ_TAB_TEMP
+#define TW DZ_TAB_WEATHER
+#define TU DZ_TAB_UTILITY
+
+static void test_tabs(void) {
+  static const struct { const char *type, *sub; unsigned tabs; } T[] = {
+    { "Light/Switch", "Switch", TL }, { "Light/Switch", "Selector Switch", TL }, { "Color Switch", "RGBWW", TL },
+    { "Lighting 2", "AC", TL }, { "Lighting 1", "X10", TL }, { "Security", "X10 security", TL }, { "Blinds", "RAEX", TL },
+    { "Curtain", "Harrison", TL }, { "Chime", "Byron SX", TL }, { "Fan", "Itho CVE RFT", TL }, { "RFY", "RFY", TL },
+    { "Thermostat 3", "Mertik G6R-H4T1", TL }, { "Remote & IR", "PC Remote", TL }, { "FS20", "FS20", TL },
+    { "Home Confort", "TEL-010", TL }, { "Hunter", "Hunter Fan", TL }, { "Honeywell", "Honeywell", TL },
+    { "Radiator 1", "Smartwares Mode", TL }, { "Radiator 1", "Smartwares", TU },
+    { "Heating", "Evohome", TL }, { "Heating", "Relay", TL }, { "Heating", "Zone", TT }, { "Heating", "Hot Water", TT },
+    { "Temp", "LaCrosse TX3", TT }, { "Humidity", "LaCrosse TX3", TT }, { "Temp + Humidity", "THGN122/123", TT },
+    { "Temp + Humidity + Baro", "THB1 - BTHR918, BTHGN129", TT | TW }, { "Temp + Baro", "BMP085 I2C", TT | TW },
+    { "Thermostat 1", "Digimax", TT }, { "Thermostat 6", "Temp/Setpoint", TT },
+    { "RFXSensor", "Temperature", TT }, { "RFXSensor", "Voltage", TU }, { "RFXSensor", "A/D", TU },
+    { "General", "System temperature", TT },
+    { "Wind", "TFA", TT | TW }, { "Wind", "WTGR800", TW }, { "Wind", "Weather Station", TW },
+    { "UV", "TFA", TT | TW }, { "UV", "UVN128,UV138", TW }, { "UV", "UVN800", TW },
+    { "Rain", "RainByRate", TW }, { "General", "Visibility", TW }, { "General", "Barometer", TW },
+    { "General", "Solar Radiation", TW },
+    { "P1 Smart Meter", "Energy", TU }, { "P1 Smart Meter", "Gas", TU }, { "Usage", "Electric", TU },
+    { "RFXMeter", "RFXMeter counter", TU }, { "Setpoint", "SetPoint", TU }, { "Lux", "Lux", TU },
+    { "Energy", "CM119 / CM160", TU }, { "Current", "CM113, Electrisave", TU }, { "Power", "Revolt", TU },
+    { "Air Quality", "Voc", TU }, { "YouLess Meter", "YouLess counter", TU }, { "Weight", "BWR102", TU },
+    { "General", "kWh", TU }, { "General", "Percentage", TU }, { "General", "Text", TU },
+    { "General", "Custom Sensor", TU }, { "General", "Waterflow", TU }, { "General", "Pressure", TU },
+    { "General", "Alert", TU }, { "General", "Voltage", TU }, { "General", "Current", TU },
+    { "General", "Counter Incremental", TU }, { "General", "Managed Counter", TU }, { "General", "Soil Moisture", TU },
+    { "General", "Leaf Wetness", TU }, { "General", "Sound Level", TU }, { "General", "Fan", TU },
+    { "General", "Distance", TU },
+    /* on no tab: only visible as favourites */
+    { "Thermostat", "SetPoint", 0 }, { "General", "ZWave Alarm", 0 }, { "General", "Thermostat Mode", 0 },
+    { "Setpoint", "Temperature", 0 }, { "Barometric", "x", 0 }, { "Gas", "x", 0 }, { "Water", "x", 0 },
+    { "Scene", "", 0 }, { "Group", "", 0 }, { "Nonsense", "Nonsense", 0 }, { "", "", 0 },
+  };
+  for (size_t i = 0; i < sizeof T / sizeof T[0]; i++) {
+    unsigned g = dz_tabs_of(T[i].type, T[i].sub);
+    CHECK(g == T[i].tabs);
+    if (g != T[i].tabs) printf("  ^ tabs %s / %s: got %u want %u\n", T[i].type, T[i].sub, g, T[i].tabs);
+  }
+  CHECK(dz_tabs_of(NULL, NULL) == 0);
+
+  /* every device of the real capture: the parser sets the same bits the table gives for its Type/SubType */
+  size_t len;
+  char *js = slurp("real_getdevices.json", &len);
+  static bag_t b;
+  b.n = 0;
+  CHECK(dz_parse_response(js, len, collect, &b, NULL) == DZ_OK && b.n == 26);
+  static const struct { const char *type; unsigned tabs; } real[] = {
+    { "Color Switch", TL }, { "General", 0xFF }, /* General: by SubType, checked below */ { "Group", 0 }, { "Light/Switch", TL },
+    { "Lighting 2", TL }, { "P1 Smart Meter", TU }, { "RFXMeter", TU }, { "Rain", TW }, { "Setpoint", TU }, { "Temp", TT },
+    { "Temp + Humidity + Baro", TT | TW }, { "UV", TW }, { "Usage", TU }, { "Wind", TT | TW },
+  };
+  for (int i = 0; i < b.n; i++) {
+    const dz_device_t *d = &b.d[i];
+    bool known = false;
+    for (size_t k = 0; k < sizeof real / sizeof real[0]; k++) {
+      if (strcmp(d->type, real[k].type)) continue;
+      known = true;
+      if (real[k].tabs != 0xFF) CHECK(d->tabs == real[k].tabs);
+    }
+    CHECK(known); /* a new Type in the capture must be classified on purpose */
+    if (!strcmp(d->type, "General")) {
+      unsigned want = !strcmp(d->subtype, "Visibility") ? TW : TU;
+      CHECK(d->tabs == want);
+    }
+  }
+  free(js);
+
+  /* classified from the FULL strings: this SubType is longer than dz_device_t.subtype and is cut there */
+  static const char LONG[] =
+    "{\"status\":\"OK\",\"result\":[{\"idx\":\"1\",\"Name\":\"x\",\"Type\":\"Temp + Humidity + Baro\","
+    "\"SubType\":\"THB1 - BTHR918, BTHGN129\",\"Temp\":1,\"Humidity\":50}]}";
+  b.n = 0;
+  CHECK(dz_parse_response(LONG, strlen(LONG), collect, &b, NULL) == DZ_OK && b.n == 1);
+  CHECK(strlen(b.d[0].subtype) == 23 && b.d[0].tabs == (TT | TW));
+  /* key order does not matter: SubType before Type */
+  static const char REV[] = "{\"status\":\"OK\",\"result\":[{\"SubType\":\"TFA\",\"idx\":\"2\",\"Type\":\"Wind\"}]}";
+  b.n = 0;
+  CHECK(dz_parse_response(REV, strlen(REV), collect, &b, NULL) == DZ_OK && b.n == 1 && b.d[0].tabs == (TT | TW));
+}
+
 int main(void) {
   test_fixture();
   test_real_capture();
@@ -505,5 +591,6 @@ int main(void) {
   test_climate_edges();
   test_truncation();
   test_mutation();
+  test_tabs();
   MT_DONE();
 }

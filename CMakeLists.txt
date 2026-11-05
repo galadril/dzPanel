@@ -21,7 +21,7 @@ target_link_libraries(ru_ui PUBLIC m)
 add_library(ru_data components/ru_data/ru_data.c)
 target_include_directories(ru_data PUBLIC components/ru_data/include)
 
-add_library(int_domoticz components/int_domoticz/dz_parse.c components/int_domoticz/dz_transport.c
+add_library(int_domoticz components/int_domoticz/dz_parse.c components/int_domoticz/dz_tabs.c components/int_domoticz/dz_transport.c
   components/int_domoticz/dz_model.c components/int_domoticz/dz_client.c components/int_domoticz/dz_cmd.c)
 target_include_directories(int_domoticz PUBLIC components/int_domoticz/include)
 target_link_libraries(int_domoticz PUBLIC m ru_data ru_core)
