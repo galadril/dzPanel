@@ -17,3 +17,4 @@ dist/
 CLAUDE.local.md
 .claude/worktrees/
 build-*/
+firmware/bringup/*/managed_components/

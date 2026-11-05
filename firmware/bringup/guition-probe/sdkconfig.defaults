@@ -1,0 +1,5 @@
+# Probe-only overrides on top of firmware/sdkconfig.defaults + firmware/boards/guition-4848s040/sdkconfig.defaults.
+# Reuse the firmware partition table (the path is relative to this project).
+CONFIG_PARTITION_TABLE_FILENAME="../../partitions.csv"
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
