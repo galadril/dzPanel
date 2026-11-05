@@ -1,0 +1,19 @@
+# Guition ESP32-S3-4848S040: ESP32-S3 QFN56, 16 MB quad flash (3.3 V), 8 MB octal PSRAM, 480x480 ST7701S RGB panel.
+# Flash: QIO/80M/16MB. If this board does not boot with QIO, switch to the documented fallback:
+#   CONFIG_ESPTOOLPY_FLASHMODE_DIO=y (and drop the QIO line).
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Console on UART0 (GPIO43 TX / 44 RX) via the CH341 bridge. Native USB is unusable: GPIO19/20 are touch SDA / a data line.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# Release the USB-Serial/JTAG pad so GPIO19/20 can be used as normal GPIO.
+CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=n
+
+# RGB panel: reset the GDMA every VBlank so a late bounce-buffer/PSRAM fetch cannot leave a permanent shift.
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+# CONFIG_LCD_RGB_ISR_IRAM_SAFE stays off for now (costs IRAM; revisit if the picture glitches during flash writes).

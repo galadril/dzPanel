@@ -1,0 +1,6 @@
+# Versions pinned to what first resolved (2026-11-05, IDF 5.5). Bump deliberately; the board is unverified on real hardware.
+dependencies:
+  espressif/esp_lcd_st7701: "2.0.3"
+  espressif/esp_lcd_panel_io_additions: "1.0.1~1"
+  espressif/esp_lcd_touch_gt911: "1.2.1"
+  espressif/esp_lvgl_adapter: "0.6.4"
