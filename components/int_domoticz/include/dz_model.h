@@ -19,6 +19,7 @@ typedef struct {
   uint32_t changed_gen;
   bool is_scene;      /* scene/group namespace (switchscene idx), separate from device idx */
   bool from_scenes;   /* last written by a getscenes commit */
+  uint16_t order;     /* position in the last complete full response of its kind (devices / scenes); see dz_model_order_of */
 } dz_entry_t;
 
 typedef struct {
@@ -54,6 +55,7 @@ typedef struct {
   uint32_t changes;           /* cumulative added/changed/removed entries */
   uint32_t generation;        /* bumps once per commit that changed anything */
   uint32_t commits, aborts;
+  uint16_t tail_n;            /* entries added by delta/partial since the last complete full commit */
   dz_units_t units;           /* DZ_UNITS: all have_ flags false until getconfig was read */
   int64_t server_epoch_s;     /* server clock at last commit (from ServerTime), -1 unknown */
   uint32_t server_sync_ms;
@@ -82,6 +84,12 @@ bool dz_model_get(dz_model_t *m, const char *idx, bool scene, dz_device_t *dev, 
 bool dz_model_at(dz_model_t *m, size_t i, dz_device_t *dev, ru_val_t *val, ru_val_state_t *st, bool *scene,
                  uint32_t now_ms);
 size_t dz_model_count(dz_model_t *m);
+/* The server's own order (the user's Domoticz order with order=Name): position in the last COMPLETE full response
+ * (FULL_DEVICES for devices, FULL_SCENES for scenes), counted separately per kind. An entry that arrived through a
+ * delta or partial read sorts after all of them (0xFE00 + arrival number, capped at 0xFFFE) until the next complete
+ * full refresh. A full response that overflowed the stage or the store never reorders. 0xFFFF = no such entry. */
+uint16_t dz_model_order_of(dz_model_t *m, const char *idx, bool scene);
+uint16_t dz_model_order_at(dz_model_t *m, size_t i);
 uint32_t dz_model_overflow(dz_model_t *m);
 uint32_t dz_model_changes(dz_model_t *m);
 uint32_t dz_model_generation(dz_model_t *m);

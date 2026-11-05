@@ -160,6 +160,7 @@ int dz_model_commit(dz_model_t *m, dz_commit_t mode, const char *server_time, ui
   bool complete = m->stage_dropped == 0; /* a truncated stage must never trigger removals */
   m->overflow += (uint32_t)m->stage_dropped;
   uint32_t gen = m->generation + 1;
+  bool full = mode == DZ_COMMIT_FULL_DEVICES || mode == DZ_COMMIT_FULL_SCENES;
   /* upsert */
   for (size_t s = 0; s < m->stage_n; s++) {
     const dz_device_t *d = &m->stage[s];
@@ -173,6 +174,7 @@ int dz_model_commit(dz_model_t *m, dz_commit_t mode, const char *server_time, ui
       changed++;
       e->dev = *d;
       e->changed_gen = gen;
+      e->order = (uint16_t)(0xFE00u + (m->tail_n < 0x1FEu ? m->tail_n++ : 0x1FEu)); /* a full commit renumbers below */
     } else {
       e = &m->e[at];
       if (memcmp(&e->dev, d, sizeof *d) != 0) { e->dev = *d; e->changed_gen = gen; changed++; }
@@ -183,8 +185,13 @@ int dz_model_commit(dz_model_t *m, dz_commit_t mode, const char *server_time, ui
     make_val(&e->dev, now_ms, m->cfg.ttl_ms, &e->val);
     if (e->dev.timeout) e->val.ts_mono_ms = now_ms - m->cfg.ttl_ms - 1; /* HaveTimeout: born stale */
   }
+  if (full && complete) { /* only a response that was read and stored in full may renumber */
+    for (size_t s = 0; s < m->stage_n; s++) {
+      ptrdiff_t at = find_locked(m, m->stage[s].idx, is_scene_dev(&m->stage[s]));
+      if (at >= 0) m->e[at].order = (uint16_t)s;
+    }
+  }
   if (mode == DZ_COMMIT_DELTA || mode == DZ_COMMIT_FULL_DEVICES || mode == DZ_COMMIT_FULL_SCENES) {
-    bool full = mode != DZ_COMMIT_DELTA;
     for (size_t i = 0; i < m->n;) {
       dz_entry_t *e = &m->e[i];
       bool in_scope = scenes_src ? e->from_scenes : !e->from_scenes;
@@ -208,6 +215,7 @@ int dz_model_commit(dz_model_t *m, dz_commit_t mode, const char *server_time, ui
       i++;
     }
   }
+  if (mode == DZ_COMMIT_FULL_DEVICES && complete) m->tail_n = 0; /* devices only: delta arrivals are devices */
   int64_t st;
   if (server_time && dz_time_parse(server_time, &st) && mode != DZ_COMMIT_PARTIAL) {
     m->server_epoch_s = st;
@@ -266,6 +274,21 @@ bool dz_model_at(dz_model_t *m, size_t i, dz_device_t *dev, ru_val_t *val, ru_va
 
 #define GETTER(name, field, type) \
   type name(dz_model_t *m) { ru_mutex_lock(m->mu); type v = m->field; ru_mutex_unlock(m->mu); return v; }
+uint16_t dz_model_order_of(dz_model_t *m, const char *idx, bool scene) {
+  ru_mutex_lock(m->mu);
+  ptrdiff_t at = idx ? find_locked(m, idx, scene) : -1;
+  uint16_t o = at >= 0 ? m->e[at].order : 0xFFFFu;
+  ru_mutex_unlock(m->mu);
+  return o;
+}
+
+uint16_t dz_model_order_at(dz_model_t *m, size_t i) {
+  ru_mutex_lock(m->mu);
+  uint16_t o = i < m->n ? m->e[i].order : 0xFFFFu;
+  ru_mutex_unlock(m->mu);
+  return o;
+}
+
 size_t dz_model_count(dz_model_t *m) { ru_mutex_lock(m->mu); size_t v = m->n; ru_mutex_unlock(m->mu); return v; }
 GETTER(dz_model_overflow, overflow, uint32_t)
 GETTER(dz_model_changes, changes, uint32_t)

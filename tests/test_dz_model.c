@@ -98,6 +98,61 @@ static void test_overflow(void) {
   dz_model_deinit(&M);
 }
 
+static uint16_t ord_of(const char *idx, bool scene) { return dz_model_order_of(&M, idx, scene); }
+
+static void test_order(void) {
+  int ch;
+  fresh(CAP);
+  /* follows the response order, not the arrival or idx order */
+  CHECK(apply(DEVS(SW("3", "On") "," SW("1", "On")), DZ_COMMIT_FULL_DEVICES, 1000, &ch) == DZ_OK);
+  CHECK(ord_of("3", false) == 0 && ord_of("1", false) == 1);
+  CHECK(dz_model_order_at(&M, 0) == 0 && dz_model_order_at(&M, 1) == 1 && dz_model_order_at(&M, 9) == 0xFFFF);
+  CHECK(ord_of("9", false) == 0xFFFF && ord_of(NULL, false) == 0xFFFF);
+  /* scenes count on their own, and a device full read leaves them alone */
+  const char *sc = DEVS("{\"idx\":\"8\",\"Name\":\"A\",\"Type\":\"Scene\",\"Status\":\"Off\"},"
+                        "{\"idx\":\"3\",\"Name\":\"B\",\"Type\":\"Group\",\"Status\":\"Off\"}");
+  CHECK(apply(sc, DZ_COMMIT_FULL_SCENES, 1000, &ch) == DZ_OK && dz_model_count(&M) == 4);
+  CHECK(ord_of("8", true) == 0 && ord_of("3", true) == 1);
+  CHECK(ord_of("3", false) == 0 && ord_of("1", false) == 1); /* untouched by the scenes commit */
+  CHECK(apply(DEVS(SW("1", "On") "," SW("3", "On")), DZ_COMMIT_FULL_DEVICES, 2000, &ch) == DZ_OK);
+  CHECK(ord_of("1", false) == 0 && ord_of("3", false) == 1); /* a full refresh reorders */
+  CHECK(ord_of("8", true) == 0 && ord_of("3", true) == 1);   /* scenes unaffected */
+  const char *sc2 = DEVS("{\"idx\":\"3\",\"Name\":\"B\",\"Type\":\"Group\",\"Status\":\"Off\"},"
+                         "{\"idx\":\"8\",\"Name\":\"A\",\"Type\":\"Scene\",\"Status\":\"Off\"}");
+  CHECK(apply(sc2, DZ_COMMIT_FULL_SCENES, 3000, &ch) == DZ_OK);
+  CHECK(ord_of("3", true) == 0 && ord_of("8", true) == 1 && ord_of("1", false) == 0 && ord_of("3", false) == 1);
+  /* a status-only change keeps the position */
+  CHECK(apply(DEVS(SW("1", "Off") "," SW("3", "On")), DZ_COMMIT_FULL_DEVICES, 4000, &ch) == DZ_OK && ch == 1);
+  CHECK(ord_of("1", false) == 0);
+  /* a device that arrives through a delta sorts last, in arrival order; deltas never renumber the others */
+  fresh(CAP);
+  CHECK(apply(DEVS(SW("1", "On") "," SW("2", "On")), DZ_COMMIT_FULL_DEVICES, 1000, &ch) == DZ_OK);
+  CHECK(apply(DEVS(SW("7", "On")), DZ_COMMIT_DELTA, 2000, &ch) == DZ_OK);
+  CHECK(apply(DEVS(SW("6", "On")), DZ_COMMIT_PARTIAL, 2500, &ch) == DZ_OK);
+  CHECK(ord_of("1", false) == 0 && ord_of("2", false) == 1);
+  CHECK(ord_of("7", false) >= 0xFE00 && ord_of("6", false) > ord_of("7", false) && ord_of("6", false) < 0xFFFF);
+  /* a later full refresh puts everything in server order */
+  CHECK(apply(DEVS(SW("7", "On") "," SW("2", "On") "," SW("6", "On") "," SW("1", "On")), DZ_COMMIT_FULL_DEVICES, 3000, &ch) == DZ_OK);
+  CHECK(ord_of("7", false) == 0 && ord_of("2", false) == 1 && ord_of("6", false) == 2 && ord_of("1", false) == 3);
+  dz_model_deinit(&M);
+
+  /* a stage that overflowed never reorders or removes */
+  if (M.mu) dz_model_deinit(&M);
+  dz_model_cfg_t cfg = {.ttl_ms = 10000, .old_update_s = 3600};
+  CHECK(dz_model_init(&M, ent, CAP, stg, 2, &cfg));
+  CHECK(apply(DEVS(SW("1", "On") "," SW("2", "On")), DZ_COMMIT_FULL_DEVICES, 1000, &ch) == DZ_OK);
+  CHECK(apply(DEVS(SW("2", "On") "," SW("1", "On") "," SW("9", "On")), DZ_COMMIT_FULL_DEVICES, 2000, &ch) == DZ_OK);
+  CHECK(dz_model_count(&M) == 2 && ord_of("1", false) == 0 && ord_of("2", false) == 1);
+  dz_model_deinit(&M);
+  /* a store that overflowed never reorders either (stage 4, store 3) */
+  CHECK(dz_model_init(&M, ent, 3, stg, CAP, &cfg));
+  CHECK(apply(DEVS(SW("1", "On") "," SW("2", "On")), DZ_COMMIT_FULL_DEVICES, 1000, &ch) == DZ_OK);
+  CHECK(apply(DEVS(SW("2", "On") "," SW("1", "On") "," SW("5", "On") "," SW("6", "On")), DZ_COMMIT_FULL_DEVICES, 2000, &ch) == DZ_OK);
+  CHECK(dz_model_count(&M) == 3 && dz_model_overflow(&M) >= 1);
+  CHECK(ord_of("1", false) == 0 && ord_of("2", false) == 1 && ord_of("5", false) >= 0xFE00);
+  dz_model_deinit(&M);
+}
+
 static void test_freshness(void) {
   int ch;
   fresh(CAP);
@@ -227,6 +282,7 @@ int main(void) {
   test_staging();
   test_scenes_namespace();
   test_overflow();
+  test_order();
   test_freshness();
   test_values();
   test_time();
