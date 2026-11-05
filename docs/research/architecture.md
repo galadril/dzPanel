@@ -1,6 +1,6 @@
-# RoundOS Software Architecture Proposal
+# dzPanel Software Architecture Proposal
 
-Status: proposal for review. Companion to `/workspace/roundos_project_design.md` (not modified).
+Status: proposal for review. Companion to `docs/PROJECT_DESIGN.md` (not modified).
 Conventions: **[A]** = assumption to verify on hardware or docs. **[D]** = decision (recommendation). Code is sketch-level C, not final API.
 
 ---
@@ -57,7 +57,7 @@ Dependency rule (enforced by CMake `REQUIRES`, checked in CI): upward calls only
 ## 3. Repo and component layout
 
 ```
-roundos/
+dzpanel/
 ├── CMakeLists.txt, sdkconfig.defaults, sdkconfig.defaults.<board>
 ├── main/                      # app_main: board select, start runtime. tiny.
 ├── boards/
@@ -194,7 +194,7 @@ Brightness/AMOLED notes: expose brightness only through HAL; the power service i
 
 ```c
 typedef struct {
-  const char *id;               // reverse-dns "org.roundos.domoticz", [a-z0-9.]+ ≤ 40
+  const char *id;               // reverse-dns "org.dzpanel.domoticz", [a-z0-9.]+ ≤ 40
   const char *name_key;         // i18n key
   const ru_icon_t *icon;        // 1 bit-alpha mask or RGB565A8; recolored by theme
   uint16_t    version;          // semver packed

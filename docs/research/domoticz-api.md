@@ -108,7 +108,9 @@ Sensors have no switch type, so the screen is chosen from `Type` and which field
 5. Weather: many users have a virtual or hardware weather sensor, others none. The weather screen should be optional, driven by a chosen device or by the Domoticz *Temp+Hum+Baro* / *Wind* / *Rain* sensors. An external forecast service is out of scope.
 6. Minimum Domoticz version. Access tokens are recent (2026.1 era), so older installs only have user and password or trusted networks. Decide whether to support Basic auth as a fallback.
 
-## 6. Naming (not decided)
+## 6. Naming
+
+**Decision: the product is named dzPanel** (unofficial display firmware for Domoticz on ESP32-S3 boards, round and square). Identifiers and file names use `dzpanel`. The analysis below is kept as the record of the options that were considered; it still calls the old name "RoundOS".
 
 "RoundOS" suggests a general platform; the scope is now *a Domoticz round-screen remote*. Options:
 
@@ -120,7 +122,7 @@ Sensors have no switch type, so the screen is chosen from `Type` and which field
 | **Domo Ring** | Plain and findable | Bland |
 | **RoundOS** (keep) | Already used in docs | Implies a platform and OS we are not building |
 
-Check the Domoticz project's guidance on use of its name before shipping. I have not looked up any trademark policy. "for Domoticz" as a suffix is a common pattern for third-party tools, but that is a convention, not legal advice. If the hardware list stays wider than Domoticz later (Home Assistant at v0.7), a neutral name is safer. This is the user's decision.
+Check the Domoticz project's guidance on use of its name before shipping. I have not looked up any trademark policy. "for Domoticz" as a suffix is a common pattern for third-party tools, but that is a convention, not legal advice. If the hardware list stays wider than Domoticz later (Home Assistant at v0.7), a neutral name is safer. This was the user's decision.
 
 ## 7. Verified against a live instance (2026.4, build 18568, 2026-10-31)
 

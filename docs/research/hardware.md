@@ -1,4 +1,4 @@
-# RoundOS hardware and toolchain research
+# dzPanel hardware and toolchain research
 
 Date: 2026-10-31. Scope: Waveshare ESP32-S3-Touch-AMOLED-1.75 (466x466) and -2.16 (480x480).
 
@@ -129,7 +129,7 @@ These are my judgement, based on the sources above.
 - **ESP-IDF version:** v5.5.x. Both vendors' examples support it. The 2.16 requires >= 5.5. The 1.75 also lists v6.0.2, but v5.5.x is the common denominator. Pin to the latest 5.5 patch the BSPs build on (v5.5.4 was named for the 1.75 firmware).
 - **LVGL:** v9.x (the IDF `02_lvgl_demo_v9` examples on both boards). Exact minor version UNVERIFIED. Read the example `idf_component.yml` and pin that.
 - **idf.py vs PlatformIO:** idf.py. I found no source showing PlatformIO support for these boards. PlatformIO's espressif32 platform typically lags ESP-IDF releases, which matters for 5.5+. UNVERIFIED for these boards specifically.
-- **Drivers:** use `espressif/esp_lcd_co5300` for both displays. Use `waveshare/esp_lcd_touch_cst9217` as the first attempt for both touch controllers. Use the vendor BSPs as reference, and wrap them behind the RoundOS board profile.
+- **Drivers:** use `espressif/esp_lcd_co5300` for both displays. Use `waveshare/esp_lcd_touch_cst9217` as the first attempt for both touch controllers. Use the vendor BSPs as reference, and wrap them behind the dzPanel board profile.
 - **Board profile fields to include:** resolution, display offsets, QSPI pins, reset method (GPIO vs TCA9554), touch RST method, IO expander present, I2C map, IMU INT pins, audio pins, SD pins, button map.
 
 ## 6. Open hardware questions to verify on arrival
@@ -149,4 +149,4 @@ These are my judgement, based on the sources above.
 13. SD wiring on each board: 1-bit SDMMC only, or CS/D3 usable (GPIO41)?
 14. Board revision and variant markings (1.75 vs -B vs -G vs 1.75C) and which repo/BSP matches.
 15. Audio I2S pin map on the 2.16 matches the 1.75 (it was reported identical, confirm in the schematic).
-16. Licences of Waveshare example code and BSP components before copying into RoundOS.
+16. Licences of Waveshare example code and BSP components before copying into dzPanel.

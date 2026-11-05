@@ -62,14 +62,14 @@ Dry run of the whole publish step with a real image (this is what the workflow d
 
 ```bash
 tools/publish_site.sh --site /tmp/site --board amoled-175 --channel stable --version 0.1.0 \
-    --merged dist/roundos-1.75-merged.bin --vendor <dir with install-button.js>
+    --merged dist/dzpanel-1.75-merged.bin --vendor <dir with install-button.js>
 node tools/check_site.mjs /tmp/site --require-vendor
 ```
 
 ## What is verified
 
 - **Run locally:** `version.py` (7 tests), `make_manifest.py` including `--remove` and file modes (7 tests), `check_site.mjs` (9 tests: a flipped byte, a missing manifest, a lost erase prompt, a version mismatch, unreadable files, a path escaping the site, missing page files, no index), `publish_site.sh` (stable publish, nightly publish, pull, audit, refusal of a bad image with nothing left behind).
-- **Firmware version plumbing:** `firmware/CMakeLists.txt` takes `VERSION` or `ROUNDOS_VERSION`, rejects a malformed string at configure time, and the value appears in `project_description.json`.
+- **Firmware version plumbing:** `firmware/CMakeLists.txt` takes `VERSION` or `DZPANEL_VERSION`, rejects a malformed string at configure time, and the value appears in `project_description.json`.
 - **The workflow YAML** parses, and every script path it references exists.
 
 ## What is not verified

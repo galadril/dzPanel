@@ -1,6 +1,6 @@
 # First bring-up on a real board
 
-**Status: nothing in RoundOS has ever run on hardware.** Every "expect" below is a hypothesis to confirm, not a known result. This is `BUILD_PLAN.md` track C0 to C3 as a runbook for the first hour.
+**Status: nothing in dzPanel has ever run on hardware.** Every "expect" below is a hypothesis to confirm, not a known result. This is `BUILD_PLAN.md` track C0 to C3 as a runbook for the first hour.
 
 The authoring sandbox cannot see USB devices, so flashing and watching the serial console happen on your computer. Send back what the last section asks for and the next iteration can start from facts.
 
@@ -10,8 +10,8 @@ The authoring sandbox cannot see USB devices, so flashing and watching the seria
 |---|---|---|
 | `waveshare-factory-1.75-16MB.bin` | Waveshare's own full 16 MiB factory image (their `FactoryOnly-260805`) | **Recovery.** Write once at `0x0` to restore the board to how it shipped |
 | `waveshare-demo-1.75-merged.bin` | The **unmodified** Waveshare LVGL demo, built here with our toolchain | Proves our toolchain and config produce an image that works, before blaming our code |
-| `roundos-1.75-merged.bin` | RoundOS firmware (ESP-IDF 5.5.6, LVGL 9.4.0) | The real test |
-| `roundos-1.75.elf` | Symbols for the RoundOS image | Decode crash backtraces (below) |
+| `dzpanel-1.75-merged.bin` | dzPanel firmware (ESP-IDF 5.5.6, LVGL 9.4.0) | The real test |
+| `dzpanel-1.75.elf` | Symbols for the dzPanel image | Decode crash backtraces (below) |
 
 All images are written at offset `0x0`. Do not mix files from different packages (Waveshare's own advice).
 
@@ -38,12 +38,12 @@ Record the flash size and chip features. Expectation (unconfirmed): 16 MB flash,
 python -m esptool --chip esp32s3 -p COM5 -b 460800 write_flash 0x0 waveshare-demo-1.75-merged.bin
 ```
 
-Expect Waveshare's LVGL demo to run. If it does not, the problem is in the toolchain or sdkconfig, **not** in RoundOS code. Stop and report.
+Expect Waveshare's LVGL demo to run. If it does not, the problem is in the toolchain or sdkconfig, **not** in dzPanel code. Stop and report.
 
-## Step 3: RoundOS
+## Step 3: dzPanel
 
 ```bash
-python -m esptool --chip esp32s3 -p COM5 -b 460800 write_flash 0x0 roundos-1.75-merged.bin
+python -m esptool --chip esp32s3 -p COM5 -b 460800 write_flash 0x0 dzpanel-1.75-merged.bin
 python -m serial.tools.miniterm COM5 115200               # the serial log (pyserial comes with esptool)
 ```
 
@@ -93,7 +93,7 @@ Restores the board to its shipped state. `erase_flash` is only needed for a clea
 If the serial log shows a backtrace with addresses like `0x42xxxxxx`:
 
 ```bash
-xtensa-esp32s3-elf-addr2line -pfiaC -e roundos-1.75.elf 0x42001234 0x42005678
+xtensa-esp32s3-elf-addr2line -pfiaC -e dzpanel-1.75.elf 0x42001234 0x42005678
 ```
 
 The tool is in the ESP-IDF toolchain (`/opt/esp/tools/.../xtensa-esp32s3-elf-addr2line` in the authoring environment). The `.elf` must match the flashed image exactly: do not rebuild between flashing and decoding.

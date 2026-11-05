@@ -1,6 +1,6 @@
 <div align="center">
 
-# RoundOS
+# dzPanel
 
 **A calm, glanceable application platform for round AMOLED screens.**
 
@@ -14,7 +14,7 @@
 
 > **Status:** Draft v0.1, pre-hardware. Written 2026-10-31.
 > **Owner:** Mark Heinis (`@galadril`). **Name:** provisional.
-> **Companion docs:** [`BUILD_PLAN.md`](BUILD_PLAN.md) (how we get there), [`roundos_project_design.md`](roundos_project_design.md) (original brief), and the four research notes in [`docs/research/`](docs/research/).
+> **Companion docs:** [`BUILD_PLAN.md`](BUILD_PLAN.md) (how we get there), [`docs/PROJECT_DESIGN.md`](docs/PROJECT_DESIGN.md) (original brief), and the four research notes in [`docs/research/`](docs/research/).
 >
 > **Read this first:** the research agents had no working web access for most lookups. Hardware and tooling facts come from search summaries or memory, not from reading primary sources. Section 14 lists every claim that still needs checking. Nothing marked *unverified* should be treated as fact.
 
@@ -41,7 +41,7 @@
 
 ## 1. Vision
 
-Round-screen ESP32-S3 devices usually ship as demos. RoundOS makes them feel like small products: a consistent look, a consistent way to move around, and a simple way to add apps.
+Round-screen ESP32-S3 devices usually ship as demos. dzPanel makes them feel like small products: a consistent look, a consistent way to move around, and a simple way to add apps.
 
 The first showpiece is a **smart-home companion** that shows live Domoticz data, energy flow and notifications, and offers safe touch controls. The platform underneath is not tied to Domoticz or to one screen size.
 
@@ -74,7 +74,7 @@ The first showpiece is a **smart-home companion** that shows live Domoticz data,
 | **Open and reproducible** | Pinned toolchain, committed lockfile, documented builds, no secrets in Git. |
 | **Build on the vendor path** | ESP-IDF stays. We replace nothing underneath us. Vendor examples are the baseline. |
 
-**Terminology.** RoundOS is an application platform and firmware built on ESP-IDF and FreeRTOS. It is not a new kernel. The name is a promise about the experience, not the layer.
+**Terminology.** dzPanel is an application platform and firmware built on ESP-IDF and FreeRTOS. It is not a new kernel.
 
 ---
 
@@ -146,7 +146,7 @@ Record each choice as an ADR (list in section 14).
 ### Repository layout
 
 ```
-roundos/
+dzpanel/
 ├── main/                 tiny app_main: pick board, start runtime
 ├── boards/               board_common, amoled_175, amoled_216, sim_466, sim_480
 ├── components/
@@ -195,7 +195,7 @@ register → init → enter ⇄ leave → release
 
 ```c
 typedef struct {
-  const char *id;              // "org.roundos.domoticz"
+  const char *id;              // "org.dzpanel.domoticz"
   const char *name_key;        // i18n key
   const ru_icon_t *icon;
   uint32_t needs_caps;         // hide the app if missing
@@ -354,7 +354,7 @@ Details, a sample manifest, a partition CSV and a CI workflow sketch are in [`do
 
 ### Installing: the web flasher
 
-A static **RoundOS Installer** page on GitHub Pages, built on **ESP Web Tools**:
+A static **dzPanel Installer** page on GitHub Pages, built on **ESP Web Tools**:
 
 ```
  1  Pick your board          1.75"  /  2.16"          (chip ID can't tell them apart)

@@ -1,6 +1,6 @@
 # Privacy and data handling
 
-RoundOS has no cloud service, no account and no telemetry. This page says what stays where. Where something is still a plan, it says so.
+dzPanel has no cloud service, no account and no telemetry. This page says what stays where. Where something is still a plan, it says so.
 
 ## On the device
 

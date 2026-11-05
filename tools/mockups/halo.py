@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Halo UI mockups for RoundOS: stdlib-only rasteriser, writes PNGs.
+"""Halo UI mockups for dzPanel: stdlib-only rasteriser, writes PNGs.
 
 Usage: python3 -I halo.py OUTDIR [SIZE]
 Tokens come from DESIGN.md section 8. These are idea sketches, not the real
@@ -253,7 +253,7 @@ def screen_boot(S):
     cv, u, c = Canvas(S), S / 100, S / 2
     cv.glow_ring(c, c, 14 * u, 1.4 * u, EMBER, 0, 300)
     cv.disc(c + 14 * u * math.sin(math.radians(300)), c - 14 * u * math.cos(math.radians(300)), 2.2 * u, WHITE)
-    cv.text("ROUNDOS", c, c + 28 * u, .95 * u, WHITE)
+    cv.text("DZPANEL", c, c + 28 * u, .95 * u, WHITE)
     cv.text("V0.1 DEV", c, c + 36 * u, .45 * u, DIM)
     return cv
 

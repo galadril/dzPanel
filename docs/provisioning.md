@@ -23,7 +23,7 @@ For browsers without Web Serial (iPhone, Firefox, Safari). Pure C in `ru_http`, 
 
 **When it runs.** Never by itself. Only when asked: the Wi-Fi manager reached `AP_REQUESTED` (no credentials or repeated join failures, via `ru_portal_start_from_wifi`), or an explicit start (long-press gesture, Settings). It stops after 10 minutes without a page request (parameter), 15 s after success, or on request. A failed start rolls everything back.
 
-**Network.** The device brings up a WPA2 AP named `RoundOS-XXXX` with a random 12 character password (unambiguous alphabet, about 60 bits) generated per session and shown on the round screen as a Wi-Fi QR (`WIFI:T:WPA;S:...;P:...;;`) plus the portal URL. The password is never logged and never in a page. DHCP hands out the AP as the DNS server and a small UDP responder answers every A query with the AP address, so phones raise their captive-portal sheet; the probe paths (`/generate_204`, `/hotspot-detect.html`, `/ncsi.txt`, `/connecttest.txt`, `/redirect`, anything else) get a 302 to `http://192.168.4.1/`.
+**Network.** The device brings up a WPA2 AP named `dzPanel-XXXX` with a random 12 character password (unambiguous alphabet, about 60 bits) generated per session and shown on the round screen as a Wi-Fi QR (`WIFI:T:WPA;S:...;P:...;;`) plus the portal URL. The password is never logged and never in a page. DHCP hands out the AP as the DNS server and a small UDP responder answers every A query with the AP address, so phones raise their captive-portal sheet; the probe paths (`/generate_204`, `/hotspot-detect.html`, `/ncsi.txt`, `/connecttest.txt`, `/redirect`, anything else) get a 302 to `http://192.168.4.1/`.
 
 **Flow** (server-side state, plain HTML, no JavaScript, no external resources, strict CSP):
 

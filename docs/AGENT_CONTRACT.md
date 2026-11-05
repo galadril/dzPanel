@@ -1,6 +1,6 @@
 # Parallel build contract
 
-Every agent working on RoundOS reads this first. It exists so several agents can work at once without stepping on each other.
+Every agent working on dzPanel reads this first. It exists so several agents can work at once without stepping on each other.
 
 ## Ground rules
 

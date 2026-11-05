@@ -1,4 +1,4 @@
-# RoundOS UX: the "Halo" design language
+# dzPanel UX: the "Halo" design language
 
 Status: research / proposal. Targets: 466x466 (1.75") and 480x480 (2.16") round AMOLED, capacitive touch, LVGL-class renderer over QSPI.
 All pixel values are given for 466 and 480 where it matters; the rule is always "design in units, not pixels".
@@ -444,7 +444,7 @@ Loading               Stale                  Error                 Offline      
               .   .
            .         .
          .      ◯       .       Logo = thin ring (the Halo) draws clockwise 0->360 over 900 ms,
-        .     RoundOS     .     bead leaves at 12 o'clock; wordmark fades in (Light weight, 8u)
+        .     dzPanel     .     bead leaves at 12 o'clock; wordmark fades in (Light weight, 8u)
          .   v0.1.0       .     bottom: tiny version (micro, text-3)
            .         .          Total <= 1.5 s of animation; if boot is slower the bead keeps orbiting
               ' . '             APL ~1%
@@ -460,7 +460,7 @@ Step 1: choose              Step 2: join                    Step 3: result
  ( 📶 Neighbour▂   )          OR "Use phone" QR + SoftAP     failure: ⚠ "Wrong password" [Retry]
   [ Rescan ]  [Phone]         ring = progress while joining
 ```
-- Typing on a 466 px circle is painful: **primary path is phone provisioning** (SoftAP "RoundOS-XXXX" captive portal or BLE), shown as a QR code (white-on-black inverted? QR needs dark-on-light: render a light `#E6E9EE` plate of 40u square, small APL cost and temporary).
+- Typing on a 466 px circle is painful: **primary path is phone provisioning** (SoftAP "dzPanel-XXXX" captive portal or BLE), shown as a QR code (white-on-black inverted? QR needs dark-on-light: render a light `#E6E9EE` plate of 40u square, small APL cost and temporary).
 - Keyboard fallback: 3 arc rows (a-j, k-s, t-z + symbols) along the lower chord band; or a rim-drag letter picker (virtual crown) for short strings. Max 1 screen of 6 keys per row, keys >= 11u.
 - Scan list rows: 12 u high, chord-fit, ellipsize SSIDs, signal bars glyph + lock glyph (shape cues).
 

@@ -1,4 +1,4 @@
-# RoundOS: Build, Release, Flash, Update
+# dzPanel: Build, Release, Flash, Update
 
 Status: research and proposal, feeds ADR-006 (firmware update and recovery).
 
@@ -19,7 +19,7 @@ Flash size is the main assumption. The partition table is a template. The build 
 
 ## 1. Decisions in brief
 
-1. **Distribution:** GitHub Releases hold the artifacts. GitHub Pages hosts the "RoundOS Installer" web flasher.
+1. **Distribution:** GitHub Releases hold the artifacts. GitHub Pages hosts the "dzPanel Installer" web flasher.
 2. **Flashing:** ESP Web Tools (`<esp-web-install-button>`) with a **single merged binary per board**. It is written at offset 0 and is the least error-prone option.
 3. **Provisioning:** **Improv Serial** right after flashing (supported by ESP Web Tools `[VERIFY]`). SoftAP captive portal is the fallback. BLE provisioning is deferred.
 4. **OTA:** HTTPS pull from GitHub Releases or the project's Pages site, using `esp_https_ota` with app rollback enabled. Secure Boot v2 and signed images come later as an opt-in.
@@ -46,7 +46,7 @@ Flash size is the main assumption. The partition table is a template. The build 
 
 ```json
 {
-  "name": "RoundOS (AMOLED 1.75)",
+  "name": "dzPanel (AMOLED 1.75)",
   "version": "0.3.1",
   "new_install_prompt_erase": false,
   "builds": [
@@ -54,7 +54,7 @@ Flash size is the main assumption. The partition table is a template. The build 
       "chipFamily": "ESP32-S3",
       "improv": true,
       "parts": [
-        { "path": "roundos-amoled175-v0.3.1-merged.bin", "offset": 0 }
+        { "path": "dzpanel-amoled175-v0.3.1-merged.bin", "offset": 0 }
       ]
     }
   ]
@@ -79,8 +79,8 @@ Decision: **merged for fresh install** (per board, per version). Use `esptool.py
 
 ### 2.4 Per-board builds
 
-- One firmware image per board, because pins, display drivers and touch drivers are compile-time board profiles (design doc section 2). Targets: `amoled175`, `amoled216`. All use `chipFamily: ESP32-S3`, so ESP Web Tools cannot auto-select by chip. The **user picks the board** in our page, which loads the matching manifest. A "wrong board" flash is not detectable by chip ID, so use a runtime guard: firmware checks a board-ID marker (`esp_app_desc` project_name = `roundos-amoled175`) and the OTA code refuses an image whose `project_name` differs from the running one.
-- Naming: `roundos-<board>-<version>-merged.bin`, `roundos-<board>-<version>-app.bin`, `manifest-<board>-<channel>.json`.
+- One firmware image per board, because pins, display drivers and touch drivers are compile-time board profiles (design doc section 2). Targets: `amoled175`, `amoled216`. All use `chipFamily: ESP32-S3`, so ESP Web Tools cannot auto-select by chip. The **user picks the board** in our page, which loads the matching manifest. A "wrong board" flash is not detectable by chip ID, so use a runtime guard: firmware checks a board-ID marker (`esp_app_desc` project_name = `dzpanel-amoled175`) and the OTA code refuses an image whose `project_name` differs from the running one.
+- Naming: `dzpanel-<board>-<version>-merged.bin`, `dzpanel-<board>-<version>-app.bin`, `manifest-<board>-<channel>.json`.
 
 ## 3. Build and release CI
 
@@ -98,7 +98,7 @@ Decision: **merged for fresh install** (per board, per version). Use `esptool.py
 
 ```json
 { "version": "0.3.1", "board": "amoled175", "min_version": "0.2.0",
-  "url": "https://github.com/OWNER/roundos/releases/download/v0.3.1/roundos-amoled175-v0.3.1-app.bin",
+  "url": "https://github.com/OWNER/roundos/releases/download/v0.3.1/dzpanel-amoled175-v0.3.1-app.bin",
   "sha256": "<hex>", "size": 1234567, "notes": "..." }
 ```
 
@@ -145,9 +145,9 @@ jobs:
           idf.py -B build merge-bin -o out-merged.bin   # or esptool.py merge_bin from flasher_args.json
       - name: Package
         run: |
-          mkdir dist; N=roundos-${{ matrix.board }}-$V
+          mkdir dist; N=dzpanel-${{ matrix.board }}-$V
           cp out-merged.bin dist/$N-merged.bin
-          cp build/roundos.bin dist/$N-app.bin
+          cp build/dzpanel.bin dist/$N-app.bin
           (cd dist && sha256sum * > $N.sha256)
           python3 tools/make_manifest.py --board ${{ matrix.board }} --version $V \
             --channel $CH --out dist
@@ -177,7 +177,7 @@ Gaps: `idf.py merge-bin` flags and Pages merge with prior content (deploy-pages 
 ## 4. USB bootloader entry on native-USB ESP32-S3
 
 - Native USB-Serial/JTAG: esptool and esptool-js can reset into the ROM bootloader automatically through the USB-JTAG reset sequence (they toggle DTR/RTS, which the USB-Serial/JTAG peripheral maps onto EN/GPIO0). This usually works without button presses `[VERIFY in the browser for these boards]`.
-- When the firmware is **running a user app that reconfigures USB** (for example TinyUSB CDC/HID/MSC instead of the built-in USB-Serial/JTAG), auto-reset no longer works, and the port can have a different VID/PID. **Design rule: RoundOS must keep the USB-Serial/JTAG console enabled** (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`), and not use TinyUSB on that port, at least in MVP.
+- When the firmware is **running a user app that reconfigures USB** (for example TinyUSB CDC/HID/MSC instead of the built-in USB-Serial/JTAG), auto-reset no longer works, and the port can have a different VID/PID. **Design rule: dzPanel must keep the USB-Serial/JTAG console enabled** (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`), and not use TinyUSB on that port, at least in MVP.
 - Manual entry: hold **BOOT (GPIO0)**, tap **RESET/EN** (or plug USB in while holding BOOT), release BOOT. The device appears as "ESP32-S3 (download mode)". The Waveshare boards have BOOT and PWR/reset buttons `[VERIFY the layout and labels per board]`.
 - Crash loop case: a looping firmware that resets USB rapidly can make the port flicker. Holding BOOT during the plug-in is the reliable cure. The installer page documents this with a photo per board.
 - Windows: the S3 ROM download-mode device needs a driver on some older Windows versions (WinUSB/usbser `[VERIFY]`). Chrome on Linux needs udev rules for `/dev/ttyACM*` (user in the `dialout` group).
@@ -195,8 +195,8 @@ Gaps: `idf.py merge-bin` flags and Pages merge with prior content (deploy-pages 
 
 **Decision:**
 1. **Primary: Improv Serial.** Firmware implements the Improv serial protocol on the USB-Serial/JTAG console: RPC commands for set-wifi, get-state, get-device-info, and scan networks (`Wi-Fi scan` is an optional RPC `[VERIFY]`). Run Improv only when unprovisioned or in setup mode, and keep it multiplexed with the log output (Improv packets are framed with the `IMPROV` header, so it coexists with text logs).
-2. **Fallback: SoftAP captive portal** (`RoundOS-XXXX`, QR code on screen). It starts automatically when there are no credentials, or after the 3-failure join limit, or via the long-press setup gesture. The portal page also holds the Domoticz URL and credentials.
-3. **Domoticz and other app settings** are not part of Improv. Options: (a) use the **device's own web UI over LAN** (`http://roundos-xxxx.local`) once WiFi is up. The installer shows the link from Improv's "redirect URL" (Improv supports returning a URL after provisioning). (b) A custom serial JSON-RPC (`roundos.config.set`) used by the installer's console tab as an advanced option. Pick (a) for MVP. It avoids inventing a protocol and works with the secrets rules in the design doc. Secrets are stored in NVS only (consider NVS encryption later, see section 6).
+2. **Fallback: SoftAP captive portal** (`dzPanel-XXXX`, QR code on screen). It starts automatically when there are no credentials, or after the 3-failure join limit, or via the long-press setup gesture. The portal page also holds the Domoticz URL and credentials.
+3. **Domoticz and other app settings** are not part of Improv. Options: (a) use the **device's own web UI over LAN** (`http://dzpanel-xxxx.local`) once WiFi is up. The installer shows the link from Improv's "redirect URL" (Improv supports returning a URL after provisioning). (b) A custom serial JSON-RPC (`dzpanel.config.set`) used by the installer's console tab as an advanced option. Pick (a) for MVP. It avoids inventing a protocol and works with the secrets rules in the design doc. Secrets are stored in NVS only (consider NVS encryption later, see section 6).
 4. BLE provisioning: **later**, only if a phone-only flow is a demanded feature. BLE+WiFi coexistence also costs RAM.
 
 ## 6. Partition table, OTA, rollback, security
@@ -222,7 +222,7 @@ storage,   data, littlefs, 0xA30000,  0x5C0000,           # ~5.75 MB assets/logs
 Notes:
 - Offsets are 64 KB aligned for app partitions (required). The bootloader is at 0x0 and the partition table at 0x8000 on S3. The default bootloader size is under 0x8000 and no secure boot bloats it. **With Secure Boot v2 or flash encryption the bootloader grows**. Reserve room (move nvs to 0x10000) before enabling `[VERIFY]`.
 - Boot order: otadata decides between ota_0/ota_1. If otadata is empty/invalid, the bootloader falls back to the **factory** app. That gives us the safe-mode path for free.
-- **Is a factory app needed?** Option A (shown): factory is a small recovery app (WiFi, Improv, OTA pull, a minimal on-screen status, no LVGL apps) and ota_0/ota_1 hold the full RoundOS. Option B: drop the factory partition, use ota_0/ota_1 only (saves 2 MB, simpler) and rely on rollback plus browser re-flash. Recommendation: **A for 16 MB boards** because the recovery story needs an on-device way out for users without a browser flasher at hand. Revisit if the recovery app is too much work in MVP. In that case ship B and keep the layout compatible, but remember that **changing the partition table later is a destructive reflash** for all users. Decide before the first public release.
+- **Is a factory app needed?** Option A (shown): factory is a small recovery app (WiFi, Improv, OTA pull, a minimal on-screen status, no LVGL apps) and ota_0/ota_1 hold the full dzPanel. Option B: drop the factory partition, use ota_0/ota_1 only (saves 2 MB, simpler) and rely on rollback plus browser re-flash. Recommendation: **A for 16 MB boards** because the recovery story needs an on-device way out for users without a browser flasher at hand. Revisit if the recovery app is too much work in MVP. In that case ship B and keep the layout compatible, but remember that **changing the partition table later is a destructive reflash** for all users. Decide before the first public release.
 - The factory slot is also the initial flash target of the merged image. The first boot goes to factory unless otadata is pre-set. For a normal install, the merged image should place the **full app in ota_0 with otadata initialised** (use `idf.py` `flasher_args` with `--flash_files` for the ota_0 offset, or have factory immediately switch). Simplest: the merged image includes the full app at the **factory** offset on first install... Resolve this: **open question**. Common practice is to flash the main app in `factory` and OTA into ota_0/ota_1, but then the factory is full-sized and needs 4 MB. Alternative is Option B with no factory. Note it in ADR-006.
 - `storage` as LittleFS rather than SPIFFS (SPIFFS is deprecated and slow when full). Use `joltwallet/littlefs` component `[VERIFY it is current with the chosen IDF version]`. Do not put secrets in `storage`; use NVS.
 - Boards with 32 MB flash (1.75C) use a second CSV with bigger `storage`. The manifest for the C variant is a separate board ID.
@@ -256,21 +256,21 @@ Layered, from least to most drastic:
 2. **Boot-loop detection:** keep an RTC/NVS counter `boot_attempts`, incremented at boot and cleared after the app reaches a healthy state (~30 s). After 3 failed boots the firmware boots **safe mode**: skip apps, skip the UI shell where possible, bring up only the display with a status screen, WiFi/Improv, and OTA. (With the factory partition, this is the factory app. Without it, it is a `safe_mode` flag in the full app.)
 3. **Hold-button at boot:** holding BOOT (GPIO0, usable as an input after boot) or a designated PWR/side button for about 5 s at power-up forces safe mode. A longer hold (about 15 s) offers "factory reset (wipe NVS)" with an on-screen confirmation. Note that holding GPIO0 low at **reset** enters the ROM download mode instead, which is also a recovery path, and the two must not be confused in the docs. `[VERIFY the board's button wiring and whether the PWR key goes through the PMIC]`
 4. **Browser re-flash:** download mode (section 4) plus the Installer page. Always works for a native-USB S3 unless eFuses were burned (secure boot, JTAG/USB disable). **Rule: never burn the `DIS_USB_JTAG`/`DIS_USB_SERIAL_JTAG` eFuses.**
-5. **Offline flash fallback:** `esptool.py --chip esp32s3 write_flash 0x0 roundos-...-merged.bin` documented in the README.
+5. **Offline flash fallback:** `esptool.py --chip esp32s3 write_flash 0x0 dzpanel-...-merged.bin` documented in the README.
 
-## 8. "RoundOS Installer" page design
+## 8. "dzPanel Installer" page design
 
 Static site on GitHub Pages: plain HTML plus ES modules, no build step if possible. Dependencies pinned and vendored (ESP Web Tools, optionally esptool-js and the improv SDK) to avoid CDN drift.
 
 ### 8.1 Layout (single page, 5 steps)
 
 ```
-[ RoundOS Installer ]                         [ channel: stable v | nightly ]
+[ dzPanel Installer ]                         [ channel: stable v | nightly ]
 1. Board        ( ) AMOLED 1.75" 466x466   ( ) AMOLED 2.16" 480x480
                 (photo + "check your board's silkscreen"; link to flash-size note)
 2. Version      [ 0.3.1 (stable, 2026-10-20) v ]   [x] show release notes
                 [ ] Erase all settings (clean install)
-3. Connect &    [ Install RoundOS ]  <- <esp-web-install-button manifest=...>
+3. Connect &    [ Install dzPanel ]  <- <esp-web-install-button manifest=...>
    Install      progress bar, erase/write/verify states
 4. Configure    Improv dialog: choose WiFi (scan list) + password
                 -> after success: "Open device page" link (http://<ip>/)
@@ -300,7 +300,7 @@ site/
   versions.json
   manifests/amoled175/{stable,nightly}.json
   manifests/amoled216/{stable,nightly}.json
-  fw/<board>/<version>/roundos-<board>-<version>-merged.bin  (+ .sha256)
+  fw/<board>/<version>/dzpanel-<board>-<version>-merged.bin  (+ .sha256)
   ota/<board>/{stable,nightly}.json                          # device-facing
 ```
 

@@ -1,4 +1,4 @@
-# RoundOS Build Plan
+# dzPanel Build Plan
 
 How we get from an empty folder to a flashable, beautiful firmware. Pairs with [`DESIGN.md`](DESIGN.md), which says *what* and *why*. This file says *in what order* and *how we know it worked*.
 
@@ -32,7 +32,7 @@ Milestone numbers match the roadmap in `DESIGN.md` section 13.
 
 **Do**
 
-- [ ] Create the repo. Move `roundos_project_design.md` to `docs/PROJECT_DESIGN.md`. Keep `DESIGN.md` and `BUILD_PLAN.md` at the root.
+- [ ] Create the repo. Move `docs/PROJECT_DESIGN.md` to `docs/PROJECT_DESIGN.md`. Keep `DESIGN.md` and `BUILD_PLAN.md` at the root.
 - [ ] Move `docs/research/*.md` under `docs/research/` as the permanent record (already there).
 - [ ] Add `README.md`, `CONTRIBUTING.md`, `.gitignore` (include `sdkconfig`, `build/`, `secrets*`, `*.local.*`), issue templates.
 - [ ] **Pick a licence** (ADR-007). Check the licences of any Waveshare code before copying anything.
@@ -77,7 +77,7 @@ idf.py build
 
 ## 4. Track A: host-side work (starts week 1)
 
-Build the part of RoundOS that does not care about the board. Order matters: each step unblocks the next.
+Build the part of dzPanel that does not care about the board. Order matters: each step unblocks the next.
 
 | # | Task | Output | Test |
 |---|---|---|---|
@@ -146,7 +146,7 @@ Do these in order. Never skip a step because a later step "looks done".
 - [ ] Verify coordinates at all four edges and the centre. Fix swap and mirror in the profile.
 - [ ] Record touch traces to CSV for the gesture tests (Track A13).
 
-### C3. RoundOS on the board (v0.1 to v0.2)
+### C3. dzPanel on the board (v0.1 to v0.2)
 
 - [ ] Run the A8 runtime and A9 apps on hardware.
 - [ ] Compare the golden images with real photos. Calibrate the safe radius.
