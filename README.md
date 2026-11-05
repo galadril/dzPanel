@@ -25,6 +25,13 @@ cmake -S . -B /tmp/vb -DRU_BUILD_SIM=OFF && cmake --build /tmp/vb -j8 && (cd /tm
 node sim/mock/domoticz_mock.js --port 18080        # a fake Domoticz to point the code at
 ```
 
+Firmware (needs ESP-IDF 5.5, see the setup doc):
+
+```bash
+tools/build_fw.sh amoled-175           # Waveshare 1.75" AMOLED, build dir firmware/build-amoled-175
+tools/build_fw.sh guition-4848s040     # Guition 4" 480x480 square, build dir firmware/build-guition-4848s040
+```
+
 Full instructions, including the ESP-IDF setup: [`docs/development-setup.md`](docs/development-setup.md).
 
 ## Documents

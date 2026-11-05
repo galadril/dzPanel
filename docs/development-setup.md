@@ -47,14 +47,18 @@ ESP-IDF **v5.5.6** and the Xtensa ESP32-S3 toolchain were installed read-only un
 mkdir -p ~/.idf-shadow && for e in /opt/esp/tools/*; do ln -sfn "$e" ~/.idf-shadow/$(basename "$e"); done   # once
 export IDF_TOOLS_PATH=~/.idf-shadow
 . /opt/esp/idf/export.sh
-cd firmware && idf.py set-target esp32s3 && idf.py build
+tools/build_fw.sh amoled-175            # or guition-4848s040; output in firmware/build-<board>
 ```
+
+The board is chosen at build time with `RU_BOARD` (`tools/build_fw.sh <board>` passes `-DRU_BOARD=<board> -B build-<board>`). Each board has `components/boards/<board>/` (the `ru_board` component), `firmware/boards/<board>/sdkconfig.defaults` and its own `firmware/dependencies.lock.<board>`. Use one build directory per board: the sdkconfig lives in the build dir, and CMake refuses to reuse a build dir for a different board. The Guition bring-up probe is built with `tools/build_probe.sh` (see `firmware/bringup/guition-probe/README.md`).
 
 On a normal machine with a writable ESP-IDF install, none of the shadow directory is needed.
 
 Practical notes:
 
-- Managed components (Waveshare BSP, LVGL 9.4.0, CO5300 display, CST9217 touch, TCA9554 expander) download from the Espressif registry on the first `set-target`. On a slow filesystem (a Windows mount under WSL) this took over 20 minutes. Run it in the background and let it finish.
+- Managed components (amoled-175: Waveshare BSP, LVGL 9.4.0, CO5300 display, CST9217 touch, TCA9554 expander; guition-4848s040: esp_lvgl_adapter, esp_lcd_st7701, esp_lcd_panel_io_additions, esp_lcd_touch_gt911; exact versions in the per-board lock files) download from the Espressif registry on the first `set-target`. On a slow filesystem (a Windows mount under WSL) this took over 20 minutes. Run it in the background and let it finish.
+- The Guition board uses a CH341 USB-UART bridge on UART0. Opening the port from a Web Serial page toggles DTR/RTS, which auto-resets the board, so the installer page may restart the device when it connects.
+- ESP log lines share UART0 with the RU+CFG and Improv framing, so a host-side parser must tolerate (skip) log lines between frames.
 - Builds are slow: run `idf.py build` in the background and wait on the log.
 - The unmodified Waveshare LVGL demo for the 1.75" board builds with this setup (about 1 MB, 12% of an 8 MB slot).
 
