@@ -49,6 +49,9 @@ if(EXISTS ${_ru_stamp})
     message(FATAL_ERROR "build dir ${CMAKE_BINARY_DIR} was configured for board '${_ru_prev}', not '${RU_BOARD}'. "
                         "Use a separate build dir per board (tools/build_fw.sh does) or delete this one.")
   endif()
+elseif(EXISTS ${CMAKE_BINARY_DIR}/sdkconfig)
+  message(FATAL_ERROR "build dir ${CMAKE_BINARY_DIR} has an sdkconfig but no ru_board.stamp (configured before board stamping), "
+                      "so its board is unknown. Delete the build dir or reconfigure it from scratch.")
 else()
   file(WRITE ${_ru_stamp} "${RU_BOARD}\n")
 endif()
