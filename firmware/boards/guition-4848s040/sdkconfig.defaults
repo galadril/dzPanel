@@ -17,3 +17,17 @@ CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=n
 # RGB panel: reset the GDMA every VBlank so a late bounce-buffer/PSRAM fetch cannot leave a permanent shift.
 CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
 # CONFIG_LCD_RGB_ISR_IRAM_SAFE stays off for now (costs IRAM; revisit if the picture glitches during flash writes).
+
+# Internal RAM budget (the Wi-Fi task aborted with ESP_ERR_NO_MEM in phy_track_pll_init when internal RAM ran out).
+# Only allocations <= 512 bytes go to internal RAM first; the rest (LVGL, lwip, JSON, ...) goes to PSRAM. The 32 KB internal
+# reserve stays for DMA/driver/Wi-Fi allocations that explicitly ask for internal memory.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=512
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+# Smaller Wi-Fi buffer pools. RX_BA_WIN (6, IDF default) must be <= dynamic RX (12) and <= 2 * static RX (12): checked in wifi_init.c.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=12
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=12
+CONFIG_ESP_WIFI_RX_BA_WIN=6
+
+# Diagnostics: periodic "heap" log line every 5 s and failed-allocation log (docs/development-setup.md).
+CONFIG_RU_HEAP_LOG=y
