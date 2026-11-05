@@ -14,6 +14,11 @@ void ru_gesture_cfg_default(ru_gesture_cfg_t *c, int diameter) {
   c->palm_size = 60;
 }
 
+void ru_gesture_cfg_square(ru_gesture_cfg_t *c, int diameter) {
+  ru_gesture_cfg_default(c, diameter);
+  c->outside_slack_px = (float)diameter; /* the farthest corner is R*sqrt(2) from the centre, i.e. 0.42R beyond R */
+}
+
 void ru_gesture_init(ru_gesture_t *g, int diameter, const ru_gesture_cfg_t *cfg) {
   memset(g, 0, sizeof *g);
   ru_geom_init(&g->geom, diameter);

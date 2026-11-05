@@ -63,6 +63,9 @@ typedef struct {
 } ru_gesture_cfg_t;
 
 void ru_gesture_cfg_default(ru_gesture_cfg_t *c, int diameter); /* scaled by diameter/466 */
+/* Square panel (D x D): the default config for the same diameter, but touches in the corners (beyond R) are accepted
+ * and count as RIM: outside_slack_px = D. Bearing sectors (BACK/QUICK/HOME/CONTEXT) work the same from the corners. */
+void ru_gesture_cfg_square(ru_gesture_cfg_t *c, int diameter);
 
 typedef struct { float x, y; uint32_t t; } ru_gpt_t;
 

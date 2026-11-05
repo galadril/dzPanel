@@ -200,6 +200,7 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
   bool stale = !strcmp(n, "home_stale") || !strcmp(n, "climate_stale");
   if (!appfx_load(f, dir, set_for(n), stale ? 300000u : 600000u)) return NULL;
   ru_dzapp_t *a = ru_dzapp_create(&f->model, &f->client, true);
+  if (a) ru_dzapp_set_display_info(a, "sim", !sim_panel_square());
   if (!a) return NULL;
   /* "stale": the model was last confirmed 7 minutes before the UI looks at it */
   f->T += stale ? 420000u : 1000u;

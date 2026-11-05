@@ -1,5 +1,6 @@
 #include "ru_dzapp.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -28,6 +29,8 @@ struct ru_dzapp {
   dz_client_t *client;
   dz_cmd_t cmd;
   bool allow_control;
+  char board[24]; /* board id for Settings > About; empty = unknown */
+  bool square;    /* panel shape: false = round glass */
 
   ru_queue_t *req_q, *res_q;
   ru_task_t *net;
@@ -257,6 +260,10 @@ static void drain_results(ru_dzapp_t *a) {
   }
 }
 
+void ru_dzapp_set_display_info(ru_dzapp_t *a, const char *board_id, bool round) {
+  snprintf(a->board, sizeof a->board, "%s", board_id ? board_id : "");
+  a->square = !round;
+}
 void ru_dzapp_set_backend(ru_dzapp_t *a, const ru_dzapp_backend_t *b, void *ud) { a->backend = b; a->backend_ud = ud; }
 
 void ru_dzapp_post_cmd_event(ru_dzapp_t *a, uint32_t req_id, dz_outcome_t outcome, dz_fail_t fail, dz_cmd_kind_t kind,
@@ -993,7 +1000,13 @@ static lv_obj_t *build_sub(ru_dzapp_t *a) {
       if (a->client && a->client->version.valid) snprintf(line, sizeof line, "DOMOTICZ %d.%d", a->client->version.year, a->client->version.minor);
       else snprintf(line, sizeof line, "DOMOTICZ --");
       label_u(s, line, ru_font_body(), t->text_dim, 0, -4);
-      snprintf(line, sizeof line, "DISPLAY %d PX", ru_theme_geom()->diameter);
+      {
+        char id[24];
+        size_t k = 0;
+        for (; a->board[k] && k < sizeof id - 1; k++) id[k] = (char)toupper((unsigned char)a->board[k]);
+        id[k] = 0;
+        snprintf(line, sizeof line, "%s %d PX %s", k ? id : "DISPLAY", ru_theme_geom()->diameter, a->square ? "SQUARE" : "ROUND");
+      }
       label_u(s, line, ru_font_body(), t->text_dim, 0, 4);
       label_u(s, a->allow_control ? "CONTROL ENABLED" : "VIEW ONLY", ru_font_body(), t->text_dim, 0, 12);
       break;

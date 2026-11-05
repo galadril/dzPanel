@@ -33,10 +33,17 @@ static void indev_cb(lv_indev_t *in, lv_indev_data_t *data) {
   data->state = g_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
-bool sim_init(sim_t *s, int size) {
+static bool g_square;
+bool sim_panel_square(void) { return g_square; }
+
+bool sim_init(sim_t *s, int size) { return sim_init_ex(s, size, false); }
+
+bool sim_init_ex(sim_t *s, int size, bool square) {
   if (size < 100 || size > 1000) return false;
   memset(s, 0, sizeof *s);
   s->size = size;
+  s->square = square;
+  g_square = square;
   s->fb = calloc((size_t)size * (size_t)size, 4);
   if (!s->fb) return false;
   g_clock = 0;
@@ -107,6 +114,7 @@ long sim_count_lit(const sim_t *s) {
 }
 
 void sim_masked_copy(const sim_t *s, uint32_t *dst) {
+  if (s->square) { for (int i = 0; i < s->size * s->size; i++) dst[i] = s->fb[i] & 0xFFFFFF; return; }
   for (int y = 0; y < s->size; y++)
     for (int x = 0; x < s->size; x++)
       dst[y * s->size + x] = sim_outside_circle(s->size, x, y) ? 0 : (s->fb[y * s->size + x] & 0xFFFFFF);

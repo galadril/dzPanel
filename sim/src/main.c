@@ -12,11 +12,12 @@ int sim_sdl_run(sim_t *s, const char *screen, int frames);
 #endif
 
 static void usage(void) {
-  puts("usage: roundos_sim [--size 466|480] [--screen NAME] [--shot FILE.png] [--all DIR] [--apps DIR] [--app NAME] [--headless] [--frames N] [--list]\n"
-       "  --apps DIR    render every Domoticz app screen (fixture data, no network) to DIR/app_NAME_SIZE.png and exit\n"
+  puts("usage: roundos_sim [--size 466|480] [--shape round|square] [--screen NAME] [--shot FILE.png] [--all DIR] [--apps DIR] [--app NAME] [--headless] [--frames N] [--list]\n"
+       "  --shape S     round (default, circle-masked PNGs) or square (full panel, files named NAME_480sq.png)\n"
+       "  --apps DIR    render every Domoticz app screen (fixture data, no network) to DIR/app_NAME_SIZE[sq].png and exit\n"
        "  --app NAME --shot FILE   render one app screen (see --list-apps)\n"
-       "  --shot FILE   render NAME headless to a circle-masked PNG and exit\n"
-       "  --all DIR     render every screen to DIR/NAME_SIZE.png and exit\n"
+       "  --shot FILE   render NAME headless to a circle-masked (square: unmasked) PNG and exit\n"
+       "  --all DIR     render every screen to DIR/NAME_SIZE[sq].png and exit\n"
        "  (no --shot/--all) opens an SDL window: left/right = screen, p = save PNG, q/Esc = quit\n"
        "  SDL_VIDEODRIVER=dummy runs the window code without a display (use with --frames N)");
 }
@@ -33,9 +34,16 @@ static int shot(sim_t *s, const char *name, const char *path) {
 
 int main(int argc, char **argv) {
   int size = 466, frames = 0;
+  bool square = false;
   const char *screen = "home", *shot_path = NULL, *all_dir = NULL, *apps_dir = NULL, *app_name = NULL;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--size") && i + 1 < argc) size = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--shape") && i + 1 < argc) {
+      const char *v = argv[++i];
+      if (!strcmp(v, "square")) square = true;
+      else if (!strcmp(v, "round")) square = false;
+      else { fprintf(stderr, "--shape must be round or square\n"); return 2; }
+    }
     else if (!strcmp(argv[i], "--screen") && i + 1 < argc) screen = argv[++i];
     else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot_path = argv[++i];
     else if (!strcmp(argv[i], "--all") && i + 1 < argc) all_dir = argv[++i];
@@ -49,14 +57,14 @@ int main(int argc, char **argv) {
   }
   if (size != 466 && size != 480) { fprintf(stderr, "--size must be 466 or 480\n"); return 2; }
   sim_t s;
-  if (!sim_init(&s, size)) { fprintf(stderr, "init failed\n"); return 1; }
+  if (!sim_init_ex(&s, size, square)) { fprintf(stderr, "init failed\n"); return 1; }
   int rc = 0;
   if (app_name && shot_path) rc = apps_demo_shot(&s, FIXTURE_DIR, app_name, shot_path);
   else if (apps_dir) {
     mkdir(apps_dir, 0755);
     for (int k = 0; k < apps_demo_count && !rc; k++) {
       char p[512];
-      snprintf(p, sizeof p, "%s/app_%s_%d.png", apps_dir, apps_demo_names[k], size);
+      snprintf(p, sizeof p, "%s/app_%s_%d%s.png", apps_dir, apps_demo_names[k], size, square ? "sq" : "");
       rc = apps_demo_shot(&s, FIXTURE_DIR, apps_demo_names[k], p);
     }
   }
@@ -65,7 +73,7 @@ int main(int argc, char **argv) {
     mkdir(all_dir, 0755);
     for (int k = 0; k < sim_screen_count && !rc; k++) {
       char p[512];
-      snprintf(p, sizeof p, "%s/%s_%d.png", all_dir, sim_screen_names[k], size);
+      snprintf(p, sizeof p, "%s/%s_%d%s.png", all_dir, sim_screen_names[k], size, square ? "sq" : "");
       rc = shot(&s, sim_screen_names[k], p);
     }
   } else {

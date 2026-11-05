@@ -231,7 +231,10 @@ void ui_shell_start(dz_service_t *svc, bool safe_mode, unsigned failed_boots) {
     lv_screen_load(build_safe_screen(failed_boots));
     return;
   }
-  ru_gesture_init(&U.gest, b->diameter, NULL);
+  ru_gesture_cfg_t gcfg;
+  if (b->round) ru_gesture_cfg_default(&gcfg, b->diameter);
+  else ru_gesture_cfg_square(&gcfg, b->diameter); /* corners of a square panel are valid touches (RIM) */
+  ru_gesture_init(&U.gest, b->diameter, &gcfg);
   ru_hal_set_touch_sink(on_touch, NULL);
   lv_timer_create(gesture_tick_cb, 20, NULL);
 
@@ -247,6 +250,7 @@ void ui_shell_start(dz_service_t *svc, bool safe_mode, unsigned failed_boots) {
     lv_screen_load(build_safe_screen(failed_boots));
     return;
   }
+  ru_dzapp_set_display_info(U.app, b->id, b->round);
   ru_dzapp_set_backend(U.app, &k_backend, svc);
   ru_dzapp_set_brightness_hook(U.app, brightness_hook, NULL);
   if (ru_apps_register(&U.rt, U.app) != RU_OK) ESP_LOGE(TAG, "app registration failed");

@@ -45,7 +45,7 @@ bool sim_save_png(const sim_t *s, const char *path, bool masked) {
     *r++ = 0;
     for (int x = 0; x < w; x++) {
       uint32_t px = s->fb[y * w + x];
-      if (masked && sim_outside_circle(w, x, y)) px = 0;
+      if (masked && !s->square && sim_outside_circle(w, x, y)) px = 0;
       *r++ = (uint8_t)(px >> 16); *r++ = (uint8_t)(px >> 8); *r++ = (uint8_t)px;
     }
   }

@@ -24,6 +24,8 @@ static void centre_of(lv_obj_t *o, int *x, int *y) {
 }
 
 /* pixels clearly lit (any channel >= 0x40): the AMOLED power-relevant figure; raised surfaces (#0E1013) do not count */
+static bool g_square; /* square panel run: PNGs are unmasked, layout check stays against the inscribed circle */
+
 static long count_bright(const sim_t *s) {
   long n = 0;
   for (int i = 0; i < s->size * s->size; i++) {
@@ -35,7 +37,7 @@ static long count_bright(const sim_t *s) {
 
 static void screens_at(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(sim_init_ex(&s, size, g_square));
   mkdir(SHOT_DIR, 0755);
   for (int i = 0; i < sim_screen_count; i++) {
     lv_obj_t *scr = sim_screen_build(sim_screen_names[i], 500000);
@@ -53,7 +55,7 @@ static void screens_at(int size) {
     printf("  %-10s@%d lit-in-circle=%ld bright=%.1f%%\n", sim_screen_names[i], size, in, 100.0 * (double)br / (double)area);
     CHECK(br < area * 12 / 100);     /* DESIGN.md: at most 12% lit on active screens */
     char p[256];
-    snprintf(p, sizeof p, "%s/%s_%d.png", SHOT_DIR, sim_screen_names[i], size);
+    snprintf(p, sizeof p, "%s/%s_%d%s.png", SHOT_DIR, sim_screen_names[i], size, g_square ? "sq" : "");
     CHECK(sim_save_png(&s, p, true));
     FILE *f = fopen(p, "rb");
     unsigned char sig[8] = { 0 };
@@ -69,7 +71,7 @@ static void screens_at(int size) {
 static void behaviour(int size) {
   g_cb_hold_ok = g_cb_hold_cancel = g_cb_tog = g_cb_tog_val = g_cb_sel = g_cb_dim = 0;
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(sim_init_ex(&s, size, g_square));
   lv_obj_t *scr = ru_screen_new();
   lv_screen_load(scr);
   const ru_theme_t *th = ru_theme();
@@ -157,6 +159,9 @@ int main(void) {
   screens_at(466);
   screens_at(480);
   behaviour(466);
+  behaviour(480);
+  g_square = true;
+  screens_at(480);
   behaviour(480);
   MT_DONE();
 }

@@ -204,9 +204,71 @@ static void boundaries(int dia) {
   CHECK(n == 0 && g.rejected_touches == 1);
 }
 
+/* Square panel: corners are inside the panel, so they are accepted as RIM touches and swipe inward by bearing sector */
+static void square_tests(int dia) {
+  ru_gesture_cfg_t cfg; ru_gesture_cfg_square(&cfg, dia);
+  ru_gesture_t g; ru_gesture_init(&g, dia, &cfg);
+  float R = dia / 2.0f, m = 5.0f;
+  /* corner (5,5): zone RIM and accepted. It sits exactly on the BACK/QUICK bearing border (315), so the swipes below
+   * start a little off the diagonal: (5,20) is bearing ~313 (BACK), (20,5) is ~317 (QUICK). */
+  CHECK(ru_gesture_zone_of(&g, m, m) == RU_ZONE_RIM);
+  log_t l;
+  struct { float x, y; ru_edge_action_t a; } cn[] = {
+    { m, m, RU_ACT_QUICK }, /* exactly on the border: >= 315 is QUICK */
+    { m, 20, RU_ACT_BACK }, { 20, m, RU_ACT_QUICK },               /* top-left */
+    { dia - m, 20, RU_ACT_CONTEXT }, { dia - 20, m, RU_ACT_QUICK }, /* top-right: bearing ~47 / ~43 */
+    { dia - m, dia - 20, RU_ACT_CONTEXT }, { dia - 20, dia - m, RU_ACT_HOME }, /* bottom-right: ~133 / ~137 */
+    { m, dia - 20, RU_ACT_BACK }, { 20, dia - m, RU_ACT_HOME } };  /* bottom-left: ~227 / ~223 */
+  for (unsigned i = 0; i < sizeof cn / sizeof *cn; i++) {
+    memset(&l, 0, sizeof l);
+    float dx = R - cn[i].x, dy = R - cn[i].y, len = sqrtf(dx * dx + dy * dy);
+    uint32_t t0 = 100 + 500 * (uint32_t)i;
+    for (int s = 0; s <= 6; s++) { /* towards the centre */
+      float k = s * 12.0f;
+      feed(&g, &l, &(ru_touch_t){ (int16_t)(cn[i].x + dx / len * k), (int16_t)(cn[i].y + dy / len * k), t0 + (uint32_t)s * 10, true, 1, 8 });
+    }
+    feed(&g, &l, &(ru_touch_t){ 0, 0, t0 + 200, false, 0, 0 });
+    char want[40]; snprintf(want, sizeof want, "EDGE_SWIPE:%s", actname(cn[i].a));
+    if (strcmp(l.s, want)) printf("square corner swipe %u: want %s got [%s]\n", i, want, l.s);
+    CHECK(!strcmp(l.s, want));
+  }
+  CHECK(g.rejected_touches == 0);
+  /* a corner touch that stays put is a TAP in the RIM zone, not rejected */
+  memset(&l, 0, sizeof l);
+  feed(&g, &l, &(ru_touch_t){ (int16_t)m, (int16_t)m, 10000, true, 1, 8 });
+  feed(&g, &l, &(ru_touch_t){ (int16_t)m, (int16_t)m, 10040, false, 0, 0 });
+  CHECK(!strcmp(l.s, "TAP@RIM") && g.rejected_touches == 0);
+  /* middle of each edge, inward: top QUICK, right CONTEXT, bottom HOME, left BACK */
+  struct { float x, y, ix, iy; ru_edge_action_t a; } es[] = {
+    { R, m, 0, 1, RU_ACT_QUICK }, { dia - m, R, -1, 0, RU_ACT_CONTEXT },
+    { R, dia - m, 0, -1, RU_ACT_HOME }, { m, R, 1, 0, RU_ACT_BACK } };
+  for (unsigned i = 0; i < sizeof es / sizeof *es; i++) {
+    memset(&l, 0, sizeof l);
+    for (int s = 0; s <= 6; s++)
+      feed(&g, &l, &(ru_touch_t){ (int16_t)(es[i].x + es[i].ix * s * 12), (int16_t)(es[i].y + es[i].iy * s * 12), 20000 + 1000 * (uint32_t)i + (uint32_t)s * 10, true, 1, 8 });
+    feed(&g, &l, &(ru_touch_t){ 0, 0, 20300 + 1000 * (uint32_t)i, false, 0, 0 });
+    char want[40]; snprintf(want, sizeof want, "EDGE_SWIPE:%s", actname(es[i].a));
+    if (strcmp(l.s, want)) printf("square edge %u: want %s got [%s]\n", i, want, l.s);
+    CHECK(!strcmp(l.s, want));
+  }
+  /* the square config only widens the slack: everything else equals the defaults */
+  ru_gesture_cfg_t d; ru_gesture_cfg_default(&d, dia);
+  CHECK(cfg.slop_px == d.slop_px && cfg.annulus_frac == d.annulus_frac && cfg.outside_slack_px == (float)dia);
+}
+
+/* round defaults: a corner is outside the glass and is still rejected */
+static void round_corner_rejected(int dia) {
+  ru_gesture_t g; ru_gesture_init(&g, dia, NULL);
+  log_t l; memset(&l, 0, sizeof l);
+  feed(&g, &l, &(ru_touch_t){ 5, 5, 100, true, 1, 8 });
+  feed(&g, &l, &(ru_touch_t){ 60, 60, 140, true, 1, 8 });
+  feed(&g, &l, &(ru_touch_t){ 60, 60, 180, false, 0, 0 });
+  CHECK(l.n == 0 && g.rejected_touches == 1);
+}
+
 int main(void) {
   replay_all();
   static const int dias[] = { 466, 480 };
-  for (int i = 0; i < 2; i++) { tick_tests(dias[i]); velocity_tests(dias[i]); noise_tests(dias[i]); sectors(dias[i]); boundaries(dias[i]); fuzz(dias[i]); }
+  for (int i = 0; i < 2; i++) { tick_tests(dias[i]); velocity_tests(dias[i]); noise_tests(dias[i]); sectors(dias[i]); boundaries(dias[i]); fuzz(dias[i]); round_corner_rejected(dias[i]); square_tests(dias[i]); }
   MT_DONE();
 }

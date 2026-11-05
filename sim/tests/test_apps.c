@@ -20,6 +20,10 @@ static const char *const TOKEN = "fixture-token-not-a-secret";
 
 /* ---- helpers ---- */
 
+static bool g_square; /* current run: square panel (full-panel PNGs, *_480sq.png) */
+static bool init_sim(sim_t *s, int size) { return sim_init_ex(s, size, g_square); }
+static const char *sfx(void) { return g_square ? "sq" : ""; }
+
 static long count_bright(const sim_t *s) {
   long n = 0;
   for (int i = 0; i < s->size * s->size; i++) {
@@ -103,7 +107,7 @@ static const char *SCENES_JSON =
 
 static void all_screens(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   mkdir(SHOT_DIR, 0755);
   long area = (long)(3.14159f * (float)size * (float)size / 4);
   for (int i = 0; i < apps_demo_count; i++) {
@@ -120,7 +124,7 @@ static void all_screens(int size) {
     CHECK(br < area * 12 / 100);   /* DESIGN.md: at most 12% lit */
     CHECK(!shows(a, TOKEN));       /* the token is never on screen */
     char p[256];
-    snprintf(p, sizeof p, "%s/app_%s_%d.png", SHOT_DIR, nm, size);
+    snprintf(p, sizeof p, "%s/app_%s_%d%s.png", SHOT_DIR, nm, size, sfx());
     CHECK(sim_save_png(&s, p, true));
     ru_dzapp_destroy(a);
     appfx_unload(&f);
@@ -132,7 +136,7 @@ static void all_screens(int size) {
 
 static void scene_and_group(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
   CHECK(appfx_apply_scenes(&f, SCENES_JSON));
@@ -198,7 +202,7 @@ static void scene_and_group(int size) {
 
 static void feedback(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
   CHECK(appfx_apply_scenes(&f, SCENES_JSON));
@@ -270,7 +274,7 @@ static void feedback(int size) {
 
 static void honesty(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   appfx_t f;
 
   /* viewer token: no confirm screen, no command */
@@ -320,7 +324,7 @@ static void honesty(int size) {
 
 static void sections(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_REAL, 600000, true);
 
@@ -446,7 +450,7 @@ static const char *const CL_IDX[] = {"100", "101", "102", "103", "104", "105", "
 
 static void climate_units(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   static const struct { appfx_set_t set; const char *yes[3]; const char *no[3]; } runs[] = {
     {APPFX_CLIMATE_METRIC, {DEGC, "m/s", NULL}, {DEGF, "mph", NULL}},
     {APPFX_CLIMATE_IMPERIAL, {DEGF, "mph", NULL}, {DEGC, "m/s", NULL}},
@@ -493,7 +497,7 @@ static void climate_units(int size) {
 
 static void climate_pages(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
   /* overview first (many sensors); a tap on a row opens that sensor's page */
@@ -598,7 +602,7 @@ static void tap_plus(int size) { click_at(size / 2 + ru_u(14), size / 2 + ru_u(2
 
 static void climate_thermostat(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
 
@@ -713,7 +717,7 @@ static const ru_dzapp_backend_t BACKEND_FULL = { bk_full, bk_conn };
 
 static void backend_path(int size) {
   sim_t s;
-  CHECK(sim_init(&s, size));
+  CHECK(init_sim(&s, size));
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
   CHECK(appfx_apply_scenes(&f, SCENES_JSON));
@@ -752,18 +756,20 @@ static void backend_path(int size) {
 }
 
 int main(void) {
-  static const int sizes[2] = { 466, 480 };
-  for (int i = 0; i < 2; i++) {
-    printf("== %d ==\n", sizes[i]);
-    all_screens(sizes[i]);
-    scene_and_group(sizes[i]);
-    feedback(sizes[i]);
-    honesty(sizes[i]);
-    sections(sizes[i]);
-    backend_path(sizes[i]);
-    climate_units(sizes[i]);
-    climate_pages(sizes[i]);
-    climate_thermostat(sizes[i]);
+  static const struct { int size; bool square; } runs[3] = { { 466, false }, { 480, false }, { 480, true } };
+  for (int i = 0; i < 3; i++) {
+    int size = runs[i].size;
+    g_square = runs[i].square;
+    printf("== %d%s ==\n", size, sfx());
+    all_screens(size);
+    scene_and_group(size);
+    feedback(size);
+    honesty(size);
+    sections(size);
+    backend_path(size);
+    climate_units(size);
+    climate_pages(size);
+    climate_thermostat(size);
   }
   MT_DONE();
 }

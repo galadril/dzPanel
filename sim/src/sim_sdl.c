@@ -1,4 +1,4 @@
-/* Interactive window. The window shows the circle only: everything outside is black. */
+/* Interactive window. Round: the window shows the circle only (outside is black). Square: the full panel with an outline. */
 #include "sim_core.h"
 #include "screens.h"
 #include <SDL.h>
@@ -47,7 +47,7 @@ int sim_sdl_run(sim_t *s, const char *screen, int frames) {
         else if (k == SDLK_LEFT) { idx = (idx + sim_screen_count - 1) % sim_screen_count; load(idx); }
         else if (k == SDLK_p) {
           char p[128];
-          snprintf(p, sizeof p, "%s_%d.png", sim_screen_names[idx], s->size);
+          snprintf(p, sizeof p, "%s_%d%s.png", sim_screen_names[idx], s->size, s->square ? "sq" : "");
           if (sim_save_png(s, p, true)) printf("wrote %s\n", p);
         }
       }
@@ -58,6 +58,11 @@ int sim_sdl_run(sim_t *s, const char *screen, int frames) {
     SDL_UpdateTexture(tex, NULL, masked, s->size * 4);
     SDL_RenderClear(ren);
     SDL_RenderCopy(ren, tex, NULL, NULL);
+    if (s->square) {
+      SDL_Rect o = { 0, 0, s->size, s->size };
+      SDL_SetRenderDrawColor(ren, 90, 90, 90, 255);
+      SDL_RenderDrawRect(ren, &o);
+    }
     SDL_RenderPresent(ren);
     SDL_Delay(16);
     n++;

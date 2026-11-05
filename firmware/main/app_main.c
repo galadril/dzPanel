@@ -16,6 +16,8 @@ static ru_bus_t g_bus;
 
 void app_main(void) {
   ESP_LOGI(TAG, "RoundOS, IDF %s", esp_get_idf_version());
+  const ru_board_t *brd = ru_board();
+  ESP_LOGI(TAG, "board %s, display %dx%d %s", brd->id, brd->diameter, brd->diameter, brd->round ? "round" : "square");
   if (ru_kv_nvs_init() != 0) {
     ESP_LOGE(TAG, "NVS init failed");
     return;

@@ -60,6 +60,7 @@ add_test(NAME splash COMMAND test_splash)
 add_custom_target(screenshots
   COMMAND roundos_sim --size 466 --all ${CMAKE_SOURCE_DIR}/sim/screenshots
   COMMAND roundos_sim --size 480 --all ${CMAKE_SOURCE_DIR}/sim/screenshots
+  COMMAND roundos_sim --size 480 --shape square --all ${CMAKE_SOURCE_DIR}/sim/screenshots
   DEPENDS roundos_sim
   COMMENT "Rendering simulator screenshots to sim/screenshots")
 
@@ -87,6 +88,7 @@ add_test(NAME apps COMMAND test_apps)
 add_custom_target(app_screenshots
   COMMAND roundos_sim --size 466 --apps ${CMAKE_SOURCE_DIR}/sim/screenshots
   COMMAND roundos_sim --size 480 --apps ${CMAKE_SOURCE_DIR}/sim/screenshots
+  COMMAND roundos_sim --size 480 --shape square --apps ${CMAKE_SOURCE_DIR}/sim/screenshots
   DEPENDS roundos_sim
   COMMENT "Rendering app screenshots to sim/screenshots")
 

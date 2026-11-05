@@ -46,6 +46,8 @@ typedef struct {
   uint32_t (*submit)(const dz_cmd_req_t *req, void *ud);
   dz_conn_state_t (*conn)(void *ud);
 } ru_dzapp_backend_t;
+/* Board id and panel shape, shown in Settings > About ("AMOLED_175 466 PX ROUND"). Optional; the shell sets it from ru_board(). */
+void ru_dzapp_set_display_info(ru_dzapp_t *a, const char *board_id, bool round);
 void ru_dzapp_set_backend(ru_dzapp_t *a, const ru_dzapp_backend_t *b, void *ud); /* b must outlive the app */
 void ru_dzapp_post_cmd_event(ru_dzapp_t *a, uint32_t req_id, dz_outcome_t outcome, dz_fail_t fail, dz_cmd_kind_t kind,
                              dz_cmd_err_t reject, int level);
