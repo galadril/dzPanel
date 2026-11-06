@@ -130,5 +130,8 @@ dz_cmd_kind_t ru_dzapp_confirm_kind(const ru_dzapp_t *a);
 /* Energy shows one meter at a time; a tap on the gauge cycles. This picks the n-th meter (tests, driver). Other sections
  * ignore it. */
 void ru_dzapp_select(ru_dzapp_t *a, ru_section_t s, int n);
-/* Test hook: choose the slot-th mode in the open mode device's selector exactly as the wheel would (opens the hold). */
+/* Test hook: choose the slot-th mode in the open mode device's selector exactly as the wheel would. The thermostat mode has no
+ * MCP tool, so this ends in a refusal (view only), never a hold. */
 void ru_dzapp_pick_mode(ru_dzapp_t *a, int slot);
+/* Test hook: set the open thermostat's dial to v and release it (opens the hold, or a refusal when read-only). */
+void ru_dzapp_pick_setpoint(ru_dzapp_t *a, float v);

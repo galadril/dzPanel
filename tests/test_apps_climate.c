@@ -228,7 +228,7 @@ static void test_thermo(void) {
   CHECK(!th.control && !strcmp(th.reason, "PROTECTED"));
   /* Fahrenheit install */
   ru_cl_thermo(find(&I, "118"), &UI, find(&I, "100"), true, &th);
-  CHECK(!strcmp(th.unit, DEG "F") && th.lo > 40.9f && th.hi < 86.1f);
+  CHECK(!strcmp(th.unit, DEG "F") && !th.control && !strcmp(th.reason, "FAHRENHEIT")); /* the MCP setpoint tool takes Celsius only */
   ru_cl_thermo_text(&th, th.setpoint, t, sizeof t);
   CHECK(!strcmp(t, "66.2" DEG "F") && th.now > 70.6f && th.now < 70.8f);
   /* TempSign unknown: the unit the device itself reported (vunit), else bare */

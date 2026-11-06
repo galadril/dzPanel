@@ -50,6 +50,17 @@ int main(void) {
   r = res(DZ_OUT_FAILED, DZ_FAIL_TRANSPORT);
   ru_fb_on_result(&f, &r, 30000);
   CHECK(!strcmp(ru_fb_text(&f), "NO CONNECTION"));
+  r = res(DZ_OUT_FAILED, DZ_FAIL_NO_MCP);
+  ru_fb_on_result(&f, &r, 30000);
+  CHECK(!strcmp(ru_fb_text(&f), "MCP NOT AVAIL") && strlen(ru_fb_text(&f)) <= 16);
+  r = res(DZ_OUT_FAILED, DZ_FAIL_REJECTED);
+  ru_fb_on_result(&f, &r, 30000);
+  CHECK(!strcmp(ru_fb_text(&f), "REJECTED"));
+  r = res(DZ_OUT_FAILED, DZ_FAIL_PROTECTED);
+  ru_fb_on_result(&f, &r, 30000);
+  CHECK(!strcmp(ru_fb_text(&f), "PROTECTED"));
+  ru_fb_on_refused(&f, DZ_CMDE_UNSUPPORTED, 31000);
+  CHECK(f.st == RU_FB_FAILED && !strcmp(ru_fb_text(&f), "VIEW ONLY HERE") && strlen(ru_fb_text(&f)) <= 16);
   ru_fb_on_refused(&f, DZ_CMDE_PROTECTED, 31000);
   CHECK(f.st == RU_FB_FAILED && !strcmp(ru_fb_text(&f), "PROTECTED"));
   ru_fb_on_refused(&f, DZ_CMDE_CONTROL_DISABLED, 31000);

@@ -669,9 +669,10 @@ static void climate_thermostat(int size) {
   CHECK(shows(a, "66.2" DEGF) && shows(a, "NOW 70.7" DEGF) && !shows(a, DEGC));
   memset(&SPY, 0, sizeof SPY);
   tap_plus(size);
-  CHECK(!strncmp(ru_dzapp_confirm_verb(a), "SET 66.7", 8) && shows(a, DEGF) && !shows(a, DEGC));
-  hold_confirm(size);
-  CHECK(SPY.n == 1 && SPY.sp > 66.6f && SPY.sp < 66.8f);
+  /* the MCP setpoint tool takes Celsius only: a Fahrenheit server's setpoints are read-only, no hold opens, nothing is sent */
+  CHECK(shows(a, "READ ONLY") && shows(a, "FAHRENHEIT") && ru_dzapp_view(a) == RU_VIEW_DETAIL && SPY.n == 0);
+  ru_dzapp_pick_setpoint(a, 67.0f);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && SPY.n == 0);
   finish(&f, a);
 
   /* units unknown: bare numbers on the dial; the device's own vunit is still its word, but NOW has no symbol */
@@ -680,18 +681,15 @@ static void climate_thermostat(int size) {
   CHECK(shows(a, "NOW 21.5") && !shows(a, "NOW 21.5" DEGC) && !shows(a, "NOW 21.5" DEGF));
   finish(&f, a);
 
-  /* thermostat mode (UNVERIFIED path): a selector over Modes, behind a hold; the command carries the Mode index */
+  /* thermostat mode: the modes are shown, but the MCP endpoint has no tool for them, so the screen says VIEW ONLY and a pick
+   * (the test hook) is refused: no hold, no command */
   a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
   ru_dzapp_open(a, "125", false);
-  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && shows(a, "MODE: VIEW ONLY"));
   screen_ok(&s, a, "mode", size);
   memset(&SPY, 0, sizeof SPY);
   ru_dzapp_pick_mode(a, 2);
-  CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM && SPY.n == 0 && !strcmp(ru_dzapp_confirm_verb(a), "MODE COOL") && ru_dzapp_confirm_kind(a) == DZ_CMD_MODE);
-  click_at(size / 2, size / 2 + ru_u(13));
-  CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM && SPY.n == 0);
-  hold_confirm(size);
-  CHECK(SPY.n == 1 && SPY.kind == DZ_CMD_MODE && SPY.level == 2 && !strcmp(SPY.idx, "125") && SPY.confirmed);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && SPY.n == 0);
   /* a mode slot that does not exist sends nothing */
   memset(&SPY, 0, sizeof SPY);
   ru_dzapp_open(a, "125", false);
@@ -999,9 +997,9 @@ static void nav_back_tests(int size) {
   ru_dzapp_show_section(a, RU_SEC_SETTINGS);
   ru_dzapp_open_sub(a, RU_SUB_BRIGHTNESS);
   CHECK(ru_dzapp_view(a) == RU_VIEW_SUB);
-  ru_dzapp_open(a, "125", false); /* aim the mode command at a device, then raise its confirm from the sub screen */
+  ru_dzapp_open(a, "118", false); /* aim a setpoint at a device, then raise its confirm from the sub screen */
   ru_dzapp_open_sub(a, RU_SUB_BRIGHTNESS);
-  ru_dzapp_pick_mode(a, 2);
+  ru_dzapp_pick_setpoint(a, 22.0f);
   CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM);
   CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_SUB);                     /* confirm -> sub */
   CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_SETTINGS); /* sub -> Settings */

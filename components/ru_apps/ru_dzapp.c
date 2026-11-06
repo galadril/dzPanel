@@ -299,7 +299,11 @@ static void submit_or_confirm(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd
   if (!get_entry(a, idx, scene, &d, &v, &st)) { refused_for(a, idx, scene, DZ_CMDE_UNKNOWN_DEVICE); return; }
   if (!a->allow_control) { refused_for(a, idx, scene, DZ_CMDE_CONTROL_DISABLED); return; }
   dz_risk_t risk = dz_cmd_risk(&d, kind);
-  if (risk == DZ_RISK_LOCKED) { refused_for(a, idx, scene, d.is_protected ? DZ_CMDE_PROTECTED : DZ_CMDE_NOT_CONTROLLABLE); return; }
+  if (risk == DZ_RISK_LOCKED) {
+    bool nomcp = kind == DZ_CMD_MODE || (kind == DZ_CMD_SETPOINT && d.cap == DZ_CAP_THERMOSTAT && !dz_cmd_supported(&d, kind));
+    refused_for(a, idx, scene, d.is_protected ? DZ_CMDE_PROTECTED : nomcp ? DZ_CMDE_UNSUPPORTED : DZ_CMDE_NOT_CONTROLLABLE);
+    return;
+  }
   if (st != RU_VAL_OK) { refused_for(a, idx, scene, DZ_CMDE_STALE); return; } /* do not make the user hold for nothing */
   req_msg_t m;
   memset(&m, 0, sizeof m);
@@ -1362,8 +1366,9 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       lv_obj_t *w = ru_selector_create(s, ru_u(86), a->name_ptrs, n);
       int slot = ru_cl_mode_slot(&d);
       ru_selector_set(w, slot >= 0 ? slot : 0);
-      if (ctl) ru_selector_on_change(w, cb_mode, a);
-      else label_u(s, "READ ONLY", ru_font_small(), t->warn, 0, 25);
+      /* no MCP tool for the thermostat mode: the modes are shown, not set */
+      if (ctl && dz_cmd_supported(&d, DZ_CMD_MODE)) ru_selector_on_change(w, cb_mode, a);
+      else label_u(s, "MODE: VIEW ONLY", ru_font_small(), t->warn, 0, 25);
       if (slot < 0) label_u(s, "MODE UNKNOWN", ru_font_small(), t->warn, 0, 20);
       name_back(a, s, name, 40);
       dial = true;
@@ -1699,6 +1704,7 @@ void ru_dzapp_open(ru_dzapp_t *a, const char *idx, bool is_scene) {
 }
 
 void ru_dzapp_pick_mode(ru_dzapp_t *a, int slot) { cb_mode(NULL, slot, true, a); }
+void ru_dzapp_pick_setpoint(ru_dzapp_t *a, float v) { cb_thermo(NULL, v, true, a); }
 
 void ru_dzapp_select(ru_dzapp_t *a, ru_section_t s, int n) {
   if (s == RU_SEC_ENERGY) a->energy_sel = n < 0 ? 0 : n;

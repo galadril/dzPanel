@@ -24,6 +24,9 @@ static const char *fail_text(dz_fail_t x) {
     case DZ_FAIL_TRANSPORT: return "NO CONNECTION";
     case DZ_FAIL_SERVER: return "SERVER ERROR";
     case DZ_FAIL_BAD_RESPONSE: return "BAD RESPONSE";
+    case DZ_FAIL_NO_MCP: return "MCP NOT AVAIL"; /* the label buffer is 32 chars; kept short */
+    case DZ_FAIL_REJECTED: return "REJECTED";
+    case DZ_FAIL_PROTECTED: return "PROTECTED";
     default: return "FAILED";
   }
 }
@@ -54,6 +57,7 @@ void ru_fb_on_refused(ru_fb_t *f, dz_cmd_err_t e, uint32_t now_ms) {
     case DZ_CMDE_STALE: t = "DATA IS STALE"; break;
     case DZ_CMDE_QUEUE_FULL: t = "BUSY"; break;
     case DZ_CMDE_UNKNOWN_DEVICE: t = "DEVICE GONE"; break;
+    case DZ_CMDE_UNSUPPORTED: t = "VIEW ONLY HERE"; break;
     default: t = "REFUSED"; break;
   }
   set(f, RU_FB_FAILED, t, now_ms);
