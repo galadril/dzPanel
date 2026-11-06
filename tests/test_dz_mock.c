@@ -82,6 +82,49 @@ static void test_transport(void) {
 }
 
 static uint32_t T;
+/* POST over the real socket transport: the session header is captured, the body reaches the mock. */
+static void test_post(void) {
+  dz_http_result_t r;
+  char url[256], auth[64], sid[80] = "x", sidh[120];
+  snprintf(url, sizeof url, "%s/mcp", base);
+  snprintf(auth, sizeof auth, "Authorization: Bearer %s", "user-token");
+  const char *h0[] = {auth, "Accept: application/json, text/event-stream", NULL};
+  static const char init2[] = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"x\"}}}";
+  CHECK(TR->post != NULL);
+  ctl("reset");
+  dz_post_t p = {init2, strlen(init2), "application/json", "Mcp-Session-Id", sid, sizeof sid};
+  CHECK(TR->post(TR, url, h0, &p, 3000, rbuf, sizeof rbuf, &r) == DZ_NET_OK && r.status == 200 && strstr(rbuf, "protocolVersion"));
+  CHECK(strlen(sid) == 32);
+  snprintf(sidh, sizeof sidh, "Mcp-Session-Id: %s", sid);
+  const char *h1[] = {auth, "Accept: application/json", sidh, NULL};
+  static const char call[] = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"set_switch_state\",\"arguments\":{\"idx\":1,\"state\":\"On\"}}}";
+  dz_post_t c = {call, strlen(call), NULL, NULL, NULL, 0};
+  CHECK(TR->post(TR, url, h1, &c, 3000, rbuf, sizeof rbuf, &r) == DZ_NET_OK && r.status == 200 && strstr(rbuf, "\"isError\":false"));
+  CHECK(get("/json.htm?type=command&param=getdevices&rid=1", "viewer-token", 3000, rbuf, sizeof rbuf, &r) == DZ_NET_OK && strstr(rbuf, "\"Status\": \"On\""));
+  /* no session -> JSON-RPC error, still HTTP 200 */
+  CHECK(TR->post(TR, url, h0, &c, 3000, rbuf, sizeof rbuf, &r) == DZ_NET_OK && r.status == 200 && strstr(rbuf, "Missing session"));
+  /* no capture asked: hdr_out stays untouched/cleared */
+  sid[0] = 'q';
+  dz_post_t nocap = {call, strlen(call), NULL, NULL, sid, sizeof sid};
+  CHECK(TR->post(TR, url, h1, &nocap, 3000, rbuf, sizeof rbuf, &r) == DZ_NET_OK && sid[0] == 0);
+  /* no token: 401 and no header */
+  const char *none[] = {NULL};
+  dz_post_t p2 = {init2, strlen(init2), NULL, "Mcp-Session-Id", sid, sizeof sid};
+  CHECK(TR->post(TR, url, none, &p2, 3000, rbuf, sizeof rbuf, &r) == DZ_NET_OK && r.status == 401 && sid[0] == 0);
+  /* a dropped connection clears the header and reports connect */
+  ctl("set?mode=drop&count=1");
+  sid[0] = 'q';
+  CHECK(TR->post(TR, url, h0, &p, 3000, rbuf, sizeof rbuf, &r) == DZ_NET_CONNECT && sid[0] == 0 && rbuf[0] == 0);
+  ctl("set?mode=hang&count=1");
+  uint32_t t0 = ru_now_ms();
+  CHECK(TR->post(TR, url, h0, &p, 400, rbuf, sizeof rbuf, &r) == DZ_NET_TIMEOUT && ru_now_ms() - t0 < 1500);
+  /* refusals that never touch the network */
+  CHECK(TR->post(TR, "https://127.0.0.1/mcp", h0, &p, 1000, small, sizeof small, &r) == DZ_NET_TLS);
+  const char *evil[] = {"Authorization: Bearer x\r\nX-Evil: 1", NULL};
+  CHECK(TR->post(TR, "http://127.0.0.1:1/mcp", evil, &p, 1000, small, sizeof small, &r) == DZ_NET_CONNECT);
+  ctl("reset");
+}
+
 static void setup(const char *tok, bool favs) {
   if (M.mu) dz_model_deinit(&M);
   dz_model_cfg_t mc = {.ttl_ms = 600000, .old_update_s = UINT32_MAX};
@@ -330,6 +373,7 @@ int main(void) {
   TR = dz_transport_socket_create();
   CHECK(TR != NULL);
   test_transport();
+  test_post();
   test_client();
   test_client_states();
   test_commands();

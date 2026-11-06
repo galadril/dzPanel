@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "esp_crt_bundle.h"
 #include "esp_err.h"
@@ -44,11 +45,29 @@ static dz_net_err_t map_open_error(esp_http_client_handle_t c, esp_err_t err) {
   return DZ_NET_CONNECT;
 }
 
-static dz_net_err_t esp_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms, char *buf,
-                            size_t cap, dz_http_result_t *out) {
+typedef struct {
+  const dz_post_t *post;
+} cap_t;
+
+/* Copies ONE response header (case-insensitive name) into post->hdr_out. Never logs the value. */
+static esp_err_t on_event(esp_http_client_event_t *evt) {
+  cap_t *cp = evt->user_data;
+  if (evt->event_id == HTTP_EVENT_ON_HEADER && cp && cp->post && cp->post->capture_header && cp->post->hdr_out && cp->post->hdr_cap &&
+      evt->header_key && evt->header_value && !strcasecmp(evt->header_key, cp->post->capture_header)) {
+    size_t vl = strlen(evt->header_value);
+    if (vl >= cp->post->hdr_cap) vl = cp->post->hdr_cap - 1;
+    memcpy(cp->post->hdr_out, evt->header_value, vl);
+    cp->post->hdr_out[vl] = 0;
+  }
+  return ESP_OK;
+}
+
+static dz_net_err_t esp_do(dz_transport_t *t, const char *url, const char *const *headers, const dz_post_t *post, uint32_t timeout_ms,
+                           char *buf, size_t cap, dz_http_result_t *out) {
   esp_tr_t *self = (esp_tr_t *)t;
   out->status = 0;
   out->len = 0;
+  if (post && post->hdr_out && post->hdr_cap) post->hdr_out[0] = 0;
   if (!cap) return DZ_NET_CONNECT;
   buf[0] = 0;
   if (!url) return DZ_NET_CONNECT;
@@ -65,7 +84,9 @@ static dz_net_err_t esp_get(dz_transport_t *t, const char *url, const char *cons
   esp_http_client_config_t cfg;
   memset(&cfg, 0, sizeof cfg);
   cfg.url = url;
-  cfg.method = HTTP_METHOD_GET;
+  cfg.method = post ? HTTP_METHOD_POST : HTTP_METHOD_GET;
+  cap_t capctx = { post };
+  if (post) { cfg.event_handler = on_event; cfg.user_data = &capctx; }
   cfg.timeout_ms = (int)(timeout_ms ? timeout_ms : 8000);
   cfg.disable_auto_redirect = true; /* never follow: the token must not leave the configured host */
   cfg.keep_alive_enable = false;
@@ -78,7 +99,8 @@ static dz_net_err_t esp_get(dz_transport_t *t, const char *url, const char *cons
   dz_net_err_t result = DZ_NET_OK;
   int64_t deadline = esp_timer_get_time() + (int64_t)cfg.timeout_ms * 1000;
   esp_http_client_set_header(c, "Connection", "close");
-  esp_http_client_set_header(c, "Accept", "application/json");
+  if (post) esp_http_client_set_header(c, "Content-Type", post->content_type ? post->content_type : "application/json");
+  else esp_http_client_set_header(c, "Accept", "application/json");
   for (size_t i = 0; headers && headers[i]; i++) {
     /* "Name: value": copy the name out, pass the value pointer through (esp_http_client copies it) */
     const char *colon = strchr(headers[i], ':');
@@ -91,8 +113,14 @@ static dz_net_err_t esp_get(dz_transport_t *t, const char *url, const char *cons
     while (*v == ' ') v++;
     esp_http_client_set_header(c, name, v);
   }
-  esp_err_t e = esp_http_client_open(c, 0);
+  esp_err_t e = esp_http_client_open(c, post ? (int)post->len : 0);
   if (e != ESP_OK) { result = map_open_error(c, e); goto done; }
+  for (size_t off = 0; post && off < post->len;) {
+    int w = esp_http_client_write(c, post->body + off, (int)(post->len - off));
+    if (w < 0) { result = map_open_error(c, ESP_FAIL); if (result == DZ_NET_CONNECT && w == -ESP_ERR_HTTP_EAGAIN) result = DZ_NET_TIMEOUT; goto done; }
+    off += (size_t)w;
+    if (w == 0 && esp_timer_get_time() > deadline) { result = DZ_NET_TIMEOUT; goto done; }
+  }
   int64_t cl = esp_http_client_fetch_headers(c);
   if (cl < 0) { result = map_open_error(c, (esp_err_t)(-cl)); if (result == DZ_NET_CONNECT && cl == -ESP_ERR_HTTP_EAGAIN) result = DZ_NET_TIMEOUT; goto done; }
   out->status = esp_http_client_get_status_code(c);
@@ -127,7 +155,19 @@ static dz_net_err_t esp_get(dz_transport_t *t, const char *url, const char *cons
   }
 done:
   esp_http_client_cleanup(c);
+  if (result != DZ_NET_OK && result != DZ_NET_TOO_LARGE && post && post->hdr_out && post->hdr_cap) post->hdr_out[0] = 0;
   return result;
+}
+
+static dz_net_err_t esp_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms, char *buf,
+                            size_t cap, dz_http_result_t *out) {
+  return esp_do(t, url, headers, NULL, timeout_ms, buf, cap, out);
+}
+
+static dz_net_err_t esp_post(dz_transport_t *t, const char *url, const char *const *headers, const dz_post_t *p, uint32_t timeout_ms,
+                             char *buf, size_t cap, dz_http_result_t *out) {
+  if (!p || !p->body) { out->status = 0; out->len = 0; if (cap) buf[0] = 0; return DZ_NET_CONNECT; }
+  return esp_do(t, url, headers, p, timeout_ms, buf, cap, out);
 }
 
 static void esp_destroy(dz_transport_t *t) { free(t); }
@@ -136,6 +176,7 @@ dz_transport_t *dz_transport_esp_create(bool insecure_lan) {
   esp_tr_t *t = calloc(1, sizeof *t);
   if (!t) return NULL;
   t->base.get = esp_get;
+  t->base.post = esp_post;
   t->base.destroy = esp_destroy;
   t->insecure_lan = insecure_lan;
   esp_log_level_set("HTTP_CLIENT", ESP_LOG_WARN); /* header values must never reach a debug log */

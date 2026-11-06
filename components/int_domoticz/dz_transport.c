@@ -6,6 +6,7 @@
 #include <netdb.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,13 +94,13 @@ static void sink_put(sink_t *s, const char *d, size_t n) {
   s->buf[s->len] = 0;
 }
 
-static dz_net_err_t sock_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms,
-                             char *buf, size_t cap, dz_http_result_t *out) {
-  (void)t;
+static dz_net_err_t sock_do(const char *url, const char *const *headers, const dz_post_t *post, uint32_t timeout_ms,
+                            char *buf, size_t cap, dz_http_result_t *out) {
   dz_http_result_t dummy;
   if (!out) out = &dummy;
   out->status = 0;
   out->len = 0;
+  if (post && post->hdr_out && post->hdr_cap) post->hdr_out[0] = 0;
   if (!buf || cap < 1) return DZ_NET_CONNECT;
   buf[0] = 0;
   char host[128], port[8];
@@ -129,8 +130,13 @@ static dz_net_err_t sock_get(dz_transport_t *t, const char *url, const char *con
   }
 
   char req[2048];
-  int n = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %s:%s\r\nConnection: close\r\nAccept: application/json\r\n", path,
-                   host, port);
+  int n;
+  if (post)
+    n = snprintf(req, sizeof req, "POST %s HTTP/1.1\r\nHost: %s:%s\r\nConnection: close\r\nContent-Type: %s\r\nContent-Length: %zu\r\n",
+                 path, host, port, post->content_type ? post->content_type : "application/json", post->len);
+  else
+    n = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %s:%s\r\nConnection: close\r\nAccept: application/json\r\n", path,
+                 host, port);
   for (const char *const *h = headers; h && *h && n > 0 && (size_t)n < sizeof req; h++)
     n += snprintf(req + n, sizeof req - (size_t)n, "%s\r\n", *h);
   if (n > 0 && (size_t)n < sizeof req - 2) { req[n++] = '\r'; req[n++] = '\n'; } else { close(fd); return DZ_NET_CONNECT; }
@@ -139,6 +145,12 @@ static dz_net_err_t sock_get(dz_transport_t *t, const char *url, const char *con
     ssize_t w = send(fd, req + off, (size_t)(n - off), MSG_NOSIGNAL);
     if (w < 0 && errno != EAGAIN && errno != EINTR) { close(fd); return DZ_NET_CONNECT; }
     if (w > 0) off += (int)w;
+  }
+  for (size_t off = 0; post && off < post->len;) {
+    if ((err = wait_fd(fd, POLLOUT, deadline)) != DZ_NET_OK) { close(fd); return err; }
+    ssize_t w = send(fd, post->body + off, post->len - off, MSG_NOSIGNAL);
+    if (w < 0 && errno != EAGAIN && errno != EINTR) { close(fd); return DZ_NET_CONNECT; }
+    if (w > 0) off += (size_t)w;
   }
 
   /* Read headers (bounded 8 KB), then body per Content-Length / chunked / until close. */
@@ -195,6 +207,16 @@ static dz_net_err_t sock_get(dz_transport_t *t, const char *url, const char *con
           if (v >= 0 && v < 1L << 30) clen = v;
         } else if (!strncasecmp(p, "transfer-encoding:", 18)) {
           if (strcasestr(p, "chunked")) chunked = 1;
+        } else if (post && post->capture_header && post->hdr_out && post->hdr_cap) {
+          size_t hn = strlen(post->capture_header);
+          if (!strncasecmp(p, post->capture_header, hn) && p[hn] == ':') {
+            const char *v = p + hn + 1;
+            while (*v == ' ') v++;
+            size_t vl = strcspn(v, "\r\n");
+            if (vl >= post->hdr_cap) vl = post->hdr_cap - 1;
+            memcpy(post->hdr_out, v, vl);
+            post->hdr_out[vl] = 0;
+          }
         }
       }
       data = hdr + body_off;
@@ -260,8 +282,22 @@ static dz_net_err_t sock_get(dz_transport_t *t, const char *url, const char *con
     /* a half-received body is not a response */
     out->len = 0;
     buf[0] = 0;
+    if (post && post->hdr_out && post->hdr_cap) post->hdr_out[0] = 0;
   }
   return err;
+}
+
+static dz_net_err_t sock_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms,
+                             char *buf, size_t cap, dz_http_result_t *out) {
+  (void)t;
+  return sock_do(url, headers, NULL, timeout_ms, buf, cap, out);
+}
+
+static dz_net_err_t sock_post(dz_transport_t *t, const char *url, const char *const *headers, const dz_post_t *p,
+                              uint32_t timeout_ms, char *buf, size_t cap, dz_http_result_t *out) {
+  (void)t;
+  if (!p || !p->body) return DZ_NET_CONNECT;
+  return sock_do(url, headers, p, timeout_ms, buf, cap, out);
 }
 
 static void plain_destroy(dz_transport_t *t) { free(t); }
@@ -270,6 +306,7 @@ dz_transport_t *dz_transport_socket_create(void) {
   dz_transport_t *t = calloc(1, sizeof *t);
   if (!t) return NULL;
   t->get = sock_get;
+  t->post = sock_post;
   t->destroy = plain_destroy;
   return t;
 }
@@ -288,24 +325,50 @@ static int cfg_quote(char *dst, size_t cap, size_t *n, const char *s) {
   return 0;
 }
 
-static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms,
-                             char *buf, size_t cap, dz_http_result_t *out) {
-  (void)t;
+static dz_net_err_t curl_do(const char *url, const char *const *headers, const dz_post_t *post, uint32_t timeout_ms,
+                            char *buf, size_t cap, dz_http_result_t *out) {
   dz_http_result_t dummy;
   if (!out) out = &dummy;
   out->status = 0;
   out->len = 0;
+  if (post && post->hdr_out && post->hdr_cap) post->hdr_out[0] = 0;
   if (!buf || cap < 1) return DZ_NET_CONNECT;
   buf[0] = 0;
   if (!headers_ok(headers) || strpbrk(url, "\r\n \"\\")) return DZ_NET_CONNECT;
+  /* the captured header name goes into curl's -w format: letters, digits and '-' only */
+  char wfmt[96];
+  bool cap_hdr = post && post->capture_header && post->hdr_out && post->hdr_cap;
+  if (cap_hdr) {
+    size_t cl = strlen(post->capture_header);
+    if (!cl || cl > 40) return DZ_NET_CONNECT;
+    for (size_t i = 0; i < cl; i++) {
+      char c = post->capture_header[i];
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-')) return DZ_NET_CONNECT;
+    }
+    snprintf(wfmt, sizeof wfmt, "\n%%header{%s}\n%%{http_code}", post->capture_header);
+  } else {
+    snprintf(wfmt, sizeof wfmt, "\n%%{http_code}");
+  }
+  if (post && (!post->body || post->len > 3000)) return DZ_NET_CONNECT;
   if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) return DZ_NET_CONNECT;
 
   /* config on stdin: nothing secret on argv */
-  char cfg[2048];
+  char cfg[8192];
   size_t n = 0;
   n += (size_t)snprintf(cfg, sizeof cfg, "url = ");
   if (cfg_quote(cfg, sizeof cfg, &n, url)) return DZ_NET_CONNECT;
   cfg[n++] = '\n';
+  if (post) {
+    char body[3001];
+    memcpy(body, post->body, post->len);
+    body[post->len] = 0;
+    if (strpbrk(body, "\r\n")) return DZ_NET_CONNECT;
+    n += (size_t)snprintf(cfg + n, sizeof cfg - n, "request = \"POST\"\nheader = \"Content-Type: %s\"\ndata-binary = ",
+                          post->content_type ? post->content_type : "application/json");
+    int qr = cfg_quote(cfg, sizeof cfg, &n, body);
+    if (qr) return DZ_NET_CONNECT;
+    cfg[n++] = '\n';
+  }
   for (const char *const *h = headers; h && *h; h++) {
     n += (size_t)snprintf(cfg + n, sizeof cfg - n, "header = ");
     if (cfg_quote(cfg, sizeof cfg, &n, *h)) return DZ_NET_CONNECT;
@@ -327,7 +390,7 @@ static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *con
     int dn = open("/dev/null", O_WRONLY);
     if (dn >= 0) dup2(dn, 2);
     close(in[0]); close(in[1]); close(outp[0]); close(outp[1]);
-    execlp("curl", "curl", "-sS", "--max-time", tmo, "-K", "-", "-o", "-", "-w", "\n%{http_code}", (char *)NULL);
+    execlp("curl", "curl", "-sS", "--max-time", tmo, "-K", "-", "-o", "-", "-w", wfmt, (char *)NULL);
     _exit(127);
   }
   close(in[0]);
@@ -344,7 +407,7 @@ static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *con
 
   /* body followed by "\n<code>"; keep the last 8 bytes aside */
   sink_t sink = {buf, cap, 0, 0};
-  char tail[17]; /* 16-byte window + NUL */
+  char tail[193]; /* 192-byte window + NUL: "\n<header value>\n<code>" */
   size_t tl = 0;
   int64_t deadline = mono_ms() + (int64_t)timeout_ms + 3000;
   for (;;) {
@@ -353,7 +416,7 @@ static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *con
     ssize_t r = read(outp[0], tmp, sizeof tmp);
     if (r <= 0) break;
     for (ssize_t i = 0; i < r; i++) {
-      if (tl == 16) { sink_put(&sink, tail, 1); memmove(tail, tail + 1, tl - 1); tl--; }
+      if (tl == 192) { sink_put(&sink, tail, 1); memmove(tail, tail + 1, tl - 1); tl--; }
       tail[tl++] = tmp[i];
     }
   }
@@ -369,12 +432,28 @@ static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *con
       return DZ_NET_TLS;
     return DZ_NET_CONNECT; /* 6, 7, 56, 127 (curl missing), ... */
   }
-  /* tail = "\nNNN" possibly preceded by body bytes */
+  /* tail = "\nNNN" (or "\n<header>\nNNN" for a capture) possibly preceded by body bytes */
   tail[tl] = 0;
   char *nl = NULL;
   for (size_t i = tl; i-- > 0;)
     if (tail[i] == '\n') { nl = tail + i; break; }
   if (!nl) return DZ_NET_CONNECT;
+  if (cap_hdr) {
+    char *nl2 = NULL;
+    for (size_t i = (size_t)(nl - tail); i-- > 0;)
+      if (tail[i] == '\n') { nl2 = tail + i; break; }
+    if (!nl2) return DZ_NET_CONNECT;
+    size_t vl = (size_t)(nl - nl2 - 1);
+    if (vl >= post->hdr_cap) vl = post->hdr_cap - 1;
+    memcpy(post->hdr_out, nl2 + 1, vl);
+    post->hdr_out[vl] = 0;
+    char *code = nl + 1;
+    sink_put(&sink, tail, (size_t)(nl2 - tail));
+    out->status = atoi(code);
+    out->len = sink.len;
+    if (out->status < 100 || out->status > 599) { out->status = 0; out->len = 0; buf[0] = 0; post->hdr_out[0] = 0; return DZ_NET_CONNECT; }
+    return sink.too_large ? DZ_NET_TOO_LARGE : DZ_NET_OK;
+  }
   /* bytes of tail before the newline belong to the body */
   sink_put(&sink, tail, (size_t)(nl - tail));
   out->status = atoi(nl + 1);
@@ -383,10 +462,24 @@ static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *con
   return sink.too_large ? DZ_NET_TOO_LARGE : DZ_NET_OK;
 }
 
+static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms,
+                             char *buf, size_t cap, dz_http_result_t *out) {
+  (void)t;
+  return curl_do(url, headers, NULL, timeout_ms, buf, cap, out);
+}
+
+static dz_net_err_t curl_post(dz_transport_t *t, const char *url, const char *const *headers, const dz_post_t *p,
+                              uint32_t timeout_ms, char *buf, size_t cap, dz_http_result_t *out) {
+  (void)t;
+  if (!p || !p->body) return DZ_NET_CONNECT;
+  return curl_do(url, headers, p, timeout_ms, buf, cap, out);
+}
+
 dz_transport_t *dz_transport_curl_create(void) {
   dz_transport_t *t = calloc(1, sizeof *t);
   if (!t) return NULL;
   t->get = curl_get;
+  t->post = curl_post;
   t->destroy = plain_destroy;
   return t;
 }

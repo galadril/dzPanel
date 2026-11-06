@@ -63,6 +63,18 @@ static dz_net_err_t mark_get(dz_transport_t *t, const char *url, const char *con
   ru_heap_log_mark_res(end, out->status, (int)e, (unsigned)out->len, (unsigned)((esp_timer_get_time() - t0) / 1000));
   return e;
 }
+/* MCP: the initialize call is the one that captures the session header. Neither the URL, the body nor any header is logged. */
+static dz_net_err_t mark_post(dz_transport_t *t, const char *url, const char *const *headers, const dz_post_t *p, uint32_t timeout_ms,
+                              char *buf, size_t cap, dz_http_result_t *out) {
+  mark_tr_t *m = (mark_tr_t *)t;
+  bool init = p && p->capture_header;
+  ru_heap_log_mark(init ? "cmd mcp init begin" : "cmd mcp call begin");
+  int64_t t0 = esp_timer_get_time();
+  dz_net_err_t e = m->inner->post(m->inner, url, headers, p, timeout_ms, buf, cap, out);
+  ru_heap_log_mark_res(init ? "cmd mcp init end" : "cmd mcp call end", out->status, (int)e, (unsigned)out->len,
+                       (unsigned)((esp_timer_get_time() - t0) / 1000));
+  return e;
+}
 static void mark_destroy(dz_transport_t *t) {
   mark_tr_t *m = (mark_tr_t *)t;
   if (m->inner && m->inner->destroy) m->inner->destroy(m->inner);
@@ -74,6 +86,7 @@ static dz_transport_t *transport_create(bool probe) {
   mark_tr_t *m = calloc(1, sizeof *m);
   if (!in || !m) { if (in) in->destroy(in); free(m); return NULL; }
   m->base.get = mark_get;
+  m->base.post = mark_post;
   m->base.destroy = mark_destroy;
   m->inner = in;
   m->probe = probe;

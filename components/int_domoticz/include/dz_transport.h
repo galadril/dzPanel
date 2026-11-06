@@ -18,12 +18,29 @@ typedef struct {
   size_t len;   /* body bytes stored in buf (buf is always NUL terminated) */
 } dz_http_result_t;
 
+/* One POST body. body/len: the request body (len < 4 KB in practice). content_type: NULL -> application/json.
+ * capture_header: the name of ONE response header to copy (case-insensitive, no colon), or NULL. hdr_out/hdr_cap: where
+ * its value goes, NUL terminated and truncated to fit; EMPTY if the header is absent (hdr_out is cleared on every call,
+ * also on error). The captured value can be a session id: never log it. */
+typedef struct {
+  const char *body;
+  size_t len;
+  const char *content_type;
+  const char *capture_header;
+  char *hdr_out;
+  size_t hdr_cap;
+} dz_post_t;
+
 typedef struct dz_transport dz_transport_t;
 struct dz_transport {
   /* headers: NULL terminated array of "Name: value" strings (may be NULL).
    * buf/cap: cap >= 1. Always NUL terminates, even on error. */
   dz_net_err_t (*get)(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms, char *buf,
                       size_t cap, dz_http_result_t *out);
+  /* Optional (NULL when the transport cannot POST): same contract as get, plus the body and the header capture. The
+   * caller adds Accept / Authorization / Mcp-Session-Id through `headers`. */
+  dz_net_err_t (*post)(dz_transport_t *t, const char *url, const char *const *headers, const dz_post_t *p, uint32_t timeout_ms,
+                       char *buf, size_t cap, dz_http_result_t *out);
   void (*destroy)(dz_transport_t *t);
 };
 
