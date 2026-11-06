@@ -882,6 +882,13 @@ static int overlap_tiles(lv_obj_t *o, int *tiles) {
   return bad;
 }
 
+static bool count_tab(size_t i, const dz_device_t *d, bool scene, ru_val_state_t st, uint16_t order, void *ud) {
+  (void)i; (void)st; (void)order;
+  int *c = ud;
+  if (!scene && (d->tabs & c[0])) c[1]++;
+  return true;
+}
+
 static void climate_tiles_long(int size) {
   sim_t s;
   CHECK(init_sim(&s, size));
@@ -905,11 +912,16 @@ static void climate_tiles_long(int size) {
   for (int k = 0; k < 2; k++) {
     ru_dzapp_show_section(a, secs[k]);
     int pages = ru_dzapp_pages(a);
+    int cnt[2] = { secs[k] == RU_SEC_TEMP ? DZ_TAB_TEMP : DZ_TAB_WEATHER, 0 };
+    dz_model_foreach(&f.model, f.T, count_tab, cnt);
+    CHECK(pages == (cnt[1] + 5) / 6);
     for (int pg = 0; pg < pages; pg++) {
       sim_render();
       int tiles = 0;
       CHECK(overlap_tiles(ru_dzapp_screen(a), &tiles) == 0);
-      CHECK(tiles > 0 && tiles <= 6);
+      int expect = cnt[1] - pg * 6 < 6 ? cnt[1] - pg * 6 : 6;
+      if (tiles != expect) printf("section %d page %d: tiles %d expected %d\n", k, pg, tiles, expect);
+      CHECK(tiles == expect);
       saw_both = saw_both || shows(a, " / ");
       saw_wind = saw_wind || shows(a, "TEMP / HUM") || shows(a, "WIND");
       saw_dots = saw_dots || shows(a, "...");
