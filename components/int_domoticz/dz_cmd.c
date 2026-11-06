@@ -210,7 +210,7 @@ static bool matches(const dz_cmd_slot_t *s, const dz_device_t *a) {
     case DZ_CMD_ON: case DZ_CMD_OFF: case DZ_CMD_TOGGLE: {
       bool tog = s->req.kind == DZ_CMD_TOGGLE;
       if (p->cap == DZ_CAP_LOCK) {
-        /* ON always means "lock", OFF "unlock"; build_query sends the inverted word for type 20 locks. */
+        /* ON always means "lock", OFF "unlock" (type 20 locks get the inverted word in dz_mcp_encode). */
         bool lock = tog ? strcmp(p->status, "Locked") != 0 : s->req.kind == DZ_CMD_ON;
         return !strcmp(a->status, lock ? "Locked" : "Unlocked");
       }
@@ -354,8 +354,12 @@ static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   bool ok = dz_client_mcp_call(cl, now, cl->mcp_call, &r);
   bool reply = r.net == DZ_NET_OK && r.http == 200 && r.parse == DZ_OK; /* a JSON-RPC answer, even if the call failed */
   if (!ok && !reply) {
-    if (r.net == DZ_NET_TIMEOUT && r.stage == DZ_MCP_STAGE_CALL) {
-      s->uncertain = true; /* the call may have run (never retried): the re-read decides */
+    bool at_call = r.stage == DZ_MCP_STAGE_CALL;
+    if (at_call && (r.net == DZ_NET_TIMEOUT || r.net == DZ_NET_CONNECT || r.net == DZ_NET_TLS ||
+                    (r.net == DZ_NET_TOO_LARGE && r.http == 200))) {
+      /* The request may have reached the server (a reset or TLS error after the send, an answer too large for the buffer): the
+       * call may have run and is NEVER retried; the re-read decides. */
+      s->uncertain = true;
     } else if (r.net == DZ_NET_TIMEOUT || r.net == DZ_NET_CONNECT || r.net == DZ_NET_TLS) {
       s->fail = DZ_FAIL_TRANSPORT; /* includes a timeout in initialize: nothing was sent yet */
       finish(c, s, DZ_OUT_FAILED, NULL);

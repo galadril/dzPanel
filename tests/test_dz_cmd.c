@@ -40,7 +40,7 @@ static sim_t S[] = {
 
 typedef enum { X_OK, X_IGNORE, X_401, X_403, X_500, X_ERR, X_HTML, X_CONNECT, X_TIMEOUT_APPLIED, X_TIMEOUT_IGNORED, X_VERIFY_FAIL,
                X_ISERROR, X_NOACTION, X_NOMCP503, X_NOMCP404, X_RPCERR, X_EXPIRE_ONCE, X_EXPIRED_NEXT, X_EXPIRE_ALWAYS, X_INIT_TIMEOUT,
-               X_PREFLIGHT_404 } xmode_t;
+               X_PREFLIGHT_404, X_TLS, X_TLS_APPLIED, X_TOOLARGE, X_TOOLARGE_APPLIED, X_INIT_CONNECT, X_INIT_TLS, X_INIT_TOOLARGE } xmode_t;
 static xmode_t xm;
 static int ticks; /* each effective command bumps the fake LastUpdate */
 static int cmd_calls, read_calls;
@@ -138,6 +138,7 @@ static void apply_call(const char *body) {
 }
 
 static int rpc_code = -32603; /* for X_RPCERR */
+static char bigbody[40000]; /* an answer that does not fit the 32 KB client buffer */
 static int mcp_inits, mcp_notifs;
 #define MCP_OK(text, err) "{\"id\":9,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"" text "\",\"type\":\"text\"}],\"isError\":" err "}}"
 
@@ -146,6 +147,9 @@ static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_ht
     if (strstr(f->body, "\"initialize\"")) {
       mcp_inits++;
       if (xm == X_INIT_TIMEOUT) return DZ_NET_TIMEOUT;
+      if (xm == X_INIT_CONNECT) return DZ_NET_CONNECT;
+      if (xm == X_INIT_TLS) return DZ_NET_TLS;
+      if (xm == X_INIT_TOOLARGE) { memset(bigbody, ' ', sizeof bigbody - 1); return fake_body(bigbody, 200, buf, cap, out); }
       if (xm == X_NOMCP503) return fake_body("MCP disabled", 503, buf, cap, out);
       if (xm == X_NOMCP404) return fake_body("<html>nope</html>", 404, buf, cap, out);
       if (xm == X_401) return fake_body("{\"error\":\"Unauthorized\"}", 401, buf, cap, out);
@@ -162,6 +166,12 @@ static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_ht
       case X_ISERROR: return fake_body(MCP_OK("Device not found", "true"), 200, buf, cap, out);
       case X_HTML: return fake_body("<html>proxy</html>", 200, buf, cap, out);
       case X_CONNECT: return DZ_NET_CONNECT;
+      case X_TLS: return DZ_NET_TLS;
+      case X_TLS_APPLIED: apply_call(f->body); return DZ_NET_TLS;
+      case X_TOOLARGE: case X_TOOLARGE_APPLIED:
+        if (xm == X_TOOLARGE_APPLIED) apply_call(f->body);
+        memset(bigbody, ' ', sizeof bigbody - 1);
+        return fake_body(bigbody, 200, buf, cap, out);
       case X_TIMEOUT_APPLIED: apply_call(f->body); return DZ_NET_TIMEOUT;
       case X_TIMEOUT_IGNORED: return DZ_NET_TIMEOUT;
       case X_IGNORE: return fake_body(MCP_OK("Switch set successfully.", "false"), 200, buf, cap, out); /* nothing happens */
@@ -389,7 +399,7 @@ static void test_refusals(void) {
 static void test_failures(void) {
   struct { xmode_t x; dz_fail_t f; } cases[] = {
     {X_403, DZ_FAIL_FORBIDDEN}, {X_500, DZ_FAIL_SERVER}, {X_ERR, DZ_FAIL_SERVER}, {X_HTML, DZ_FAIL_BAD_RESPONSE},
-    {X_CONNECT, DZ_FAIL_TRANSPORT}, {X_401, DZ_FAIL_UNAUTHORIZED},
+    {X_401, DZ_FAIL_UNAUTHORIZED}, {X_INIT_CONNECT, DZ_FAIL_TRANSPORT}, {X_INIT_TLS, DZ_FAIL_TRANSPORT}, {X_INIT_TOOLARGE, DZ_FAIL_BAD_RESPONSE},
   };
   for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
     setup(true);
@@ -407,6 +417,19 @@ static void test_failures(void) {
   setup(true);
   xm = X_TIMEOUT_IGNORED;
   CHECK(run(DZ_CMD_ON, "1", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  /* B2: a transport error AFTER the request was sent (call stage) is uncertain, never a plain failure and never retried */
+  struct { xmode_t x; bool applied; } up[] = {
+    {X_CONNECT, false}, {X_TLS, false}, {X_TLS_APPLIED, true}, {X_TOOLARGE, false}, {X_TOOLARGE_APPLIED, true},
+  };
+  for (size_t i = 0; i < sizeof up / sizeof up[0]; i++) {
+    setup(true);
+    xm = up[i].x;
+    CHECK(run(DZ_CMD_ON, "1", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && nres == 1);
+    CHECK(LAST.fail == DZ_FAIL_NONE && LAST.outcome == (up[i].applied ? DZ_OUT_CONFIRMED : DZ_OUT_UNCONFIRMED));
+    CHECK(cmd_calls == 1 && mcp_inits == 1);                                  /* the call was sent once, no re-initialize, no retry */
+    CHECK(read_calls == (up[i].applied ? 2 : 3));                            /* pre-flight, then the verify read(s) decide */
+    CHECK(dz_client_state(&C) != DZ_CS_TOKEN_REJECTED);
+  }
   /* the command went through but the re-read cannot reach the server */
   setup(true);
   struct { int dummy; } unused = {0};
@@ -645,7 +668,7 @@ static void test_mcp_session_and_mapping(void) {
     {"503 no MCP", X_NOMCP503, 0, DZ_FAIL_NO_MCP}, {"404 no MCP", X_NOMCP404, 0, DZ_FAIL_NO_MCP},
     {"401", X_401, 0, DZ_FAIL_UNAUTHORIZED}, {"403", X_403, 0, DZ_FAIL_FORBIDDEN}, {"500", X_500, 0, DZ_FAIL_SERVER},
     {"isError", X_ISERROR, 0, DZ_FAIL_REJECTED}, {"Error text", X_ERR, 0, DZ_FAIL_SERVER}, {"html 200", X_HTML, 0, DZ_FAIL_BAD_RESPONSE},
-    {"connect", X_CONNECT, 0, DZ_FAIL_TRANSPORT},
+    {"init connect", X_INIT_CONNECT, 0, DZ_FAIL_TRANSPORT},
     {"-32601", X_RPCERR, -32601, DZ_FAIL_NO_MCP}, {"-32002", X_RPCERR, -32002, DZ_FAIL_FORBIDDEN},
     {"-32000", X_RPCERR, -32000, DZ_FAIL_SERVER}, {"-32003", X_RPCERR, -32003, DZ_FAIL_SERVER},
     {"-32004", X_RPCERR, -32004, DZ_FAIL_SERVER}, {"-32603", X_RPCERR, -32603, DZ_FAIL_SERVER},
