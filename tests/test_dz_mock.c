@@ -329,12 +329,12 @@ static void test_climate_mock(void) {
   /* Fahrenheit server: the MCP setpoint tool takes Celsius only (it would store 70 as 70 C), so every setpoint is read-only,
    * and so is the thermostat mode (no MCP tool). Nothing is sent. */
   int sent = nposts();
-  CHECK(!dz_cmd_supported(&d, DZ_CMD_SETPOINT));
+  CHECK(!dz_cmd_supported(&d, DZ_CMD_SETPOINT, NULL));
   CHECK(run(DZ_CMD_SETPOINT, "118", 0, 70.0f, true) == DZ_CMDE_UNSUPPORTED);
   CHECK(run(DZ_CMD_SETPOINT, "123", 0, 70.0f, true) == DZ_CMDE_UNSUPPORTED && run(DZ_CMD_SETPOINT, "124", 0, 70.0f, true) == DZ_CMDE_UNSUPPORTED);
   CHECK(run(DZ_CMD_MODE, "125", 2, 0, true) == DZ_CMDE_UNSUPPORTED && run(DZ_CMD_MODE, "125", 9, 0, true) == DZ_CMDE_UNSUPPORTED);
   CHECK(nposts() == sent);
-  CHECK(dz_model_get(&M, "125", false, &d, &v, &st, T) && d.cap == DZ_CAP_MODE && !dz_cmd_supported(&d, DZ_CMD_MODE));
+  CHECK(dz_model_get(&M, "125", false, &d, &v, &st, T) && d.cap == DZ_CAP_MODE && !dz_cmd_supported(&d, DZ_CMD_MODE, NULL));
   /* a setpoint to a mode device is refused */
   CHECK(run(DZ_CMD_SETPOINT, "125", 0, 20.0f, true) == DZ_CMDE_UNSUPPORTED || run(DZ_CMD_SETPOINT, "125", 0, 20.0f, true) == DZ_CMDE_NOT_CONTROLLABLE);
   ctl("reset");

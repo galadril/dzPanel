@@ -298,9 +298,11 @@ static void submit_or_confirm(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd
   ru_val_state_t st;
   if (!get_entry(a, idx, scene, &d, &v, &st)) { refused_for(a, idx, scene, DZ_CMDE_UNKNOWN_DEVICE); return; }
   if (!a->allow_control) { refused_for(a, idx, scene, DZ_CMDE_CONTROL_DISABLED); return; }
-  dz_risk_t risk = dz_cmd_risk(&d, kind);
+  dz_units_t un;
+  get_units(a, &un);
+  dz_risk_t risk = dz_cmd_risk(&d, kind, &un);
   if (risk == DZ_RISK_LOCKED) {
-    bool nomcp = kind == DZ_CMD_MODE || (kind == DZ_CMD_SETPOINT && d.cap == DZ_CAP_THERMOSTAT && !dz_cmd_supported(&d, kind));
+    bool nomcp = kind == DZ_CMD_MODE || (kind == DZ_CMD_SETPOINT && d.cap == DZ_CAP_THERMOSTAT && !dz_cmd_supported(&d, kind, &un));
     refused_for(a, idx, scene, d.is_protected ? DZ_CMDE_PROTECTED : nomcp ? DZ_CMDE_UNSUPPORTED : DZ_CMDE_NOT_CONTROLLABLE);
     return;
   }
@@ -1367,7 +1369,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       int slot = ru_cl_mode_slot(&d);
       ru_selector_set(w, slot >= 0 ? slot : 0);
       /* no MCP tool for the thermostat mode: the modes are shown, not set */
-      if (ctl && dz_cmd_supported(&d, DZ_CMD_MODE)) ru_selector_on_change(w, cb_mode, a);
+      if (ctl && dz_cmd_supported(&d, DZ_CMD_MODE, NULL)) ru_selector_on_change(w, cb_mode, a);
       else label_u(s, "MODE: VIEW ONLY", ru_font_small(), t->warn, 0, 25);
       if (slot < 0) label_u(s, "MODE UNKNOWN", ru_font_small(), t->warn, 0, 20);
       name_back(a, s, name, 40);

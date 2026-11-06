@@ -210,6 +210,13 @@ static void reset_sim(void) {
 }
 
 static uint32_t T;
+/* NULL: units unknown (getconfig never answered) */
+static void set_units(const char *temp) {
+  dz_units_t u;
+  memset(&u, 0, sizeof u);
+  if (temp) { u.have_temp = true; snprintf(u.temp, sizeof u.temp, "%s", temp); }
+  dz_model_set_units(&M, &u);
+}
 static void setup(bool allow) {
   if (M.mu) dz_model_deinit(&M);
   dz_model_cfg_t mc = {.ttl_ms = 600000, .old_update_s = UINT32_MAX};
@@ -229,6 +236,7 @@ static void setup(bool allow) {
   render(tmp, sizeof tmp, true, NULL);
   CHECK(dz_model_apply(&M, tmp, strlen(tmp), DZ_COMMIT_FULL_SCENES, 1000, NULL, NULL) == DZ_OK);
   dz_cmd_init(&K, &C, &M, allow, on_res, NULL);
+  set_units("C");
   T = 2000;
 }
 
@@ -319,7 +327,7 @@ static void test_risk(void) {
   /* lock: needs confirm, no HTTP without it */
   CHECK(run(DZ_CMD_OFF, "6", 0, 0, false, NULL) == DZ_CMDE_NEEDS_CONFIRM && cmd_calls == 0);
   dz_model_get(&M, "6", false, &d, &v, &st, T);
-  CHECK(dz_cmd_risk(&d, DZ_CMD_OFF) == DZ_RISK_CONFIRM);
+  CHECK(dz_cmd_risk(&d, DZ_CMD_OFF, NULL) == DZ_RISK_CONFIRM);
   CHECK(run(DZ_CMD_OFF, "6", 0, 0, true, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && !strcmp(LAST.after.status, "Unlocked"));
   CHECK(run(DZ_CMD_ON, "6", 0, 0, true, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && !strcmp(LAST.after.status, "Locked"));
   CHECK(run(DZ_CMD_TOGGLE, "6", 0, 0, true, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && !strcmp(LAST.after.status, "Unlocked"));
@@ -351,7 +359,7 @@ static void test_refusals(void) {
   CHECK(run(DZ_CMD_ON, "7", 0, 0, true, NULL) == DZ_CMDE_PROTECTED);               /* protected: never controlled */
   dz_device_t d; ru_val_t v; ru_val_state_t st;
   dz_model_get(&M, "7", false, &d, &v, &st, T);
-  CHECK(dz_cmd_risk(&d, DZ_CMD_ON) == DZ_RISK_LOCKED);
+  CHECK(dz_cmd_risk(&d, DZ_CMD_ON, NULL) == DZ_RISK_LOCKED);
   CHECK(run(DZ_CMD_ON, "10", 0, 0, true, NULL) == DZ_CMDE_NOT_CONTROLLABLE);       /* temperature sensor */
   CHECK(run(DZ_CMD_ON, "99", 0, 0, true, NULL) == DZ_CMDE_UNKNOWN_DEVICE);
   CHECK(run(DZ_CMD_ON, "", 0, 0, true, NULL) == DZ_CMDE_BAD_ARG);
@@ -478,9 +486,9 @@ static void test_scene_group_semantics(void) {
   CHECK(!dz_cmd_scene_tap_kind(NULL, &k));
 
   /* both need a hold, and a Scene never accepts Off */
-  CHECK(dz_cmd_risk(&scene, DZ_CMD_SCENE_ON) == DZ_RISK_CONFIRM && dz_cmd_risk(&group, DZ_CMD_SCENE_ON) == DZ_RISK_CONFIRM);
-  CHECK(dz_cmd_risk(&scene, DZ_CMD_SCENE_OFF) == DZ_RISK_LOCKED);
-  CHECK(dz_cmd_risk(&group, DZ_CMD_SCENE_OFF) == DZ_RISK_CONFIRM);
+  CHECK(dz_cmd_risk(&scene, DZ_CMD_SCENE_ON, NULL) == DZ_RISK_CONFIRM && dz_cmd_risk(&group, DZ_CMD_SCENE_ON, NULL) == DZ_RISK_CONFIRM);
+  CHECK(dz_cmd_risk(&scene, DZ_CMD_SCENE_OFF, NULL) == DZ_RISK_LOCKED);
+  CHECK(dz_cmd_risk(&group, DZ_CMD_SCENE_OFF, NULL) == DZ_RISK_CONFIRM);
   CHECK(run(DZ_CMD_SCENE_OFF, "1", 0, 0, true, NULL) == DZ_CMDE_NOT_CONTROLLABLE);
 
   /* group On that comes back Mixed: some members did not switch, so NOT confirmed */
@@ -557,14 +565,14 @@ static void test_mcp_gates(void) {
   /* MODE: no tool, unsupported, never any request */
   dz_device_t d; ru_val_t v; ru_val_state_t st;
   CHECK(dz_model_get(&M, "17", false, &d, &v, &st, T) && d.cap == DZ_CAP_MODE);
-  CHECK(!dz_cmd_supported(&d, DZ_CMD_MODE) && dz_cmd_risk(&d, DZ_CMD_MODE) == DZ_RISK_LOCKED);
+  CHECK(!dz_cmd_supported(&d, DZ_CMD_MODE, NULL) && dz_cmd_risk(&d, DZ_CMD_MODE, NULL) == DZ_RISK_LOCKED);
   int c0 = F.calls;
   CHECK(run(DZ_CMD_MODE, "17", 1, 0, true, NULL) == DZ_CMDE_UNSUPPORTED && F.calls == c0);
   CHECK(!strcmp(dz_cmd_err_name(DZ_CMDE_UNSUPPORTED), "unsupported"));
   /* what is supported */
-  CHECK(dz_model_get(&M, "9", false, &d, &v, &st, T) && dz_cmd_supported(&d, DZ_CMD_SETPOINT));
-  CHECK(dz_model_get(&M, "2", false, &d, &v, &st, T) && dz_cmd_supported(&d, DZ_CMD_SET_LEVEL) && !dz_cmd_supported(&d, DZ_CMD_BLINDS_OPEN));
-  CHECK(!dz_cmd_supported(NULL, DZ_CMD_ON));
+  CHECK(dz_model_get(&M, "9", false, &d, &v, &st, T) && dz_cmd_supported(&d, DZ_CMD_SETPOINT, &(dz_units_t){.have_temp = true, .temp = "C"}));
+  CHECK(dz_model_get(&M, "2", false, &d, &v, &st, T) && dz_cmd_supported(&d, DZ_CMD_SET_LEVEL, NULL) && !dz_cmd_supported(&d, DZ_CMD_BLINDS_OPEN, NULL));
+  CHECK(!dz_cmd_supported(NULL, DZ_CMD_ON, NULL));
   /* Fahrenheit server: the setpoint tool takes Celsius only, so SETPOINT is refused and nothing is sent */
   dz_units_t u;
   memset(&u, 0, sizeof u);
@@ -578,7 +586,32 @@ static void test_mcp_gates(void) {
   /* a device whose own value unit is Fahrenheit is read-only even when the units are unknown */
   CHECK(dz_model_get(&M, "9", false, &d, &v, &st, T));
   strcpy(d.vunit, "\xC2\xB0" "F");
-  CHECK(!dz_cmd_supported(&d, DZ_CMD_SETPOINT));
+  CHECK(!dz_cmd_supported(&d, DZ_CMD_SETPOINT, NULL));
+}
+
+/* B1: a server whose temperature unit is not known (getconfig failed) is treated like Fahrenheit for SETPOINT */
+static void test_setpoint_unknown_units(void) {
+  setup(true);
+  dz_device_t d; ru_val_t v; ru_val_state_t st;
+  dz_units_t u;
+  CHECK(dz_model_get(&M, "9", false, &d, &v, &st, T));
+  memset(&u, 0, sizeof u);
+  u.have_temp = true; strcpy(u.temp, "C");
+  CHECK(dz_cmd_supported(&d, DZ_CMD_SETPOINT, &u) && dz_cmd_risk(&d, DZ_CMD_SETPOINT, &u) == DZ_RISK_CONFIRM);
+  CHECK(!dz_cmd_supported(&d, DZ_CMD_SETPOINT, NULL) && dz_cmd_risk(&d, DZ_CMD_SETPOINT, NULL) == DZ_RISK_LOCKED);
+  u.have_temp = false;
+  CHECK(!dz_cmd_supported(&d, DZ_CMD_SETPOINT, &u));
+  set_units(NULL);
+  int c0 = F.calls;
+  CHECK(run(DZ_CMD_SETPOINT, "9", 0, 21.0f, true, NULL) == DZ_CMDE_UNSUPPORTED && F.calls == c0 && cmd_calls == 0);
+  /* known Celsius works; the units vanishing between submit and the pre-flight stops it before the call */
+  set_units("C");
+  dz_cmd_req_t q = {.kind = DZ_CMD_SETPOINT, .idx = "9", .setpoint = 21.0f, .confirmed = true};
+  CHECK(dz_cmd_submit(&K, &q, T, NULL) == DZ_CMD_ACCEPTED);
+  set_units(NULL);
+  CHECK(dz_cmd_pump(&K, T) && nres == 1 && LAST.outcome == DZ_OUT_FAILED && LAST.fail == DZ_FAIL_REJECTED && cmd_calls == 0);
+  set_units("C");
+  CHECK(run(DZ_CMD_SETPOINT, "9", 0, 21.0f, true, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
 }
 
 static void test_mcp_session_and_mapping(void) {
@@ -663,6 +696,7 @@ int main(void) {
   test_mcp_encode();
   test_kinds_table();
   test_mcp_gates();
+  test_setpoint_unknown_units();
   test_mcp_session_and_mapping();
   test_preflight();
   test_basic_confirm();

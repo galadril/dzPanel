@@ -28,8 +28,14 @@ void dz_cmd_init(dz_cmd_t *c, dz_client_t *client, dz_model_t *model, bool allow
 
 static bool is_scene_cmd(dz_cmd_kind_t k) { return k == DZ_CMD_SCENE_ON || k == DZ_CMD_SCENE_OFF; }
 
+/* The MCP setpoint tool takes Celsius only. A server whose temperature unit is not KNOWN to be Celsius (getconfig failed or has not
+ * run yet) is treated like a Fahrenheit one: a wrong guess would store 70 F as 70 C in a heating device. */
+static bool setpoint_celsius(const dz_device_t *d, const dz_units_t *u) {
+  return !strstr(d->vunit, "\xC2\xB0" "F") && u && u->have_temp && u->temp[0] == 'C';
+}
+
 /* Which capability may take which command. */
-static bool cap_allows(const dz_device_t *d, dz_cmd_kind_t k) {
+static bool cap_allows(const dz_device_t *d, dz_cmd_kind_t k, const dz_units_t *u) {
   switch (k) {
     case DZ_CMD_ON: case DZ_CMD_OFF: case DZ_CMD_TOGGLE:
       return d->cap == DZ_CAP_ONOFF || d->cap == DZ_CAP_DIMMER || d->cap == DZ_CAP_LOCK;
@@ -38,25 +44,24 @@ static bool cap_allows(const dz_device_t *d, dz_cmd_kind_t k) {
     case DZ_CMD_SELECTOR: return d->cap == DZ_CAP_SELECTOR;
     case DZ_CMD_SCENE_ON: return dz_cap_is_scene_ns(d->cap);   /* a scene is pushed; a group is switched on */
     case DZ_CMD_SCENE_OFF: return d->cap == DZ_CAP_GROUP;       /* a Scene has no Off: never sent */
-    case DZ_CMD_SETPOINT: return d->cap == DZ_CAP_THERMOSTAT && !strstr(d->vunit, "\xC2\xB0" "F"); /* the tool takes Celsius only */
+    case DZ_CMD_SETPOINT: return d->cap == DZ_CAP_THERMOSTAT && setpoint_celsius(d, u);
     case DZ_CMD_PUSH: return d->cap == DZ_CAP_PUSH;
     case DZ_CMD_MODE: return false; /* the MCP endpoint has no thermostat-mode tool: shown read-only */
   }
   return false;
 }
 
-bool dz_cmd_supported(const dz_device_t *d, dz_cmd_kind_t kind) { return d && cap_allows(d, kind); }
+bool dz_cmd_supported(const dz_device_t *d, dz_cmd_kind_t kind, const dz_units_t *u) { return d && cap_allows(d, kind, u); }
 
 /* Commands the capability would take but MCP cannot carry (decided before the generic NOT_CONTROLLABLE). */
-static bool unsupported(const dz_device_t *d, dz_cmd_kind_t k, const dz_units_t *u, bool have_u) {
+static bool unsupported(const dz_device_t *d, dz_cmd_kind_t k, const dz_units_t *u) {
   if (k == DZ_CMD_MODE) return d->cap == DZ_CAP_MODE;
-  if (k == DZ_CMD_SETPOINT && d->cap == DZ_CAP_THERMOSTAT)
-    return strstr(d->vunit, "\xC2\xB0" "F") || (have_u && u->have_temp && u->temp[0] == 'F');
+  if (k == DZ_CMD_SETPOINT && d->cap == DZ_CAP_THERMOSTAT) return !setpoint_celsius(d, u); /* Fahrenheit or unknown units */
   return false;
 }
 
-dz_risk_t dz_cmd_risk(const dz_device_t *d, dz_cmd_kind_t kind) {
-  if (d->is_protected || !d->controllable || !cap_allows(d, kind)) return DZ_RISK_LOCKED;
+dz_risk_t dz_cmd_risk(const dz_device_t *d, dz_cmd_kind_t kind, const dz_units_t *u) {
+  if (d->is_protected || !d->controllable || !cap_allows(d, kind, u)) return DZ_RISK_LOCKED;
   /* DESIGN.md section 7: locks, heating and scenes/groups need a hold. A group may contain
    * everything in the house and getscenes does not list members, so every scene counts. */
   if (d->cap == DZ_CAP_LOCK || dz_cap_is_scene_ns(d->cap) || d->cap == DZ_CAP_THERMOSTAT || d->cap == DZ_CAP_MODE)
@@ -82,9 +87,9 @@ dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms
   if (!dz_model_get(c->model, req->idx, is_scene_cmd(req->kind), &d, &v, &st, now_ms)) return DZ_CMDE_UNKNOWN_DEVICE;
   if (d.is_protected) return DZ_CMDE_PROTECTED;
   dz_units_t units;
-  bool have_units = dz_model_units(c->model, &units);
-  if (unsupported(&d, req->kind, &units, have_units)) return DZ_CMDE_UNSUPPORTED;
-  if (!d.controllable || !cap_allows(&d, req->kind)) return DZ_CMDE_NOT_CONTROLLABLE;
+  dz_model_units(c->model, &units);
+  if (unsupported(&d, req->kind, &units)) return DZ_CMDE_UNSUPPORTED;
+  if (!d.controllable || !cap_allows(&d, req->kind, &units)) return DZ_CMDE_NOT_CONTROLLABLE;
 
   int level = -1;
   float setpoint = req->setpoint;
@@ -107,7 +112,7 @@ dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms
     if (!ok) return DZ_CMDE_BAD_ARG;
     level = req->level;
   }
-  if (dz_cmd_risk(&d, req->kind) == DZ_RISK_CONFIRM && !req->confirmed) return DZ_CMDE_NEEDS_CONFIRM;
+  if (dz_cmd_risk(&d, req->kind, &units) == DZ_RISK_CONFIRM && !req->confirmed) return DZ_CMDE_NEEDS_CONFIRM;
   if (st != RU_VAL_OK) return DZ_CMDE_STALE;
 
   for (size_t i = 0; i < DZ_CMD_QUEUE; i++) {
@@ -310,7 +315,9 @@ static void do_preflight(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   if (f != DZ_FAIL_NONE) { s->fail = f; finish(c, s, DZ_OUT_FAILED, NULL); return; }
   if (!got) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, NULL); return; } /* gone since the last poll */
   if (fresh.is_protected) { s->fail = DZ_FAIL_PROTECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
-  if (!fresh.controllable || !cap_allows(&fresh, s->req.kind)) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
+  dz_units_t units;
+  dz_model_units(c->model, &units);
+  if (!fresh.controllable || !cap_allows(&fresh, s->req.kind, &units)) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
   s->pre = fresh;
   s->state = 3;
   s->due_ms = now;

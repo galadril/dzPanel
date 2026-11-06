@@ -107,13 +107,14 @@ typedef struct {
 
 void dz_cmd_init(dz_cmd_t *c, dz_client_t *client, dz_model_t *model, bool allow_control, dz_cmd_cb cb, void *user);
 
-/* Can this device take this command through the MCP tools at all? false for MODE (no tool), SETPOINT on a device whose value
- * unit is Fahrenheit (the setpoint tool takes Celsius only), and a capability that does not take the command. The UI renders
- * such controls read-only. dz_cmd_submit additionally refuses SETPOINT when the SERVER units are Fahrenheit. */
-bool dz_cmd_supported(const dz_device_t *d, dz_cmd_kind_t kind);
+/* Can this device take this command through the MCP tools at all? false for MODE (no tool), SETPOINT when the device's value
+ * unit is Fahrenheit or the SERVER temperature unit is not known to be Celsius (u NULL or u->have_temp false: the setpoint tool
+ * takes Celsius only), and a capability that does not take the command. The UI renders such controls read-only. u comes from
+ * dz_model_units; it is only looked at for SETPOINT. */
+bool dz_cmd_supported(const dz_device_t *d, dz_cmd_kind_t kind, const dz_units_t *u);
 
 /* Risk of a command on a device, so the UI can decide whether to demand a hold before submitting. */
-dz_risk_t dz_cmd_risk(const dz_device_t *d, dz_cmd_kind_t kind);
+dz_risk_t dz_cmd_risk(const dz_device_t *d, dz_cmd_kind_t kind, const dz_units_t *u);
 
 /* The command a tap should send for a scene or group: a Scene is always pushed (On), a Group switches Off when it is
  * fully On and On otherwise (Off or Mixed). Returns false if d is neither. */

@@ -348,11 +348,13 @@ void ru_cl_thermo(const dz_device_t *d, const dz_units_t *un, const dz_device_t 
     snprintf(o->unit, sizeof o->unit, "%s", d->vunit);
   }
   /* The MCP setpoint tool takes Celsius only: a Fahrenheit server (or device) is shown read-only. */
-  bool fahrenheit = o->is_temp && ((un && un->have_temp && un->temp[0] == 'F') || !dz_cmd_supported(d, DZ_CMD_SETPOINT));
+  bool units_unknown = !un || !un->have_temp;
+  bool fahrenheit = o->is_temp && ((un && un->have_temp && un->temp[0] == 'F') || !dz_cmd_supported(d, DZ_CMD_SETPOINT, un));
   o->control = d->can_set && d->controllable && allow_control && !fahrenheit;
   if (o->control) { o->lo = d->setpoint_min; o->hi = d->setpoint_max; o->step = d->setpoint_step; }
   else if (d->is_protected) snprintf(o->reason, sizeof o->reason, "PROTECTED");
   else if (!d->can_set) snprintf(o->reason, sizeof o->reason, "NO RANGE");
+  else if (fahrenheit && units_unknown) snprintf(o->reason, sizeof o->reason, "UNITS UNKNOWN");
   else if (fahrenheit) snprintf(o->reason, sizeof o->reason, "FAHRENHEIT");
   else snprintf(o->reason, sizeof o->reason, "VIEW ONLY");
   if (o->is_temp) {
