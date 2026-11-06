@@ -453,11 +453,18 @@ static dz_cap_t classify(const dz_device_t *d) {
   /* SwitchTypeVal is also set on sensors and meters (P1, RFXMeter, General) where it means something
    * else. Only trust it for switch-family types, or a sensor becomes a "control". */
   int stv = is_switch_family(d) ? d->switch_type : -1;
+  /* The Domoticz security panel (Type Security, SubType Security Panel) is armed with setsecstatus; its state is
+   * Normal / Arm Home / Arm Away, so switchlight On/Off (or MCP set_switch_state) is wrong: read-only. */
+  if (!strcmp(d->type, "Security") && !strcmp(d->subtype, "Security Panel")) return DZ_CAP_STATUS;
   switch (stv) {
     case 0: return DZ_CAP_ONOFF;
     case 7: return DZ_CAP_DIMMER;
     case 1: case 9: case 10: return DZ_CAP_PUSH;
-    case 3: case 6: case 13: case 14: case 15: case 16: case 21: case 22: return DZ_CAP_BLINDS; /* 6, 16: inverted */
+    case 3: case 6: case 13: case 14: case 15: case 16: case 21: case 22: return DZ_CAP_BLINDS;
+    /* RFXNames.h (development): 3 Blinds, 13 Blinds Percentage, 14/15 Venetian US/EU, 21 Blinds % + Stop, 22 Blinds + Stop.
+     * 6 and 16 (inverted blinds) no longer exist as switch types; inversion is a device option (ReverseState /
+     * ReversePosition) that SwitchLightInt applies server-side, so the client sends plain Open/Close and never inverts.
+     * 6 and 16 are still accepted for old servers (they invert server-side too). */
     case 18: return DZ_CAP_SELECTOR;
     case 19: case 20: return DZ_CAP_LOCK;
     case 2: case 5: case 8: case 11: case 12: return DZ_CAP_STATUS;
