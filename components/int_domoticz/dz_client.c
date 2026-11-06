@@ -94,7 +94,13 @@ static void set_state(dz_client_t *c, dz_conn_state_t s) {
   if (c->cfg.on_state) c->cfg.on_state(c->cfg.user, old, s);
 }
 
+void dz_client_mcp_reset(dz_client_t *c) {
+  wipe(c->mcp_sid, sizeof c->mcp_sid);
+  c->mcp_last_ms = 0;
+}
+
 void dz_client_set_token(dz_client_t *c, const char *token) {
+  dz_client_mcp_reset(c); /* a session belongs to the token it was opened with */
   if (token && strlen(token) < sizeof c->token) {
     wipe(c->token, sizeof c->token);
     memcpy(c->token, token, strlen(token) + 1);
@@ -108,6 +114,7 @@ void dz_client_set_token(dz_client_t *c, const char *token) {
 }
 
 void dz_client_retry_now(dz_client_t *c, uint32_t now_ms) {
+  dz_client_mcp_reset(c); /* new network, new server maybe: open a fresh session on the next command */
   c->halted = false;
   c->failures = 0;
   c->next_due_ms = now_ms;
@@ -125,6 +132,7 @@ uint32_t dz_client_ms_until_due(const dz_client_t *c, uint32_t now_ms) {
 }
 
 void dz_client_note_auth_failure(dz_client_t *c) {
+  dz_client_mcp_reset(c);
   c->halted = true;
   c->last_err = DZ_CERR_HTTP;
   set_state(c, DZ_CS_TOKEN_REJECTED);
@@ -148,6 +156,123 @@ dz_net_err_t dz_client_request(dz_client_t *c, const char *query, dz_http_result
   wipe(hdr, sizeof hdr);
   c->cfg.buf[c->cfg.buf_cap - 1] = 0;
   return e;
+}
+
+/* ---------------------------------------------------------------- MCP */
+
+uint32_t dz_client_mcp_next_id(dz_client_t *c) { return ++c->mcp_rpc_id; }
+
+static bool sid_ok(const char *s) {
+  if (!*s) return false;
+  for (; *s; s++)
+    if (!((*s >= '0' && *s <= '9') || (*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || *s == '-' || *s == '_' || *s == '.'))
+      return false;
+  return true;
+}
+
+/* One POST to <base>/mcp. With capture, the Mcp-Session-Id of the answer lands in c->mcp_sid. */
+static dz_net_err_t mcp_post(dz_client_t *c, const char *body, bool with_sid, bool capture, dz_http_result_t *r) {
+  char url[DZ_URL_MAX + 8];
+  char auth[sizeof "Authorization: Bearer " + DZ_TOKEN_MAX];
+  char sidh[sizeof "Mcp-Session-Id: " + sizeof c->mcp_sid];
+  const char *hdrs[4];
+  size_t nh = 0;
+  r->status = 0;
+  r->len = 0;
+  if (!c->cfg.transport->post) { c->cfg.buf[0] = 0; return DZ_NET_CONNECT; }
+  int n = snprintf(url, sizeof url, "%s/mcp", c->base);
+  if (n < 0 || (size_t)n >= sizeof url) { c->cfg.buf[0] = 0; return DZ_NET_CONNECT; }
+  if (c->token[0]) {
+    snprintf(auth, sizeof auth, "Authorization: Bearer %s", c->token);
+    hdrs[nh++] = auth;
+  }
+  hdrs[nh++] = "Accept: application/json, text/event-stream"; /* and NO MCP-Protocol-Version: an older value is HTTP 400 */
+  if (with_sid) {
+    snprintf(sidh, sizeof sidh, "Mcp-Session-Id: %s", c->mcp_sid);
+    hdrs[nh++] = sidh;
+  }
+  hdrs[nh] = NULL;
+  dz_post_t p = {body, strlen(body), "application/json", capture ? "Mcp-Session-Id" : NULL, capture ? c->mcp_sid : NULL,
+                 capture ? sizeof c->mcp_sid : 0};
+  c->requests++;
+  dz_net_err_t e = c->cfg.transport->post(c->cfg.transport, url, hdrs, &p, c->cfg.timeout_ms, c->cfg.buf, c->cfg.buf_cap, r);
+  wipe(auth, sizeof auth);
+  wipe(sidh, sizeof sidh);
+  c->cfg.buf[c->cfg.buf_cap - 1] = 0;
+  return e;
+}
+
+static void res_clear(dz_mcp_result_t *res) {
+  memset(res, 0, sizeof *res);
+  res->parse = DZ_ERR_SYNTAX;
+}
+
+static bool is_session_error(const dz_mcp_reply_t *r) {
+  return r->has_error && (r->code == -32001 || (r->code == -32600 && strstr(r->message, "ession")));
+}
+
+/* Runs one request and fills res from it. */
+static bool mcp_exchange(dz_client_t *c, const char *body, bool with_sid, bool capture, dz_mcp_stage_t stage, dz_mcp_result_t *res) {
+  dz_http_result_t hr;
+  res->stage = stage;
+  res->net = mcp_post(c, body, with_sid, capture, &hr);
+  res->http = hr.status;
+  res->parse = DZ_ERR_SYNTAX;
+  memset(&res->reply, 0, sizeof res->reply);
+  if (res->net != DZ_NET_OK || hr.status != 200) {
+    if (hr.status == 401) dz_client_mcp_reset(c);
+    return false;
+  }
+  res->parse = dz_mcp_parse_reply(c->cfg.buf, hr.len, &res->reply);
+  return res->parse == DZ_OK;
+}
+
+bool dz_client_mcp_open(dz_client_t *c, uint32_t now_ms, bool force, dz_mcp_result_t *res) {
+  dz_mcp_result_t local;
+  if (!res) res = &local;
+  res_clear(res);
+  if (!force && c->mcp_sid[0] && (int32_t)(now_ms - c->mcp_last_ms) <= 55 * 60 * 1000) return true;
+  dz_client_mcp_reset(c);
+  snprintf(c->mcp_body, sizeof c->mcp_body,
+           "{\"jsonrpc\":\"2.0\",\"id\":%u,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\","
+           "\"capabilities\":{},\"clientInfo\":{\"name\":\"dzPanel\",\"version\":\"1\"}}}",
+           (unsigned)dz_client_mcp_next_id(c));
+  bool ok = mcp_exchange(c, c->mcp_body, false, true, DZ_MCP_STAGE_INIT, res);
+  if (!ok || !res->reply.has_result || res->reply.has_error || !sid_ok(c->mcp_sid)) {
+    if (ok) res->parse = DZ_ERR_STATUS; /* a reply, but no session came with it */
+    dz_client_mcp_reset(c);
+    return false;
+  }
+  c->mcp_last_ms = now_ms;
+  /* The server ignores this message, so a failure here is not fatal; its HTML 202 body is never parsed. */
+  dz_mcp_result_t ignore;
+  res_clear(&ignore);
+  snprintf(c->mcp_body, sizeof c->mcp_body, "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+  (void)mcp_exchange(c, c->mcp_body, true, false, DZ_MCP_STAGE_INIT, &ignore);
+  return true;
+}
+
+bool dz_client_mcp_call(dz_client_t *c, uint32_t now_ms, const char *body, dz_mcp_result_t *res) {
+  dz_mcp_result_t local;
+  if (!res) res = &local;
+  res_clear(res);
+  if (!body || strlen(body) >= sizeof c->mcp_call) return false;
+  if (body != c->mcp_call) memmove(c->mcp_call, body, strlen(body) + 1); /* a caller that encoded in place passes c->mcp_call */
+  body = c->mcp_call;
+  if (!dz_client_mcp_open(c, now_ms, false, res)) return false;
+  for (int attempt = 0;; attempt++) {
+    bool ok = mcp_exchange(c, body, true, false, DZ_MCP_STAGE_CALL, res);
+    res->reinit = attempt > 0;
+    if (!ok) return false; /* transport error, timeout, non-200, non-JSON: never retried */
+    if (!is_session_error(&res->reply)) {
+      c->mcp_last_ms = now_ms;
+      return true;
+    }
+    if (attempt > 0) { res->session_lost = true; dz_client_mcp_reset(c); return true; }
+    /* 'Missing session' / 'Session not found' arrive before the tool runs: one re-initialize and one retry is safe */
+    if (!dz_client_mcp_open(c, now_ms, true, res)) { res->reinit = true; return false; }
+    res->reinit = true; /* res was cleared by the open; the loop sends the call again */
+  }
 }
 
 /* ---- top-level field scan (ActTime, app_version, Sunrise...) without a full parse ---- */

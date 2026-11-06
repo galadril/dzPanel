@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "dz_model.h"
+#include "dz_parse.h"
 #include "dz_transport.h"
 
 typedef enum {
@@ -83,6 +84,12 @@ typedef struct {
   dz_plan_t plans[DZ_MAX_PLANS];
   size_t n_plans;
   uint32_t requests;           /* cumulative HTTP requests made */
+  /* MCP control path (see dz_client_mcp_call). The session id is a credential like the token: never logged, wiped with it. */
+  char mcp_sid[65];            /* "" = no session */
+  uint32_t mcp_last_ms;        /* last successful use, to retire a session idle for more than 55 minutes */
+  uint32_t mcp_rpc_id;         /* JSON-RPC id counter */
+  char mcp_body[256];          /* initialize / notification body (kept off the task stack) */
+  char mcp_call[256];          /* tools/call body: encode into it directly, pass it to dz_client_mcp_call */
 } dz_client_t;
 
 bool dz_client_init(dz_client_t *c, const dz_client_cfg_t *cfg);
@@ -108,5 +115,30 @@ bool dz_units_parse(const char *json, size_t len, dz_units_t *out);
 
 /* One GET of /json.htm?type=command&<query>. Body is left in cfg.buf (len in r). Used by dz_cmd. */
 dz_net_err_t dz_client_request(dz_client_t *c, const char *query, dz_http_result_t *r);
+/* ---- MCP: POST <base>/mcp, JSON-RPC 2.0 (Domoticz MCP endpoint; the control path). Same single-task rule and the same buffer
+ * as dz_client_request; the reply is left in cfg.buf. The result is text only (dz_mcp_reply_t). ---- */
+typedef enum { DZ_MCP_STAGE_INIT, DZ_MCP_STAGE_CALL } dz_mcp_stage_t;
+typedef struct {
+  dz_net_err_t net;        /* transport result of the LAST request made (initialize or the call) */
+  int http;                /* its HTTP status, 0 if none */
+  dz_mcp_stage_t stage;    /* which request that was: a timeout in INIT is a plain transport failure, in CALL it is uncertain */
+  dz_err_t parse;          /* dz_mcp_parse_reply of its body (DZ_OK when a JSON-RPC reply came back) */
+  dz_mcp_reply_t reply;
+  bool reinit;             /* an expired / missing session was replaced and the call retried ONCE */
+  bool session_lost;       /* still 'Missing session' / 'Session not found' after that retry */
+} dz_mcp_result_t;
+
+uint32_t dz_client_mcp_next_id(dz_client_t *c);
+/* Makes sure a session exists (initialize + notifications/initialized when there is none, it is older than 55 minutes idle, or
+ * force). true when a session id is held afterwards; otherwise *res says why (res->stage == INIT). */
+bool dz_client_mcp_open(dz_client_t *c, uint32_t now_ms, bool force, dz_mcp_result_t *res);
+/* tools/call (or any request) with `body` (used from c->mcp_call, copied there unless it already is; at most 255 bytes). Opens a session lazily and recovers from
+ * 'Missing session' / 'Session not found' with ONE re-initialize and ONE retry. A transport error or timeout on the call itself
+ * is NEVER retried (it may have run). HTTP 401 wipes the session. Returns true when a well-formed JSON-RPC reply (result or
+ * error) arrived with HTTP 200 in res->reply; everything else is in res. */
+bool dz_client_mcp_call(dz_client_t *c, uint32_t now_ms, const char *body, dz_mcp_result_t *res);
+/* Forget the session (wiped). */
+void dz_client_mcp_reset(dz_client_t *c);
+
 /* Maps a transport result to a terminal client reaction for a request that was not a poll (401 stops polling). */
 void dz_client_note_auth_failure(dz_client_t *c);

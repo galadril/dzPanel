@@ -74,7 +74,7 @@ endif()
 # ===== END UI agent =====
 
 # ===== Client agent: Domoticz transport, client, model, command layer =====
-foreach(t dz_model dz_client dz_cmd dz_mock)
+foreach(t dz_model dz_client dz_cmd dz_mcp dz_mock)
   add_executable(test_${t} tests/test_${t}.c)
   target_include_directories(test_${t} PRIVATE tests)
   target_link_libraries(test_${t} int_domoticz ru_data ru_core)
@@ -83,6 +83,7 @@ endforeach()
 add_test(NAME dz_model COMMAND test_dz_model)
 add_test(NAME dz_client COMMAND test_dz_client)
 add_test(NAME dz_cmd COMMAND test_dz_cmd)
+add_test(NAME dz_mcp COMMAND test_dz_mcp)
 # integration: starts the Node mock on a private port, runs the C test against it, stops the mock
 add_test(NAME dz_mock COMMAND bash ${CMAKE_SOURCE_DIR}/tests/run_with_mock.sh $<TARGET_FILE:test_dz_mock>)
 add_test(NAME mock_js COMMAND node ${CMAKE_SOURCE_DIR}/sim/mock/test_mock.js)
