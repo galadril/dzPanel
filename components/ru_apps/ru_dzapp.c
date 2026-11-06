@@ -74,6 +74,7 @@ struct ru_dzapp {
   lv_obj_t *light;      /* the ru_light widget of the open detail page, NULL on every other screen: it is updated in place */
   uint32_t newest_id;   /* backend: the id of the newest light command; results of older ones are ignored */
   bool detail_thermo;
+  dz_cap_t detail_cap;  /* capability of the open detail page (swipe zones) */
   uint32_t copies_base;
 #if CONFIG_RU_HEAP_LOG
   ru_dzapp_stats_t stats;
@@ -1247,6 +1248,33 @@ static void split_names(ru_dzapp_t *a, const dz_device_t *d, int *n) {
 }
 
 
+
+/* ---- next / previous device on a detail page: the list the user came from (a->section), scenes skipped ---- */
+static bool detail_pos(ru_dzapp_t *a, int *pos, int *total, char *prev, char *next) {
+  build_ix(a, a->section);
+  int n = 0, at = -1;
+  dz_device_t d;
+  bool sc;
+  for (size_t k = 0; k < a->ix_n; k++) {
+    if (!ix_get(a, k, &d, NULL, NULL, &sc) || sc) continue;
+    if (!strcmp(d.idx, a->cur_idx)) at = n;
+    n++;
+  }
+  *pos = at;
+  *total = n;
+  if (prev) prev[0] = 0;
+  if (next) next[0] = 0;
+  if (at < 0) return false;
+  int i = 0;
+  for (size_t k = 0; k < a->ix_n; k++) {
+    if (!ix_get(a, k, &d, NULL, NULL, &sc) || sc) continue;
+    if (i == at - 1 && prev) snprintf(prev, 12, "%s", d.idx);
+    if (i == at + 1 && next) snprintf(next, 12, "%s", d.idx);
+    i++;
+  }
+  return true;
+}
+
 /* ---- light control page: the ru_light widget, updated in place (no rebuild on a poll or a command result) ---- */
 static uint32_t hue_rgb_fn(float p) {
   uint8_t r, g, b;
@@ -1321,6 +1349,10 @@ static uint64_t light_struct_sig(const ru_dzapp_t *a, const dz_device_t *d) {
   h = fnv(h, &d->is_protected, sizeof d->is_protected);
   h = fnv(h, &a->allow_control, sizeof a->allow_control);
   h = fnv(h, &a->square, sizeof a->square);
+  int pos, total;
+  detail_pos((ru_dzapp_t *)a, &pos, &total, NULL, NULL); /* the N/M indicator is part of the structure */
+  h = fnv(h, &pos, sizeof pos);
+  h = fnv(h, &total, sizeof total);
   return h ? h : 1;
 }
 
@@ -1377,6 +1409,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
     back_button(a, s, "BACK");
     return s;
   }
+  a->detail_cap = d.cap;
   a->detail_thermo = d.cap == DZ_CAP_THERMOSTAT; /* its screen may show the room's temperature sensor */
   lv_obj_t *rim = ru_status_rim_create(s);
   ru_status_rim_set_state(rim, rim_for(conn(a), st == RU_VAL_STALE));
@@ -1427,6 +1460,12 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       ru_light_on_change(w, cb_light, a);
       light_apply(a, &d, st);
       name_back(a, s, name, 40);
+      int pos, total;
+      if (detail_pos(a, &pos, &total, NULL, NULL) && total > 1) {
+        char nm[16];
+        snprintf(nm, sizeof nm, "%d/%d", pos + 1, total);
+        label_u(s, nm, ru_font_small(), ru_dim(t->text_dim, 170), 0, 33.4f);
+      }
       dial = true;
       break;
     }
@@ -1796,8 +1835,42 @@ static bool page_step(ru_dzapp_t *a, int dir) {
   return true;
 }
 
+/* A swipe on a detail page steps to the next (left) or previous (right) device of the list the user came from, and stops at the
+ * ends. It is never taken from a control: a drag that starts in a ring's touch band, on the thermostat dial or on the blinds
+ * buttons belongs to that control. The disc of a light, the dead zones and the chips are free. */
+static bool detail_swipe(ru_dzapp_t *a, ru_dir_t dir, int x0, int y0) {
+  if (a->cur_scene || (dir != RU_DIR_LEFT && dir != RU_DIR_RIGHT)) return false;
+  if (a->now < a->interact_until) return false; /* a control is held */
+  float c = (float)ru_theme_geom()->diameter / 2, dx = (float)x0 - c, dy = (float)y0 - c, u = ru_theme_geom()->u;
+  if (dx * dx + dy * dy >= 0.81f * c * c) return false; /* started in the rim: the shell owns it */
+  if (a->light) {
+    if (ru_light_ring_at(a->light, x0, y0)) return false;
+  } else {
+    float r = sqrtf(dx * dx + dy * dy);
+    switch (a->detail_cap) {
+      case DZ_CAP_THERMOSTAT: case DZ_CAP_SELECTOR: case DZ_CAP_MODE:
+        if (r >= 31.0f * u || dy >= 12.0f * u) return false; /* the dial ring, the + / - buttons */
+        break;
+      case DZ_CAP_BLINDS:
+        if (fabsf(dx) < 31.0f * u && dy > -37.0f * u && dy < 43.0f * u) return false; /* the buttons */
+        break;
+      default: break;
+    }
+  }
+  int pos, total;
+  char prev[12], next[12];
+  if (!detail_pos(a, &pos, &total, prev, next)) return false;
+  const char *to = dir == RU_DIR_LEFT ? next : prev;
+  if (!to[0]) return false; /* the ends: no wrap */
+  char idx[12];
+  snprintf(idx, sizeof idx, "%s", to);
+  ru_dzapp_open(a, idx, false);
+  return true;
+}
+
 bool ru_dzapp_swipe(ru_dzapp_t *a, ru_dir_t dir, int x0, int y0) {
-  if (a->view != RU_VIEW_HOME) return false; /* detail, hold and sub screens do not swipe */
+  if (a->view == RU_VIEW_DETAIL) return detail_swipe(a, dir, x0, y0);
+  if (a->view != RU_VIEW_HOME) return false; /* hold and sub screens do not swipe */
   if (a->now < a->interact_until) return false; /* a slider is held */
   float c = (float)ru_theme_geom()->diameter / 2, dx = (float)x0 - c, dy = (float)y0 - c;
   if (dx * dx + dy * dy >= 0.81f * c * c) return false; /* started in the rim: the shell owns it */

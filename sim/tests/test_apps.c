@@ -1361,14 +1361,19 @@ static void swipes(int size) {
   appfx_drag(lx, c, lx + 130, c, 8);
   CHECK(ru_dzapp_section(a) == RU_SEC_HOME);
 
-  /* swipes are for section screens only: not on a detail, not on the hold screen */
+  /* a swipe on a detail steps to the next or previous device of the list (it never leaves the detail or the section); the hold screen
+   * does not swipe */
   char idx[12];
   bool sc;
   CHECK(appfx_find(&f, DZ_CAP_ONOFF, -1, idx, &sc));
   ru_dzapp_show_section(a, RU_SEC_LIGHTS);
   ru_dzapp_open(a, idx, false);
   sim_render();
-  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, c, c) && ru_dzapp_view(a) == RU_VIEW_DETAIL);
+  {
+    bool moved = ru_dzapp_swipe(a, RU_DIR_LEFT, c, c);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && ru_dzapp_section(a) == RU_SEC_LIGHTS);
+    CHECK(moved == (strcmp(ru_dzapp_current_idx(a), idx) != 0));
+  }
   appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
   CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && ru_dzapp_section(a) == RU_SEC_LIGHTS);
   CHECK(appfx_find(&f, DZ_CAP_SCENE, -1, idx, &sc));

@@ -194,9 +194,69 @@ static void run(int size, bool square) {
   sim_shutdown(&S);
 }
 
+/* next / previous device: swipes on a light page, never from a ring */
+static void run_swipe(int size, bool square) {
+  sim_t S;
+  CHECK(sim_init_ex(&S, size, square));
+  ru_ring_img_free();
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_LIGHTS, 600000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
+  ru_dzapp_set_display_info(a, "sim", !square);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f.T);
+  int c = size / 2, x, y;
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  ru_dzapp_open(a, "4", false);
+  tick(&f, a, 10);
+  CHECK(ru_dzapp_light(a) != NULL);
+  /* a swipe from the disc steps to the next device (idx 5), another to idx 6, right goes back */
+  CHECK(ru_dzapp_swipe(a, RU_DIR_LEFT, c, c) && !strcmp(ru_dzapp_current_idx(a), "5"));
+  tick(&f, a, 10);
+  CHECK(ru_dzapp_swipe(a, RU_DIR_LEFT, c, c) && !strcmp(ru_dzapp_current_idx(a), "6"));
+  CHECK(ru_dzapp_swipe(a, RU_DIR_RIGHT, c, c) && !strcmp(ru_dzapp_current_idx(a), "5"));
+  /* from a ring's touch band: refused */
+  ring_xy(size, 43.0f - (square ? 0.0f : 2.2f), 200, &x, &y);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, x, y) && !strcmp(ru_dzapp_current_idx(a), "5"));
+  if (square) {
+    ring_xy(size, 28.5f, 200, &x, &y); /* the inner ring */
+    CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, x, y) && !strcmp(ru_dzapp_current_idx(a), "5"));
+  }
+  /* from the rim: the shell's; vertical swipes do nothing here */
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, 3, c) && !ru_dzapp_swipe(a, RU_DIR_UP, c, c));
+  /* the dead zone below the sweep (the gap) is free */
+  ring_xy(size, 43.0f, 90, &x, &y);
+  CHECK(ru_dzapp_swipe(a, RU_DIR_RIGHT, x, y) && !strcmp(ru_dzapp_current_idx(a), "4"));
+  /* a held control blocks it: the guard of a drag in progress */
+  tick(&f, a, 10);
+  ring_xy(size, 43.0f - (square ? 0.0f : 2.2f), 270, &x, &y);
+  touch(x, y, true);
+  touch(x + 3, y, true); /* a drag is under way (the ring's callback sets the guard) */
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, c, c));
+  touch(x + 3, y, false);
+  /* the ends: no wrap */
+  ru_dzapp_open(a, "1", false);
+  tick(&f, a, 3000);
+  f.T += 10000;
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_RIGHT, c, c) && !strcmp(ru_dzapp_current_idx(a), "1"));
+  ru_dzapp_open(a, "9", false);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, c, c) && !strcmp(ru_dzapp_current_idx(a), "9"));
+  /* the indicator names the position */
+  tick(&f, a, 10);
+  CHECK(ru_dzapp_light(a) != NULL);
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+  ru_ring_img_free();
+  sim_shutdown(&S);
+}
+
 int main(void) {
   run(466, false);
   run(480, false);
   run(480, true);
+  run_swipe(466, false);
+  run_swipe(480, false);
+  run_swipe(480, true);
   MT_DONE();
 }
