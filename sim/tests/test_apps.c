@@ -2,6 +2,7 @@
  * budget; behaviour of Scene (push) versus Group (toggle, Mixed), command feedback, honest unknown/stale/offline.
  * No network: a fixture-backed model and a command spy. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -795,6 +796,49 @@ static void back_double_fire(int size) {
   sim_shutdown(&s);
 }
 
+/* The Lights page is the Domoticz Switches tab: one device per switch class (fixtures/switch_types.json), all of them, in
+ * server order, 6 tiles per page, each with a non-empty tile; a tap opens a detail (read-only ones the read-only detail). */
+static void switch_lights(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  char path[512];
+  snprintf(path, sizeof path, "%s/switch_types.json", FIXTURE_DIR);
+  FILE *fp = fopen(path, "rb");
+  CHECK(fp != NULL);
+  if (!fp) { sim_shutdown(&s); return; }
+  static char buf[65536];
+  size_t n = fread(buf, 1, sizeof buf - 1, fp);
+  fclose(fp);
+  buf[n] = 0;
+  appfx_t f;
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_EMPTY, 600000, true);
+  CHECK(dz_model_apply(&f.model, buf, n, DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  int seen = 0;
+  for (int pg = 0; pg < 6; pg++) {
+    ru_dzapp_row_info_t ri;
+    for (size_t i = 0; ru_dzapp_row_info(a, i, &ri); i++) {
+      seen++;
+      CHECK(atoi(ri.idx) == seen);
+      CHECK(ri.sub[0] != 0 || ri.dot != RU_DOT_NONE);
+    }
+    screen_ok(&s, a, "switch lights page", size);
+    if (pg < 5) CHECK(ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2));
+  }
+  CHECK(seen == 32 && ru_dzapp_pages(a) == 6);
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  static const char *const open_idx[] = { "2", "4", "13", "17", "19", "25", "26" }; /* dimmer, blinds, push, lock, contact, siren, media */
+  for (size_t i = 0; i < sizeof open_idx / sizeof open_idx[0]; i++) {
+    ru_dzapp_open(a, open_idx[i], false);
+    sim_render();
+    CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
+    screen_ok(&s, a, open_idx[i], size);
+    CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_LIGHTS);
+  }
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
 /* A device name of 29 characters on the +40u dial pill: dots, nothing lit outside the circle. */
 static void long_name_pill(int size) {
   sim_t s;
@@ -1238,6 +1282,7 @@ int main(void) {
     nav_back_tests(size);
     back_double_fire(size);
     long_name_pill(size);
+    switch_lights(size);
   }
   MT_DONE();
 }

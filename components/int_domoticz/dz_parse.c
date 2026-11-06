@@ -291,8 +291,12 @@ static void b64_decode(const char *in, char *out, size_t cap) {
 
 static bool starts(const char *s, const char *p) { return !strncmp(s, p, strlen(p)); }
 
-static bool is_switch_family(const char *type) {
-  return !strcmp(type, "Light/Switch") || !strcmp(type, "Color Switch") || starts(type, "Lighting");
+/* Types whose SwitchTypeVal is a switch type: the Domoticz Switches tab (dz_tabs LIGHT: Lighting, Security, Blinds, Curtain,
+ * Chime, RFY, Fan, ...), except Heating (Evohome zones carry a setpoint, SwitchTypeVal means nothing there). */
+static bool is_switch_family(const dz_device_t *d) {
+  const char *type = d->type;
+  if (!strcmp(type, "Light/Switch") || !strcmp(type, "Color Switch") || starts(type, "Lighting")) return true;
+  return (d->tabs & DZ_TAB_LIGHT) && strcmp(type, "Heating") != 0;
 }
 
 
@@ -442,18 +446,18 @@ static void data_reading(dz_device_t *d) {
 static dz_cap_t classify(const dz_device_t *d) {
   if (!strcmp(d->type, "Scene")) return DZ_CAP_SCENE; /* push only */
   if (!strcmp(d->type, "Group")) return DZ_CAP_GROUP; /* On / Off / Mixed */
-  if (d->has_mode && d->n_modes > 0 && !is_switch_family(d->type)) return DZ_CAP_MODE;
+  if (d->has_mode && d->n_modes > 0 && !is_switch_family(d)) return DZ_CAP_MODE;
   /* Setpoint, Thermostat 6, Radiator 1 and Evohome ("Heating") all carry SetPoint. Whether it may be CHANGED is
    * decided separately (can_set), so an unusual one still shows its value. */
-  if (d->has_setpoint && !is_switch_family(d->type)) return DZ_CAP_THERMOSTAT;
+  if (d->has_setpoint && !is_switch_family(d)) return DZ_CAP_THERMOSTAT;
   /* SwitchTypeVal is also set on sensors and meters (P1, RFXMeter, General) where it means something
    * else. Only trust it for switch-family types, or a sensor becomes a "control". */
-  int stv = is_switch_family(d->type) ? d->switch_type : -1;
+  int stv = is_switch_family(d) ? d->switch_type : -1;
   switch (stv) {
     case 0: return DZ_CAP_ONOFF;
     case 7: return DZ_CAP_DIMMER;
     case 1: case 9: case 10: return DZ_CAP_PUSH;
-    case 3: case 13: case 14: case 15: case 21: case 22: return DZ_CAP_BLINDS;
+    case 3: case 6: case 13: case 14: case 15: case 16: case 21: case 22: return DZ_CAP_BLINDS; /* 6, 16: inverted */
     case 18: return DZ_CAP_SELECTOR;
     case 19: case 20: return DZ_CAP_LOCK;
     case 2: case 5: case 8: case 11: case 12: return DZ_CAP_STATUS;
@@ -625,7 +629,7 @@ static void finish(dz_device_t *d) {
   if (d->n_rd == 0 && (d->cap == DZ_CAP_READONLY || d->cap == DZ_CAP_WEATHER || d->cap == DZ_CAP_TEMP || d->cap == DZ_CAP_ENERGY))
     data_reading(d);
   if (d->cap == DZ_CAP_MODE && d->data[0] && !dz_dev_reading(d, DZ_RK_TEXT) && d->n_rd < DZ_MAX_READINGS) add_rd(d, DZ_RK_TEXT, 0.0f, "");
-  if (d->cap == DZ_CAP_READONLY && !is_switch_family(d->type) && d->n_rd > 0) d->cap = DZ_CAP_SENSOR;
+  if (d->cap == DZ_CAP_READONLY && !is_switch_family(d) && d->n_rd > 0) d->cap = DZ_CAP_SENSOR;
   d->controllable = !d->is_protected && d->cap != DZ_CAP_READONLY && d->cap != DZ_CAP_STATUS && d->cap != DZ_CAP_TEMP &&
                     d->cap != DZ_CAP_WEATHER && d->cap != DZ_CAP_ENERGY && d->cap != DZ_CAP_SENSOR;
   if (d->cap == DZ_CAP_THERMOSTAT) d->controllable = !d->is_protected && d->can_set;

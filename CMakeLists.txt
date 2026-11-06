@@ -129,6 +129,7 @@ foreach(t apps_fb apps_view apps_climate)
   add_test(NAME ${t} COMMAND test_${t})
 endforeach()
 target_compile_definitions(test_apps_climate PRIVATE FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures")
+target_compile_definitions(test_apps_view PRIVATE FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures")
 # ===== END Apps agent =====
 
 # ===== BEGIN portal agent (ru_portal: HTTP parser, forms, DNS, QR, portal state machine) =====

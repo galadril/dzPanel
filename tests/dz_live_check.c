@@ -1,10 +1,13 @@
 /* Dev tool, not a unit test. Reads a live Domoticz through the curl transport and compares it with
  * the parser; optionally proves one control path on group idx 6 only (On, then Off, verified).
  *
- *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check https://host [--control6 | --tabs]
+ *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check https://host [--control6 | --tabs | --lights]
  *
  * --tabs: compares the server's filter=light|temp|weather|utility membership with dz_tabs_of() and prints a diff
  * report (by Type / SubType and direction only; no idx, name or URL credentials).
+ *
+ * --lights: aggregate counts of the filter=light set by Type / SubType / SwitchType / dimmer / protected / favourite,
+ * with the firmware capability and whether dz_tabs_of puts it on the Lights page (no idx, no names).
  *
  * The token comes from the environment and is never printed. Only counts and capability names are
  * printed: no device names, idx values, coordinates or raw bodies. At least 5 s between requests. */
@@ -123,10 +126,52 @@ static int tabs_report(void) {
   return diffs ? 1 : 0;
 }
 
+/* ---- --lights: what the Switches tab holds, by class ---- */
+typedef struct { char type[24], sub[24]; int stv, dim, prot, fav, cap, onpage, n; } lrow_t;
+typedef struct { lrow_t r[96]; int n, over; } lagg_t;
+static bool light_cb(const dz_device_t *d, void *u) {
+  lagg_t *g = u;
+  lrow_t k;
+  memset(&k, 0, sizeof k);
+  snprintf(k.type, sizeof k.type, "%s", d->type);
+  snprintf(k.sub, sizeof k.sub, "%s", d->subtype);
+  k.stv = d->switch_type; k.dim = d->has_level; k.prot = d->is_protected; k.fav = d->favorite; k.cap = (int)d->cap;
+  k.onpage = (d->tabs & DZ_TAB_LIGHT) != 0;
+  for (int i = 0; i < g->n; i++) {
+    lrow_t *o = &g->r[i];
+    if (!strcmp(o->type, k.type) && !strcmp(o->sub, k.sub) && o->stv == k.stv && o->dim == k.dim && o->prot == k.prot &&
+        o->fav == k.fav && o->cap == k.cap && o->onpage == k.onpage) { o->n++; return true; }
+  }
+  if (g->n >= 96) { g->over++; return true; }
+  k.n = 1;
+  g->r[g->n++] = k;
+  return true;
+}
+
+static int lights_report(void) {
+  static lagg_t g;
+  dz_http_result_t r;
+  dz_result_t res;
+  puts("lights: getdevices filter=light");
+  if (!req("param=getdevices&filter=light&used=true&order=Name", &r)) return 1;
+  if (dz_parse_response(buf, r.len, light_cb, &g, &res) != DZ_OK) return 1;
+  int tot = 0, on = 0;
+  for (int i = 0; i < g.n; i++) {
+    lrow_t *o = &g.r[i];
+    tot += o->n;
+    on += o->onpage ? o->n : 0;
+    printf("  n=%-3d type=%-14s sub=%-18s switchtype=%-3d level=%d protected=%d fav=%d cap=%-9s lights-page=%s\n", o->n, o->type, o->sub, o->stv,
+           o->dim, o->prot, o->fav, dz_cap_name((dz_cap_t)o->cap), o->onpage ? "yes" : "NO");
+  }
+  printf("lights: total=%d (parser devices=%d rejected=%d) on-lights-page=%d classes-over-limit=%d\n", tot, res.devices, res.rejected, on, g.over);
+  return tot == on ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
   const char *url = argc > 1 ? argv[1] : "https://domoticz.hnogames.nl";
   bool control = argc > 2 && !strcmp(argv[2], "--control6");
   bool tabs = argc > 2 && !strcmp(argv[2], "--tabs");
+  bool lights = argc > 2 && !strcmp(argv[2], "--lights");
   char token[DZ_TOKEN_MAX];
   if (!dz_client_token_from_env(token, sizeof token)) { puts("DOMOTICZ_ACCESSTOKEN not set"); return 2; }
   dz_transport_t *tr = dz_transport_curl_create();
@@ -151,6 +196,14 @@ int main(int argc, char **argv) {
   dz_version_parse(vt, &v);
   printf("  parse=%d version=%d.%d build=%d valid=%d\n", pe, v.year, v.minor, v.build, v.valid);
   if (pe != DZ_OK || !v.valid) rc = 1;
+
+  if (lights) {
+    gap();
+    rc = lights_report() || rc;
+    dz_model_deinit(&M);
+    dz_transport_destroy(tr);
+    return rc;
+  }
 
   if (tabs) {
     gap();

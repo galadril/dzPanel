@@ -1279,10 +1279,11 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       break;
     }
     case DZ_CAP_PUSH: {
-      label_u(s, name, ru_font_title(), t->text_dim, 0, -40);
       lv_obj_t *b = ru_scene_button_create(s, ru_u(34), ru_u(26), "PUSH", "BUTTON", t->accent);
       lv_obj_align(b, LV_ALIGN_CENTER, 0, 0);
       if (ctl) ru_scene_button_on_tap(b, cb_push, a);
+      name_back(a, s, name, 40);
+      dial = true;
       break;
     }
     case DZ_CAP_TEMP:

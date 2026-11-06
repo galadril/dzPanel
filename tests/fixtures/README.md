@@ -10,3 +10,5 @@
   The imperial files carry TempSign `F` / WindSign `mph` and converted values, as the real server converts before sending.
   The `Latitude`, `Longitude` and `WebUserName` keys in the getconfig files are fake canaries: no code may keep them.
   Regenerate with `node tests/tools/regen_climate_fixtures.js` (the mock is the single source).
+- `switch_types.json`: **HAND-WRITTEN.** One device per Domoticz Switches-tab class (every SwitchTypeVal 0-20 on Light/Switch, plus Lighting 1/2, Color Switch,
+  Blinds, RFY, Curtain, Chime, Security, Fan, Thermostat 3, Remote & IR, Heating Relay). Used by test_apps_view and the simulator Lights test.

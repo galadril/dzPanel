@@ -1,7 +1,10 @@
 /* View model: Scene vs Group semantics, energy units, unknown shows "--". Uses the parser on real-shaped JSON. */
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "dz_parse.h"
+#include "dz_tabs.h"
 #include "mini_test.h"
 #include "ru_dzview.h"
 
@@ -16,6 +19,44 @@ static dz_device_t one(const char *json) {
   CHECK(dz_parse_response(buf, strlen(buf), grab, &box, NULL) == DZ_OK);
   CHECK(box.n == 1);
   return box.d;
+}
+
+/* Every class of the Domoticz Switches tab (tests/fixtures/switch_types.json) is on the Lights tab, has a capability
+ * and a non-empty tile text; the read-only ones are never controllable. */
+typedef struct { dz_device_t d[40]; int n; } bag_t;
+static bool collect(const dz_device_t *x, void *u) { bag_t *b = u; if (b->n < 40) b->d[b->n++] = *x; return true; }
+
+static void switch_classes(void) {
+  static bag_t b;
+  FILE *f = fopen(FIXTURE_DIR "/switch_types.json", "rb");
+  CHECK(f != NULL);
+  if (!f) return;
+  static char js[65536];
+  size_t len = fread(js, 1, sizeof js - 1, f);
+  fclose(f);
+  js[len] = 0;
+  dz_result_t r;
+  CHECK(dz_parse_response(js, len, collect, &b, &r) == DZ_OK && r.rejected == 0 && b.n == 32);
+  /* by idx: the expected capability */
+  static const dz_cap_t want[33] = {
+    0, DZ_CAP_ONOFF, DZ_CAP_DIMMER, DZ_CAP_DIMMER, DZ_CAP_BLINDS, DZ_CAP_BLINDS, DZ_CAP_BLINDS, DZ_CAP_BLINDS, DZ_CAP_BLINDS,
+    DZ_CAP_BLINDS, DZ_CAP_BLINDS, DZ_CAP_BLINDS, DZ_CAP_SELECTOR, DZ_CAP_PUSH, DZ_CAP_PUSH, DZ_CAP_PUSH, DZ_CAP_PUSH,
+    DZ_CAP_LOCK, DZ_CAP_LOCK, DZ_CAP_STATUS, DZ_CAP_STATUS, DZ_CAP_STATUS, DZ_CAP_STATUS, DZ_CAP_STATUS, DZ_CAP_STATUS,
+    DZ_CAP_READONLY, DZ_CAP_READONLY, DZ_CAP_ONOFF, DZ_CAP_ONOFF, DZ_CAP_ONOFF, DZ_CAP_ONOFF, DZ_CAP_SENSOR /* Heating Relay: shown, not switched */, DZ_CAP_ONOFF,
+  };
+  for (int i = 0; i < b.n; i++) {
+    const dz_device_t *d = &b.d[i];
+    int ix = atoi(d->idx);
+    CHECK(ix >= 1 && ix <= 32);
+    CHECK((d->tabs & DZ_TAB_LIGHT) != 0);
+    if (ix >= 1 && ix <= 32 && d->cap != want[ix]) { printf("idx %d: cap %s want %s\n", ix, dz_cap_name(d->cap), dz_cap_name(want[ix])); CHECK(d->cap == want[ix]); }
+    char t[40];
+    bool known;
+    ru_dzv_value_text(d, t, sizeof t, &known);
+    CHECK(t[0] != 0);
+    if (d->cap == DZ_CAP_STATUS || d->cap == DZ_CAP_READONLY || d->cap == DZ_CAP_SENSOR) CHECK(!d->controllable);
+    if (d->cap == DZ_CAP_BLINDS || d->cap == DZ_CAP_LOCK || d->cap == DZ_CAP_SELECTOR) CHECK(d->controllable || d->is_protected);
+  }
 }
 
 int main(void) {
@@ -108,5 +149,6 @@ int main(void) {
   char c[8];
   ru_dzv_clamp(c, sizeof c, "caf\xC3\xA9 au lait", 4); /* cut inside the UTF-8 pair */
   CHECK(!strcmp(c, "caf..") );
+  switch_classes();
   MT_DONE();
 }
