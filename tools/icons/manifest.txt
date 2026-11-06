@@ -1,0 +1,26 @@
+# codepoint (private use area, never U+F000+ which LV_SYMBOL uses)  Lucide icon name  (file tools/icons/lucide/<name>.svg)
+E000 thermometer
+E001 droplet
+E002 gauge
+E003 sun
+E004 sun-dim
+E005 moon
+E006 cloud-sun
+E007 cloud
+E008 cloud-rain
+E009 cloud-drizzle
+E00A cloud-snow
+E00B snowflake
+E00C wind
+E00D umbrella
+E00E cloud-lightning
+E00F cloud-fog
+E010 arrow-up
+E011 arrow-up-right
+E012 arrow-right
+E013 arrow-down-right
+E014 arrow-down
+E015 arrow-down-left
+E016 arrow-left
+E017 arrow-up-left
+E018 thermometer-sun

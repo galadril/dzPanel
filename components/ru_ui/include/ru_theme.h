@@ -33,6 +33,8 @@ const lv_font_t *ru_font_hero(void);   /* big numerals */
 const lv_font_t *ru_font_title(void);
 const lv_font_t *ru_font_body(void);
 const lv_font_t *ru_font_small(void);
+/* Lucide icon font (see ru_icons.h for the glyph macros), 24 px, 4 bpp. A label with this font and one RU_ICON_* string. */
+const lv_font_t *ru_font_icon_s(void);
 
 /* A black, non-scrolling, circle-sized screen. */
 lv_obj_t *ru_screen_new(void);

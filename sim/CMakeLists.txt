@@ -18,6 +18,7 @@ target_link_libraries(lvgl_core PUBLIC m)
 # Halo theme + widgets (plain values only, no Domoticz dependency)
 add_library(ru_ui_lvgl
   ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_theme.c
+  ${CMAKE_SOURCE_DIR}/components/ru_ui/fonts/ru_icons_24.c
   ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_widgets.c
   ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_splash.c)
 target_include_directories(ru_ui_lvgl PUBLIC ${CMAKE_SOURCE_DIR}/components/ru_ui/include)

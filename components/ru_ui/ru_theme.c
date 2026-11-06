@@ -1,4 +1,5 @@
 #include "ru_theme.h"
+#include "ru_icons.h"
 #include <math.h>
 
 static ru_theme_t g_t;
@@ -46,6 +47,7 @@ const lv_font_t *ru_font_hero(void) { return &lv_font_montserrat_48; }
 const lv_font_t *ru_font_title(void) { return g_geom.diameter >= 400 ? &lv_font_montserrat_24 : &lv_font_montserrat_20; }
 const lv_font_t *ru_font_body(void) { return &lv_font_montserrat_16; }
 const lv_font_t *ru_font_small(void) { return &lv_font_montserrat_12; }
+const lv_font_t *ru_font_icon_s(void) { return &ru_icons_24; }
 
 lv_obj_t *ru_cont_new(lv_obj_t *parent, int x, int y, int w, int h) {
   lv_obj_t *o = lv_obj_create(parent);
