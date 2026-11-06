@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "dz_client.h"
 #include "dz_cmd.h"
@@ -394,12 +396,53 @@ static void test_tab_filters(void) {
   ctl("reset");
 }
 
+/* L3: the curl dev transport passes -q FIRST (no ~/.curlrc) and keeps the token off argv. A stub `curl` on PATH records what it got. */
+static void test_curl_stub(void) {
+  char dir[] = "/tmp/dzcurlXXXXXX";
+  if (!mkdtemp(dir)) { CHECK(0); return; }
+  char path[200], cmd[400];
+  snprintf(path, sizeof path, "%s/curl", dir);
+  FILE *f = fopen(path, "w");
+  CHECK(f != NULL);
+  if (!f) return;
+  fprintf(f, "#!/bin/sh\nprintf '%%s\\n' \"$*\" > %s/argv\ncat > %s/cfg\nprintf '{\"a\":1}\\n200'\n", dir, dir);
+  fclose(f);
+  chmod(path, 0755);
+  char *oldp = getenv("PATH") ? strdup(getenv("PATH")) : NULL;
+  snprintf(cmd, sizeof cmd, "%s:%s", dir, oldp ? oldp : "/usr/bin:/bin");
+  setenv("PATH", cmd, 1);
+  dz_transport_t *ct = dz_transport_curl_create();
+  const char *h[2] = {"Authorization: Bearer STUB-TOKEN-XYZ", NULL};
+  char buf[256];
+  dz_http_result_t r;
+  dz_net_err_t e = ct->get(ct, "https://dz.example/json.htm?type=command&param=getversion", h, 5000, buf, sizeof buf, &r);
+  CHECK(e == DZ_NET_OK && r.status == 200 && !strcmp(buf, "{\"a\":1}"));
+  char line[400] = "", cfg[2000] = "";
+  snprintf(cmd, sizeof cmd, "%s/argv", dir);
+  f = fopen(cmd, "r"); if (f) { if (!fgets(line, sizeof line, f)) line[0] = 0; fclose(f); }
+  snprintf(cmd, sizeof cmd, "%s/cfg", dir);
+  f = fopen(cmd, "r"); if (f) { size_t n = fread(cfg, 1, sizeof cfg - 1, f); cfg[n] = 0; fclose(f); }
+  CHECK(!strncmp(line, "-q ", 3) && !strstr(line, "STUB-TOKEN") && !strstr(line, "dz.example"));
+  CHECK(strstr(cfg, "STUB-TOKEN-XYZ") && strstr(cfg, "url = "));
+  /* a header that overflows the 8 KB config fails cleanly (the config buffer is wiped on that path too) */
+  static char longh[9000];
+  strcpy(longh, "X: ");
+  memset(longh + 3, 'a', sizeof longh - 4); longh[sizeof longh - 1] = 0;
+  const char *hl[2] = {longh, NULL};
+  CHECK(ct->get(ct, "https://dz.example/x", hl, 5000, buf, sizeof buf, &r) == DZ_NET_CONNECT);
+  dz_transport_destroy(ct);
+  if (oldp) { setenv("PATH", oldp, 1); free(oldp); }
+  snprintf(cmd, sizeof cmd, "rm -rf %s", dir);
+  CHECK(system(cmd) == 0);
+}
+
 int main(void) {
   const char *p = getenv("MOCK_PORT");
   if (!p) { printf("run through tests/run_with_mock.sh\n"); return 2; }
   snprintf(base, sizeof base, "http://127.0.0.1:%s", p);
   TR = dz_transport_socket_create();
   CHECK(TR != NULL);
+  test_curl_stub();
   test_transport();
   test_post();
   test_client();

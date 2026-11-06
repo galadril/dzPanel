@@ -325,8 +325,12 @@ static int cfg_quote(char *dst, size_t cap, size_t *n, const char *s) {
   return 0;
 }
 
-static dz_net_err_t curl_do(const char *url, const char *const *headers, const dz_post_t *post, uint32_t timeout_ms,
-                            char *buf, size_t cap, dz_http_result_t *out) {
+/* The curl config (URL, body, Authorization header) holds the token: curl_do owns the buffer and wipes it with a volatile loop on
+ * EVERY exit path of curl_do_inner (cfg_quote overflow, pipe() / fork() failure, normal return). Residual risk accepted: the ESP
+ * transport (dz_transport_esp.c) hands the header to esp_http_client, which keeps its own heap copy until the client is cleaned
+ * up; that copy is freed, not wiped. Dev-only host code below. */
+static dz_net_err_t curl_do_inner(char *cfg, size_t cfg_cap, const char *url, const char *const *headers, const dz_post_t *post,
+                                  uint32_t timeout_ms, char *buf, size_t cap, dz_http_result_t *out) {
   dz_http_result_t dummy;
   if (!out) out = &dummy;
   out->status = 0;
@@ -353,25 +357,24 @@ static dz_net_err_t curl_do(const char *url, const char *const *headers, const d
   if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) return DZ_NET_CONNECT;
 
   /* config on stdin: nothing secret on argv */
-  char cfg[8192];
   size_t n = 0;
-  n += (size_t)snprintf(cfg, sizeof cfg, "url = ");
-  if (cfg_quote(cfg, sizeof cfg, &n, url)) return DZ_NET_CONNECT;
+  n += (size_t)snprintf(cfg, cfg_cap, "url = ");
+  if (cfg_quote(cfg, cfg_cap, &n, url)) return DZ_NET_CONNECT;
   cfg[n++] = '\n';
   if (post) {
     char body[3001];
     memcpy(body, post->body, post->len);
     body[post->len] = 0;
     if (strpbrk(body, "\r\n")) return DZ_NET_CONNECT;
-    n += (size_t)snprintf(cfg + n, sizeof cfg - n, "request = \"POST\"\nheader = \"Content-Type: %s\"\ndata-binary = ",
+    n += (size_t)snprintf(cfg + n, cfg_cap - n, "request = \"POST\"\nheader = \"Content-Type: %s\"\ndata-binary = ",
                           post->content_type ? post->content_type : "application/json");
-    int qr = cfg_quote(cfg, sizeof cfg, &n, body);
+    int qr = cfg_quote(cfg, cfg_cap, &n, body);
     if (qr) return DZ_NET_CONNECT;
     cfg[n++] = '\n';
   }
   for (const char *const *h = headers; h && *h; h++) {
-    n += (size_t)snprintf(cfg + n, sizeof cfg - n, "header = ");
-    if (cfg_quote(cfg, sizeof cfg, &n, *h)) return DZ_NET_CONNECT;
+    n += (size_t)snprintf(cfg + n, cfg_cap - n, "header = ");
+    if (cfg_quote(cfg, cfg_cap, &n, *h)) return DZ_NET_CONNECT;
     cfg[n++] = '\n';
   }
   cfg[n] = 0;
@@ -390,7 +393,7 @@ static dz_net_err_t curl_do(const char *url, const char *const *headers, const d
     int dn = open("/dev/null", O_WRONLY);
     if (dn >= 0) dup2(dn, 2);
     close(in[0]); close(in[1]); close(outp[0]); close(outp[1]);
-    execlp("curl", "curl", "-sS", "--max-time", tmo, "-K", "-", "-o", "-", "-w", wfmt, (char *)NULL);
+    execlp("curl", "curl", "-q", "-sS", /* -q FIRST: never read ~/.curlrc */ "--max-time", tmo, "-K", "-", "-o", "-", "-w", wfmt, (char *)NULL);
     _exit(127);
   }
   close(in[0]);
@@ -403,7 +406,7 @@ static dz_net_err_t curl_do(const char *url, const char *const *headers, const d
     off += (size_t)w;
   }
   close(in[1]);
-  for (volatile char *z = cfg; z < cfg + sizeof cfg; z++) *z = 0; /* held the token: non-elidable wipe */
+  for (volatile char *z = cfg; z < cfg + cfg_cap; z++) *z = 0; /* held the token: non-elidable wipe (curl_do wipes again on every path) */
 
   /* body followed by "\n<code>"; keep the last 8 bytes aside */
   sink_t sink = {buf, cap, 0, 0};
@@ -460,6 +463,14 @@ static dz_net_err_t curl_do(const char *url, const char *const *headers, const d
   out->len = sink.len;
   if (out->status < 100 || out->status > 599) { out->status = 0; out->len = 0; buf[0] = 0; return DZ_NET_CONNECT; }
   return sink.too_large ? DZ_NET_TOO_LARGE : DZ_NET_OK;
+}
+
+static dz_net_err_t curl_do(const char *url, const char *const *headers, const dz_post_t *post, uint32_t timeout_ms, char *buf,
+                            size_t cap, dz_http_result_t *out) {
+  char cfg[8192];
+  dz_net_err_t e = curl_do_inner(cfg, sizeof cfg, url, headers, post, timeout_ms, buf, cap, out);
+  for (volatile char *z = cfg; z < cfg + sizeof cfg; z++) *z = 0;
+  return e;
 }
 
 static dz_net_err_t curl_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms,

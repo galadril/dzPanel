@@ -185,6 +185,19 @@ static void test_failures(void) {
     CHECK(r.stage == DZ_MCP_STAGE_CALL && F.posts - p1 == 1 && tools_run == run1 + 1 && !r.reinit); /* one request: no retry */
     fake_force_id = 0;
   }
+  /* L3: the session id is validated: [A-Za-z0-9._-], at most 64 characters; longer is refused, never truncated */
+  char sid64[65], sid65[66], sid200[201];
+  memset(sid64, 'a', 64); sid64[64] = 0;
+  memset(sid65, 'a', 65); sid65[65] = 0;
+  memset(sid200, 'b', 200); sid200[200] = 0;
+  setup(); F.sid_script = sid64;
+  CHECK(dz_client_mcp_open(&C, 1000, false, &r) && !strcmp(C.mcp_sid, sid64));
+  const char *badsid[] = {sid65, sid200, "abc\r\nX-Evil: 1", "abc def", "abc;def", "a/b", "\xc3\xa9"};
+  for (size_t i = 0; i < sizeof badsid / sizeof badsid[0]; i++) {
+    setup(); F.sid_script = badsid[i];
+    CHECK(!dz_client_mcp_call(&C, 1000, BODY, &r) && r.stage == DZ_MCP_STAGE_INIT && r.net == DZ_NET_OK && r.http == 200);
+    CHECK(r.parse == DZ_ERR_STATUS && C.mcp_sid[0] == 0 && tools_run == 0 && F.posts == 1 && notify_seen == 0);
+  }
   /* an id mismatch also fails the initialize reply */
   setup();
   fake_force_id = 777;

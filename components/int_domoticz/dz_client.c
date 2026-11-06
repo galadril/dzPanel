@@ -200,10 +200,19 @@ static dz_net_err_t mcp_post(dz_client_t *c, const char *body, bool with_sid, bo
     hdrs[nh++] = sidh;
   }
   hdrs[nh] = NULL;
-  dz_post_t p = {body, strlen(body), "application/json", capture ? "Mcp-Session-Id" : NULL, capture ? c->mcp_sid : NULL,
-                 capture ? sizeof c->mcp_sid : 0};
+  /* The header is captured into a buffer larger than a stored id, so an overlong value is DETECTED (and refused) instead of being
+   * silently truncated into a different, valid-looking id. */
+  char sidcap[DZ_SID_MAX + 16];
+  sidcap[0] = 0;
+  dz_post_t p = {body, strlen(body), "application/json", capture ? "Mcp-Session-Id" : NULL, capture ? sidcap : NULL,
+                 capture ? sizeof sidcap : 0};
   c->requests++;
   dz_net_err_t e = c->cfg.transport->post(c->cfg.transport, url, hdrs, &p, c->cfg.timeout_ms, c->cfg.buf, c->cfg.buf_cap, r);
+  if (capture) {
+    if (strlen(sidcap) <= DZ_SID_MAX) memcpy(c->mcp_sid, sidcap, strlen(sidcap) + 1);
+    else c->mcp_sid[0] = 0; /* overlong: no session, initialize fails (BAD_RESPONSE) */
+    wipe(sidcap, sizeof sidcap);
+  }
   wipe(auth, sizeof auth);
   wipe(sidh, sizeof sidh);
   c->cfg.buf[c->cfg.buf_cap - 1] = 0;

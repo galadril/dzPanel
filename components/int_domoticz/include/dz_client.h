@@ -64,6 +64,7 @@ typedef struct {
 
 #define DZ_TOKEN_MAX 768
 #define DZ_URL_MAX 192
+#define DZ_SID_MAX 64
 
 typedef struct {
   dz_client_cfg_t cfg;
@@ -86,7 +87,7 @@ typedef struct {
   size_t n_plans;
   uint32_t requests;           /* cumulative HTTP requests made */
   /* MCP control path (see dz_client_mcp_call). The session id is a credential like the token: never logged, wiped with it. */
-  char mcp_sid[65];            /* "" = no session */
+  char mcp_sid[DZ_SID_MAX + 1]; /* "" = no session; an id longer than DZ_SID_MAX is refused, never truncated */
   uint32_t mcp_last_ms;        /* last successful use, to retire a session idle for more than 55 minutes */
   uint32_t mcp_rpc_id;         /* JSON-RPC id counter */
   char mcp_body[256];          /* initialize / notification body (kept off the task stack) */
