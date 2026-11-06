@@ -299,6 +299,8 @@ It writes typed models into a shared store. Apps and the shell read models and n
 
 Commands carry a risk level: `SAFE`, `CONFIRM` or `LOCKED`. Lights are safe by default. Locks, doors, heating and scenes need **press-and-hold** (about 1.2 s, with a filling ring). Alarms need a PIN. A command is refused when the model is not fresh, when the screen woke less than 500 ms ago, or when the display is dimmed.
 
+Commands go through the Domoticz MCP endpoint, which **skips Domoticz's own Protected (passcode) check and per-user device check**. dzPanel's refusal is therefore the only guard: a protected device is never controlled, and a pre-flight re-read right before each command refuses one that became protected since the last poll. Controls with no safe MCP path (thermostat mode, setpoints on a Fahrenheit server) are shown read-only.
+
 ---
 
 ## 8. Halo, the visual language

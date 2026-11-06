@@ -48,7 +48,7 @@ Full instructions, including the ESP-IDF setup: [`docs/development-setup.md`](do
 
 ## Using your own Domoticz
 
-Create an **access token** in Domoticz (Setup, More Options, Access Tokens). Choose **Viewer** for a read-only display or **User** if it may switch things. Avoid Admin. See `docs/provisioning.md`.
+Create an **access token** in Domoticz (Setup, More Options, Access Tokens). Choose **Viewer** for a read-only display or **User** if it may switch things. Avoid Admin. See `docs/provisioning.md`. Reads use `json.htm`; **commands use the Domoticz MCP endpoint** (`/mcp`, Domoticz 2026.1 or newer, not started with `-nomcp`), because `json.htm` refuses User-rights access tokens for switching. The connection test reports `control MCP ok` or `control MCP unavailable`.
 
 ## Not decided
 

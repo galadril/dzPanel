@@ -1,7 +1,8 @@
 /* Domoticz client: configuration, request helper and a polling state machine.
  *
  * Threading: one task owns the client. dz_client_step and dz_cmd_pump (dz_cmd.h) both use the
- * client's single buffer and must be called from that task. Readers use dz_model.h from any task.
+ * client's single buffer and must be called from that task, one request at a time: that is also why the MCP session
+ * (dz_client_mcp_call, mcp_sid) needs no lock. Readers use dz_model.h from any task.
  * The token is held in the client, sent only as an Authorization header, and never logged. */
 #pragma once
 #include <stdbool.h>

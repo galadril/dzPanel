@@ -56,30 +56,59 @@ The Domoticz web UI lists a device on a tab chosen from its JSON `Type` and `Sub
 
 The ENERGY page of dzPanel is not a Domoticz tab: it is the energy devices (those with a usage or day counter) in a gauge view; they are also on UTILITY. Order inside every page is the server's own order (`dz_model_order`, the position in the last complete full response).
 
-### Control (needs User rights)
+### Control: the MCP endpoint (needs User rights)
 
-| Action | Call |
+**dzPanel sends every command through the Domoticz MCP endpoint (`POST /mcp`). There is no legacy fallback for commands.** Reads (polling `getdevices`, `getscenes`, `getconfig`, `getversion`, the read-after-write verify) stay on `json.htm`, because MCP results are text only.
+
+**Why not `json.htm`:** with a User-rights *access token* (`at:N`), `GET /json.htm?type=command&param=switchlight...` returns **HTTP 403**. `CWebServer::IsIdxForUser` looks the user up in `m_users`, which never contains access-token users (Admin tokens skip the check; `switchscene` has no such check). MCP works with the same token: verified live on 2026.4 (HTTP 200, `isError:false`, state changed, confirmed by re-reading) for `set_switch_state` On and Off and `set_dimmer_level` on a Philips Hue dimmer.
+
+Handshake and calls (JSON-RPC 2.0 over Streamable HTTP; replies are plain `application/json`, not SSE):
+
+1. `initialize`: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"dzPanel","version":"1"}}}` returns 200 and a response header `Mcp-Session-Id: <32 hex>`.
+2. `notifications/initialized` (no id) returns 202 with an **HTML** body (not JSON, never parsed). The server ignores it, so a failure is not fatal.
+3. Every later call sends `Mcp-Session-Id`. Without it: `Missing session`.
+4. `tools/call`: `{"jsonrpc":"2.0","id":N,"method":"tools/call","params":{"name":"set_switch_state","arguments":{"idx":906,"state":"Off"}}}` returns `{"id":N,"jsonrpc":"2.0","result":{"content":[{"text":"Switch \"Kantoor 1\" set to Off successfully.","type":"text"}],"isError":false}}`.
+
+Headers: `Content-Type: application/json`, `Accept: application/json, text/event-stream`, `Authorization: Bearer <token>`. **Never send `MCP-Protocol-Version`**: an older value than the server's gives HTTP 400.
+
+| Command | Tool and arguments |
 |---|---|
-| On, Off, Toggle | `switchlight&idx=N&switchcmd=On\|Off\|Toggle` |
-| Dim level | `switchlight&idx=N&switchcmd=Set Level&level=0..MaxDimLevel` |
-| Blinds | `switchlight&idx=N&switchcmd=Open\|Close\|Stop` |
-| Push button | `switchlight&idx=N&switchcmd=On` (Push On) or `Off` (Push Off) |
-| Selector (fan, mode) | `switchlight&idx=N&switchcmd=Set Level&level=<LevelInt>` |
-| Scene | `switchscene&idx=N&switchcmd=On` (groups also accept `Off`) |
-| Thermostat setpoint | `setsetpoint&idx=N&setpoint=21.5` |
-| Protected device | add `&passcode=...`; the server compares an MD5 of it. The device must not store this. Treat protected devices as view-only |
+| On, Off | `set_switch_state {idx, state: "On"\|"Off"}` (a type 20 inverted lock gets the inverted word, as before) |
+| Toggle | `toggle_switch_state {idx}` |
+| Dim level | `set_dimmer_level {idx, level}` (MCP clamps to 0..100; a device with MaxDimLevel above 100 is refused at submit) |
+| Selector | `set_dimmer_level {idx, level: <LevelInt>}` (level above 100 refused) |
+| Blinds | `control_blinds {idx, command: "Open"\|"Close"\|"Stop"}` |
+| Push button | `set_switch_state {idx, state: "On"}` (Push On) or `"Off"` (Push Off) |
+| Scene, group | `switch_scene {scene_id: <JSON number>, command: "On"\|"Off"}` (`Off` only for groups; the id is a number, never a string) |
+| Thermostat setpoint | `set_setpoint_value {idx, setpoint: <number>}`, **Celsius servers only** |
+| Thermostat mode | **no tool: shown read-only** ("MODE: VIEW ONLY") |
+| Colour | `set_color_brightness`, `set_color_temperature` exist but are not used yet |
 
-Source for the switch commands: `WebServerCommands.cpp` (`switchlight`, `switchscene`).
+The tools call the same `MainWorker::SwitchLight` as `switchlight`, so command words, the type 20 lock inversion and the blind inversion (done server-side from the device options, see below) behave like the legacy path.
 
-**Safety already in the server:** protected devices and scenes demand a passcode; a Viewer token is refused at the command level. Our own risk levels (`SAFE`, `CONFIRM`, `LOCKED`) sit on top.
+Results are text only. `isError` is true only for "device or scene not found" and bad arguments. A switch that failed comes back `isError:false` with text starting `Error `. When the state already matches the text is `... was already X. No action taken.`: dzPanel accepts that (a device that is out of sync can no longer be forced), and the verify read decides. `tools/list` is paginated (50 per page, 55 tools); the firmware does not call it.
+
+JSON-RPC error codes: -32600 invalid request (`Missing session`), -32601 method not found, -32602 invalid params, -32603 internal, -32000 server error, -32001 resource not found (`Session not found`), -32002 permission denied (a Viewer token), -32003 rate limit, -32004 timeout, -32700 parse error. `Missing session` and `Session not found` arrive as HTTP 200 JSON-RPC errors *before* the tool runs, so ONE re-initialize and ONE retry is safe. A transport error or timeout on `tools/call` is never retried (it may have run; a toggle would double): the verify read decides. No credentials: HTTP 401 with a JSON body. Server started with `-nomcp`: HTTP 503. Sessions are 32 hex characters, not tied to the IP or TCP connection, uncapped, pruned after about an hour idle; every request is still authenticated by its Bearer token. The firmware opens a session lazily before the first command, opens a new one after 55 minutes idle, and wipes the id like the token (never logged).
+
+Failure mapping in the firmware (`DZ_FAIL_*`, shown in the feedback line): transport connect/TLS or a timeout in `initialize` = no connection; HTTP 401 = token rejected (and polling stops); HTTP 403 and -32002 = no switch rights; HTTP 404, 405, 503 and -32601 = MCP not available; other 5xx, -32000, -32003, -32004, -32603 and text `Error ...` = server error; a second session error after the retry, -32700, -32600, non-JSON 200 = bad response; `isError:true` and -32602 = rejected; otherwise sent, then verified.
+
+**MCP skips Domoticz's Protected (passcode) check and its per-user device check.** dzPanel's own refusal is the only guard: protected devices are never controlled (risk class `LOCKED`, AGENT_CONTRACT rule 3), and a pre-flight re-read (one small `getdevices&rid=` or `getscenes`, right before the call) refuses a device that became protected since the last poll. It also refreshes the pre-state (lock type, push type).
+
+Known gaps: thermostat **MODE** has no MCP tool, and **SETPOINT on a Fahrenheit server** has no safe path (the tool takes Celsius and Domoticz would store a Fahrenheit number as Celsius), so both are shown read-only. A push button that already reads the target state answers `No action taken`, the verify sees no new `LastUpdate` and reports NOT CONFIRMED (honest, accepted). Blinds: Domoticz applies inversion on the server (`ReverseState` / `ReversePosition` device options in `SwitchLightInt`; the old switch types 6 and 16 no longer exist in `RFXNames.h`, 21 is Blinds % + Stop and 22 Blinds + Stop), so the client sends plain Open / Close / Stop and never swaps them; the verify accepts `Open` or level 100 for open and `Closed` or level 0 for close. Not verified against a live inverted blind.
+
+The Domoticz `json.htm` command URLs (`switchlight`, `switchscene`, `setsetpoint`, `thermostatstate`) are kept in the mock only, for tests of the read path and as documentation of what the server also offers.
+
+Source for the switch commands: `WebServerCommands.cpp` (`switchlight`, `switchscene`) and the MCP tools (`SwitchLight` in `mainworker.cpp`).
+
+**Safety already in the server:** on `json.htm` protected devices and scenes demand a passcode and a Viewer token is refused at the command level; **the MCP endpoint skips the passcode check**, so our own risk levels (`SAFE`, `CONFIRM`, `LOCKED`) and the protected refusal are the real guard.
 
 ### Live updates: WebSocket
 
 `DomoticzWebsocketHandler.cpp` implements a socket on the same server. The client sends JSON events (`request`, `subscribe`, `unsubscribe`, `unsubscribe_devices`) and gets pushed device and scene updates for the devices it subscribed to. This replaces polling and is the better path for the foreground screen. It is **unverified**: the URL path, auth on the socket, and the message shapes need a live capture. Plan: polling with `lastupdate` first (v0.4), WebSocket as an upgrade.
 
-### MCP endpoint (not for the device)
+### MCP endpoint
 
-Domoticz 2026.1 also serves an MCP endpoint at `/mcp`: JSON-RPC over streamable HTTP plus SSE, same Bearer tokens. It is designed for AI clients. It would cost the ESP32 more RAM and parsing than `json.htm`, so we skip it. It is still useful to us: it lists devices and tools, so it can describe the API on a live server.
+Domoticz 2026.1 serves an MCP endpoint at `/mcp`: JSON-RPC over streamable HTTP, same Bearer tokens. **It is the control path of dzPanel** (see "Control: the MCP endpoint" above). Polling and parsing stay on `json.htm` (MCP results are text only).
 
 ## 3. Device model: what the JSON gives us
 
