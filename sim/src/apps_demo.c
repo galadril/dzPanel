@@ -168,7 +168,7 @@ const char *const apps_demo_names[] = {
   "climate_temp_f", "climate_wind_f", "climate_nounits", "climate_stale",
   "detail_climate_wind", "detail_thermo6", "detail_setpoint_plan", "detail_setpoint_nonow", "detail_radiator", "detail_evohome",
   "detail_mode", "detail_setpoint_f", "detail_setpoint_nounits",
-  "confirm_setpoint", "confirm_mode",
+  "confirm_setpoint",
   "detail_onoff", "detail_dimmer", "detail_selector", "detail_blinds", "detail_thermo", "detail_lock", "detail_push", "detail_info",
   "confirm_scene", "confirm_group_mixed", "confirm_lock",
   "fb_pending", "fb_confirmed", "fb_unconfirmed", "fb_failed",
@@ -206,8 +206,7 @@ static appfx_set_t set_for(const char *n) {
   if (!strcmp(n, "home_climate_f") || !strcmp(n, "climate_temp_f") || !strcmp(n, "climate_wind_f") || !strcmp(n, "detail_setpoint_f")) return APPFX_CLIMATE_IMPERIAL;
   if (!strcmp(n, "climate_nounits") || !strcmp(n, "detail_setpoint_nounits")) return APPFX_CLIMATE_NOUNITS;
   if (!strcmp(n, "home_climate") || !strncmp(n, "climate_", 8) || !strcmp(n, "detail_climate_wind") || !strcmp(n, "detail_thermo6") || !strncmp(n, "detail_setpoint", 15) ||
-      !strcmp(n, "detail_radiator") || !strcmp(n, "detail_evohome") || !strcmp(n, "detail_mode") || !strcmp(n, "confirm_setpoint") ||
-      !strcmp(n, "confirm_mode"))
+      !strcmp(n, "detail_radiator") || !strcmp(n, "detail_evohome") || !strcmp(n, "detail_mode") || !strcmp(n, "confirm_setpoint"))
     return APPFX_CLIMATE_METRIC;
   if (!strcmp(n, "home_favs_none")) return APPFX_MOCK_NOFAV;
   if (!strcmp(n, "home_favs_many")) return APPFX_MOCK;
@@ -277,11 +276,10 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
       {"detail_radiator", "123"}, {"detail_evohome", "124"}, {"detail_mode", "125"}, {"detail_setpoint_f", "118"},
       {"detail_setpoint_nounits", "118"}};
     for (size_t k = 0; k < sizeof det / sizeof det[0]; k++) if (!strcmp(n, det[k].name)) ru_dzapp_open(a, det[k].idx, false);
-  } else if (!strcmp(n, "confirm_setpoint") || !strcmp(n, "confirm_mode")) {
-    ru_dzapp_open(a, !strcmp(n, "confirm_mode") ? "125" : "118", false);
+  } else if (!strcmp(n, "confirm_setpoint")) {
+    ru_dzapp_open(a, "118", false);
     sim_render();
-    if (!strcmp(n, "confirm_setpoint")) click_at(c + ru_u(14), c + ru_u(24)); /* the + button: a setpoint always asks for a hold */
-    else click_at(c + ru_u(0), c - ru_u(30)); /* an upper selector segment */
+    click_at(c + ru_u(14), c + ru_u(24)); /* the + button: a setpoint always asks for a hold */
   } else if (!strcmp(n, "settings_conn")) ru_dzapp_open_sub(a, RU_SUB_CONNECTION);
   else if (!strcmp(n, "settings_bright")) ru_dzapp_open_sub(a, RU_SUB_BRIGHTNESS);
   else if (!strcmp(n, "settings_about")) ru_dzapp_open_sub(a, RU_SUB_ABOUT);
