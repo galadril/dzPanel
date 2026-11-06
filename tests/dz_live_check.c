@@ -20,6 +20,13 @@
  * that fires the push: set (set_switch_state with the type's word, the default), toggle (toggle_switch_state) or offon (the opposite
  * word, then the type's word). Needs --allow-write.
  *
+ * --color-test [--hue-test]: the --idx device must be a tunable-white or colour lamp (Color Switch). Through the firmware's own command
+ * path: set_color_temperature at warmth 50 (kelvin 4600) when the lamp can do it, a dimmer level change (the colour must be kept), and with
+ * --hue-test also set_color_brightness with hue 120 (green). After every step the lamp is read back and printed as fixed words and numbers
+ * only (on/off, level, Color mode m, t, the hue computed from RGB, whether the lamp switched on). The original on/off state, level and
+ * colour mode (temperature t, or with --hue-test also the hue and a white) are restored; a colour that cannot be restored without
+ * --hue-test is said so. Needs --allow-write. Prints no names, status text or token.
+ *
  * --tabs: compares the server's filter=light|temp|weather|utility membership with dz_tabs_of() and prints a diff
  * report (by Type / SubType and direction only; no idx, name or URL credentials).
  *
@@ -34,6 +41,7 @@
 
 #include "dz_client.h"
 #include "dz_cmd.h"
+#include "dz_color.h"
 #include "ru_osal.h"
 
 #define CAP 400
@@ -176,12 +184,13 @@ static int lights_report(void) {
 
 /* ---- --mcp: On, Off, level 30 and a restore on the --idx device only ---- */
 static char g_idx[12];
+static int g_hue;
 static bool run_cmd(dz_cmd_kind_t kind, int level, const char *what) {
   ru_sleep_ms(1500);
   done = 0;
   outcome = -1;
   failkind = 0;
-  dz_cmd_req_t q = {.kind = kind, .idx = g_idx, .level = level, .confirmed = true};
+  dz_cmd_req_t q = {.kind = kind, .idx = g_idx, .level = level, .hue = (int16_t)g_hue, .confirmed = true};
   dz_cmd_err_t e = dz_cmd_submit(&K, &q, ru_now_ms(), NULL);
   if (e != DZ_CMD_ACCEPTED) { printf("  %-14s refused: %s\n", what, dz_cmd_err_name(e)); return false; }
   for (int i = 0; !done && i < 200; i++) {
@@ -276,6 +285,77 @@ static int mcp_check(void) {
   return rc;
 }
 
+
+/* the colour state of a lamp as fixed words and numbers */
+static void colour_word(const dz_device_t *d) {
+  float h = 0, sat = 0;
+  bool has_hue = d->has_color && d->col_m == 3 && dz_rgb_to_hue(d->col_r, d->col_g, d->col_b, &h, &sat);
+  printf("    lamp: %s level=%d mode m=%d t=%d hue=%d\n", dz_status_is_on(d) ? "on" : "off", d->has_level ? d->level : -1, d->has_color ? d->col_m : -1,
+         d->has_color ? d->col_t : -1, has_hue ? (int)(h + 0.5f) : -1);
+}
+
+static int color_test(bool hue_test) {
+  int rc = 0;
+  dz_device_t d0, d1;
+  puts("6. colour test on the --idx device (temperature, level, optionally hue)");
+  if (!read_dev(&d0)) { puts("  device not readable: refusing"); return 1; }
+  printf("  start: cap %s controllable %d protected %d colour-caps=%d has-colour=%d\n", dz_cap_name(d0.cap), d0.controllable, d0.is_protected,
+         d0.col_caps, d0.has_color);
+  colour_word(&d0);
+  if (d0.cap != DZ_CAP_DIMMER || !d0.controllable || d0.is_protected || !d0.col_caps) { puts("  not a controllable colour or white lamp: refusing"); return 1; }
+  bool was_on = dz_status_is_on(&d0);
+  int lvl0 = d0.has_level ? d0.level : -1, m0 = d0.has_color ? d0.col_m : -1, t0 = d0.col_t;
+  float hue0 = 0, sat0 = 0;
+  bool hue0_ok = d0.has_color && m0 == 3 && dz_rgb_to_hue(d0.col_r, d0.col_g, d0.col_b, &hue0, &sat0);
+  dz_cmd_init(&K, &C, &M, true, on_res, NULL);
+  K.verify_delay_ms = 2500;
+  dz_device_t d;
+  if (d0.col_caps & DZ_COLCAP_CT) {
+    puts("  a. temperature: warmth 50 (kelvin 4600)");
+    rc |= !run_cmd(DZ_CMD_COLOR_TEMP, 50, "temp 50");
+    if (read_dev(&d)) {
+      colour_word(&d);
+      printf("    expected t=%d; lamp %s after the command (it was %s)\n", dz_warmth_to_t(50), dz_status_is_on(&d) ? "on" : "off", was_on ? "on" : "off");
+    }
+  } else puts("  a. temperature: skipped (the lamp has no colour-temperature capability)");
+  puts("  b. brightness change: the colour must be kept");
+  int probe = lvl0 == 30 ? 55 : 30;
+  rc |= !run_cmd(DZ_CMD_SET_LEVEL, probe, "level change");
+  if (read_dev(&d)) {
+    colour_word(&d);
+    printf("    colour kept after the level change: %s\n", d.has_color && d0.has_color && d.col_m == ((d0.col_caps & DZ_COLCAP_CT) ? 2 : m0) ? "yes" : "NO");
+  }
+  if (hue_test) {
+    if (d0.col_caps & DZ_COLCAP_RGB) {
+      puts("  c. hue 120 (green) at the current brightness");
+      g_hue = 120;
+      rc |= !run_cmd(DZ_CMD_COLOR_HUE, probe, "hue 120");
+      if (read_dev(&d)) colour_word(&d);
+    } else puts("  c. hue: skipped (the lamp has no RGB capability)");
+  }
+  /* restore: colour mode first, then the level, then on/off */
+  puts("  restore");
+  if (m0 == 2 && (d0.col_caps & DZ_COLCAP_CT)) rc |= !run_cmd(DZ_CMD_COLOR_TEMP, dz_t_to_warmth(t0), "restore temp");
+  else if (m0 == 3 && hue0_ok && hue_test) { g_hue = (int)(hue0 + 0.5f) % 360; rc |= !run_cmd(DZ_CMD_COLOR_HUE, lvl0 > 0 ? lvl0 : 100, "restore hue"); }
+  else if (m0 == 1 && hue_test && (d0.col_caps & DZ_COLCAP_W)) rc |= !run_cmd(DZ_CMD_COLOR_WHITE, lvl0 > 0 ? lvl0 : 100, "restore white");
+  else if (m0 == 3 || m0 == 1) puts("  NOTE: the original colour mode was not changed by this test (no --hue-test)");
+  if (was_on) {
+    if (lvl0 > 0) rc |= !run_cmd(DZ_CMD_SET_LEVEL, lvl0, "restore level");
+    else rc |= !run_cmd(DZ_CMD_ON, -1, "restore On");
+  } else {
+    if (lvl0 > 0 && read_dev(&d) && dz_status_is_on(&d)) rc |= !run_cmd(DZ_CMD_SET_LEVEL, lvl0, "restore level");
+    rc |= !run_cmd(DZ_CMD_OFF, -1, "restore Off");
+  }
+  if (!read_dev(&d1)) { puts("  final read failed: the original state could NOT be verified"); return 1; }
+  puts("  final:");
+  colour_word(&d1);
+  if (dz_status_is_on(&d1) != was_on) { puts("  WARNING: the original on/off state could NOT be restored"); rc = 1; }
+  if (was_on && lvl0 > 0 && (!d1.has_level || d1.level != lvl0)) { puts("  WARNING: the original level could NOT be restored"); rc = 1; }
+  if (m0 == 2 && d1.has_color && d1.col_m == 2 && abs((int)d1.col_t - t0) > 3) { puts("  WARNING: the original colour temperature could NOT be restored"); rc = 1; }
+  printf("color-test: %s\n", rc ? "problems" : "ok");
+  return rc;
+}
+
 static bool idx_ok(const char *v) {
   size_t n = strlen(v);
   if (n == 0 || n > 9) return false;
@@ -284,12 +364,12 @@ static bool idx_ok(const char *v) {
 }
 
 static void usage(void) {
-  puts("usage: dz_live_check --url URL [--token-env NAME] [--idx N --allow-write (--mcp | --push-test [--push-mode set|toggle|offon])] [--tabs | --lights]");
+  puts("usage: dz_live_check --url URL [--token-env NAME] [--idx N --allow-write (--mcp | --push-test [--push-mode set|toggle|offon] | --color-test [--hue-test])] [--tabs | --lights]");
 }
 
 int main(int argc, char **argv) {
   const char *url = NULL, *tenv = "DOMOTICZ_ACCESSTOKEN";
-  bool mcp = false, tabs = false, lights = false, allow_write = false, push = false;
+  bool mcp = false, tabs = false, lights = false, allow_write = false, push = false, ctest = false, hue_test = false;
   dz_push_mode_t pmode = DZ_PUSH_MODE_DEFAULT;
   g_idx[0] = 0;
   for (int i = 1; i < argc; i++) {
@@ -304,6 +384,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(a, "--allow-write")) allow_write = true;
     else if (!strcmp(a, "--mcp")) mcp = true;
     else if (!strcmp(a, "--push-test")) push = true;
+    else if (!strcmp(a, "--color-test")) ctest = true;
+    else if (!strcmp(a, "--hue-test")) hue_test = true;
     else if (!strcmp(a, "--push-mode") && i + 1 < argc) {
       const char *v = argv[++i];
       if (!strcmp(v, "set")) pmode = DZ_PUSH_SET_STATE;
@@ -320,6 +402,9 @@ int main(int argc, char **argv) {
   if (mcp && !g_idx[0]) { puts("--mcp needs --idx N"); return 2; }
   if (push && !allow_write) { puts("--push-test writes to the device: refusing without --allow-write"); return 2; }
   if (push && !g_idx[0]) { puts("--push-test needs --idx N"); return 2; }
+  if (ctest && !allow_write) { puts("--color-test writes to the device: refusing without --allow-write"); return 2; }
+  if (ctest && !g_idx[0]) { puts("--color-test needs --idx N"); return 2; }
+  if (hue_test && !ctest) { puts("--hue-test only goes with --color-test"); return 2; }
   char token[DZ_TOKEN_MAX];
   const char *tv = getenv(tenv);
   if (!tv || !*tv || strlen(tv) >= sizeof token) { puts("token environment variable not set"); return 2; }
@@ -349,6 +434,14 @@ int main(int argc, char **argv) {
 
   if (push) {
     rc = push_test(pmode) || rc;
+    printf("requests made: %u\n", C.requests);
+    dz_model_deinit(&M);
+    dz_transport_destroy(tr);
+    return rc;
+  }
+
+  if (ctest) {
+    rc = color_test(hue_test) || rc;
     printf("requests made: %u\n", C.requests);
     dz_model_deinit(&M);
     dz_transport_destroy(tr);
