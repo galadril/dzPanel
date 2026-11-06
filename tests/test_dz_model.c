@@ -121,6 +121,15 @@ static void test_order(void) {
                          "{\"idx\":\"8\",\"Name\":\"A\",\"Type\":\"Scene\",\"Status\":\"Off\"}");
   CHECK(apply(sc2, DZ_COMMIT_FULL_SCENES, 3000, &ch) == DZ_OK);
   CHECK(ord_of("3", true) == 0 && ord_of("8", true) == 1 && ord_of("1", false) == 0 && ord_of("3", false) == 1);
+  /* an order-only change (no data change) still bumps the generation, so views notice the reorder */
+  {
+    uint32_t g = dz_model_generation(&M);
+    CHECK(apply(DEVS(SW("1", "On") "," SW("3", "On")), DZ_COMMIT_FULL_DEVICES, 3500, &ch) == DZ_OK && ch == 0);
+    CHECK(dz_model_generation(&M) == g);
+    CHECK(apply(DEVS(SW("3", "On") "," SW("1", "On")), DZ_COMMIT_FULL_DEVICES, 3600, &ch) == DZ_OK && ch == 2);
+    CHECK(dz_model_generation(&M) == g + 1 && ord_of("3", false) == 0 && ord_of("1", false) == 1);
+    CHECK(apply(DEVS(SW("1", "On") "," SW("3", "On")), DZ_COMMIT_FULL_DEVICES, 3700, &ch) == DZ_OK);
+  }
   /* a status-only change keeps the position */
   CHECK(apply(DEVS(SW("1", "Off") "," SW("3", "On")), DZ_COMMIT_FULL_DEVICES, 4000, &ch) == DZ_OK && ch == 1);
   CHECK(ord_of("1", false) == 0);

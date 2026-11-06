@@ -188,7 +188,9 @@ int dz_model_commit(dz_model_t *m, dz_commit_t mode, const char *server_time, ui
   if (full && complete) { /* only a response that was read and stored in full may renumber */
     for (size_t s = 0; s < m->stage_n; s++) {
       ptrdiff_t at = find_locked(m, m->stage[s].idx, is_scene_dev(&m->stage[s]));
-      if (at >= 0) m->e[at].order = (uint16_t)s;
+      if (at < 0 || m->e[at].order == (uint16_t)s) continue;
+      m->e[at].order = (uint16_t)s;
+      if (m->e[at].changed_gen != gen) { m->e[at].changed_gen = gen; changed++; } /* a pure reorder is a change for the views */
     }
   }
   if (mode == DZ_COMMIT_DELTA || mode == DZ_COMMIT_FULL_DEVICES || mode == DZ_COMMIT_FULL_SCENES) {

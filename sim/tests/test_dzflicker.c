@@ -222,6 +222,33 @@ static void test_rate_limit(void) {
   appfx_unload(&f);
 }
 
+/* a FULL read of the given lamps (all favourites), as the poller does */
+static void full3(appfx_t *f, int a, int b, int c) {
+  char doc[1200];
+  snprintf(doc, sizeof doc, "{\"status\":\"OK\",\"result\":[%s", lamp(a, "L", "Off", 1));
+  size_t n = strlen(doc);
+  n += (size_t)snprintf(doc + n, sizeof doc - n, ",%s", lamp(b, "L", "Off", 1));
+  n += (size_t)snprintf(doc + n, sizeof doc - n, ",%s]}", lamp(c, "L", "Off", 1));
+  CHECK(dz_model_apply(&f->model, doc, n, DZ_COMMIT_FULL_DEVICES, f->T, NULL, NULL) == DZ_OK);
+}
+
+/* a reorder on the server (no data change) reaches the page */
+static void test_order_only(void) {
+  appfx_t f;
+  ru_dzapp_t *a = start_many(&f);
+  full3(&f, 1, 2, 3);
+  tick(&f, a, 2100);
+  ru_dzapp_row_info_t ri;
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "1"));
+  tick(&f, a, 2100); /* idle for longer than the rate limit */
+  full3(&f, 2, 1, 3);
+  tick(&f, a, 10); /* within the same stale epoch: only the generation can announce it */
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "2"));
+  CHECK(ru_dzapp_row_info(a, 1, &ri) && !strcmp(ri.idx, "1"));
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
 int main(void) {
   CHECK(sim_init(&S, 480));
   test_setters_idempotent();
@@ -230,6 +257,7 @@ int main(void) {
   test_structure_change();
   test_copy_budget();
   test_rate_limit();
+  test_order_only();
   sim_shutdown(&S);
   MT_DONE();
 }
