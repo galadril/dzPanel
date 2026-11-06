@@ -257,6 +257,7 @@ static bool mcp_exchange(dz_client_t *c, const char *body, bool with_sid, bool c
   unsigned long long want;
   if (request_id(body, &want) && (!res->reply.has_id || (unsigned long long)res->reply.id != want)) {
     res->parse = DZ_ERR_SYNTAX;
+    res->bad_id = true;
     memset(&res->reply, 0, sizeof res->reply);
     return false;
   }

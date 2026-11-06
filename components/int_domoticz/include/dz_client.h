@@ -127,6 +127,7 @@ typedef struct {
   dz_err_t parse;          /* dz_mcp_parse_reply of its body (DZ_OK when a JSON-RPC reply came back) */
   dz_mcp_reply_t reply;
   bool reinit;             /* an expired / missing session was replaced and the call retried ONCE */
+  bool bad_id;             /* a 200 JSON reply whose id is missing or not the request's (parse is then DZ_ERR_SYNTAX) */
   bool session_lost;       /* still 'Missing session' / 'Session not found' after that retry */
 } dz_mcp_result_t;
 

@@ -42,7 +42,7 @@ static sim_t S[] = {
 
 typedef enum { X_OK, X_IGNORE, X_401, X_403, X_500, X_ERR, X_HTML, X_CONNECT, X_TIMEOUT_APPLIED, X_TIMEOUT_IGNORED, X_VERIFY_FAIL,
                X_ISERROR, X_NOACTION, X_NOMCP503, X_NOMCP404, X_RPCERR, X_EXPIRE_ONCE, X_EXPIRED_NEXT, X_EXPIRE_ALWAYS, X_INIT_TIMEOUT,
-               X_PREFLIGHT_404, X_TLS, X_TLS_APPLIED, X_TOOLARGE, X_TOOLARGE_APPLIED, X_INIT_CONNECT, X_INIT_TLS, X_INIT_TOOLARGE, X_FOREIGN_ID, X_NOACTION_LONG } xmode_t;
+               X_PREFLIGHT_404, X_TLS, X_TLS_APPLIED, X_TOOLARGE, X_TOOLARGE_APPLIED, X_INIT_CONNECT, X_INIT_TLS, X_INIT_TOOLARGE, X_FOREIGN_ID, X_NOID, X_NOACTION_LONG, X_NOACTION_FIRST } xmode_t;
 static xmode_t xm;
 static int ticks; /* each effective command bumps the fake LastUpdate */
 static int cmd_calls, read_calls;
@@ -183,6 +183,10 @@ static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_ht
         snprintf(t, sizeof t, "{\"id\":9,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"Switch \\\"%s\\\" was already On. No action taken.\",\"type\":\"text\"}],\"isError\":false}}", name);
         return fake_body(t, 200, buf, cap, out);
       }
+      case X_NOID: return fake_body("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"Switch set successfully.\",\"type\":\"text\"}],\"isError\":false}}", 200, buf, cap, out);
+      case X_NOACTION_FIRST:
+        if (cmd_calls == 1) return fake_body(MCP_OK("Switch was already Off. No action taken.", "false"), 200, buf, cap, out);
+        return fake_body(MCP_OK("Switch set successfully.", "false"), 200, buf, cap, out);
       case X_FOREIGN_ID: fake_force_id = 4242; { dz_net_err_t e = fake_body(MCP_OK("Switch set successfully.", "false"), 200, buf, cap, out); fake_force_id = 0; return e; }
       case X_TLS: return DZ_NET_TLS;
       case X_TLS_APPLIED: apply_call(f->body); return DZ_NET_TLS;
@@ -774,7 +778,6 @@ static void test_mcp_session_and_mapping(void) {
     {"-32601", X_RPCERR, -32601, DZ_FAIL_NO_MCP}, {"-32002", X_RPCERR, -32002, DZ_FAIL_FORBIDDEN},
     {"-32000", X_RPCERR, -32000, DZ_FAIL_SERVER}, {"-32003", X_RPCERR, -32003, DZ_FAIL_SERVER},
     {"-32004", X_RPCERR, -32004, DZ_FAIL_SERVER}, {"-32603", X_RPCERR, -32603, DZ_FAIL_SERVER},
-    {"foreign reply id", X_FOREIGN_ID, 0, DZ_FAIL_BAD_RESPONSE},
     {"-32602", X_RPCERR, -32602, DZ_FAIL_REJECTED}, {"-32700", X_RPCERR, -32700, DZ_FAIL_BAD_RESPONSE},
     {"-32600", X_RPCERR, -32600, DZ_FAIL_BAD_RESPONSE}, {"-32001", X_RPCERR, -32001, DZ_FAIL_BAD_RESPONSE},
   };
@@ -788,6 +791,19 @@ static void test_mcp_session_and_mapping(void) {
     CHECK(applied == 0 && dz_cmd_pending(&K) == 0);
     CHECK((dz_client_state(&C) == DZ_CS_TOKEN_REJECTED) == (rows[i].x == X_401));
   }
+  /* A1: a call-stage reply with a foreign or missing id may have run: UNCERTAIN, the verify read decides, never retried */
+  xmode_t idm[] = {X_FOREIGN_ID, X_NOID};
+  for (size_t i = 0; i < 2; i++) {
+    setup(true);
+    xm = idm[i];
+    CHECK(run(DZ_CMD_ON, "1", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && nres == 1);
+    CHECK(LAST.outcome == DZ_OUT_UNCONFIRMED && LAST.uncertain && !LAST.sent && LAST.fail == DZ_FAIL_NONE && cmd_calls == 1 && applied == 0);
+  }
+  /* A2: OFF_THEN_ON keeps a step-0 'No action' when the second reply is normal */
+  setup(true);
+  K.push_mode = DZ_PUSH_OFF_THEN_ON;
+  xm = X_NOACTION_FIRST;
+  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && cmd_calls == 2 && LAST.no_action && LAST.sent);
   /* 'already On. No action taken.': the re-read decides (an out-of-sync device is no longer forced) */
   setup(true);
   xm = X_NOACTION;

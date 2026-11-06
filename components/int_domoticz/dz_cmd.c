@@ -218,7 +218,7 @@ size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind,
   switch (kind) {
     case DZ_CMD_ON: tool = "set_switch_state"; word = lock20 ? "Off" : "On"; break;
     case DZ_CMD_OFF: tool = "set_switch_state"; word = lock20 ? "On" : "Off"; break;
-    case DZ_CMD_PUSH: return 0; /* handled above */
+    case DZ_CMD_PUSH: return 0; /* unreachable (returned above); kept so -Wswitch sees every kind */
     case DZ_CMD_TOGGLE: tool = "toggle_switch_state"; break;
     case DZ_CMD_SET_LEVEL: case DZ_CMD_SELECTOR: tool = "set_dimmer_level"; if (level < 0 || level > 100) return 0; break;
     case DZ_CMD_BLINDS_OPEN: tool = "control_blinds"; word = "Open"; break;
@@ -421,8 +421,8 @@ static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   if (!ok && !reply) {
     bool at_call = r.stage == DZ_MCP_STAGE_CALL;
     if (at_call && (r.net == DZ_NET_TIMEOUT || r.net == DZ_NET_CONNECT || r.net == DZ_NET_TLS ||
-                    (r.net == DZ_NET_TOO_LARGE && r.http == 200))) {
-      /* The request may have reached the server (a reset or TLS error after the send, an answer too large for the buffer): the
+                    (r.net == DZ_NET_TOO_LARGE && r.http == 200) || r.bad_id)) {
+      /* The request may have reached the server (a reset or TLS error after the send, an answer too large for the buffer, a reply with a missing or foreign id): the
        * call may have run and is NEVER retried; the re-read decides. */
       s->uncertain = true;
     } else if (r.net == DZ_NET_TIMEOUT || r.net == DZ_NET_CONNECT || r.net == DZ_NET_TLS) {
@@ -457,7 +457,8 @@ static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
     return;
   } else {
     /* anything else, including "... was already X. No action taken.": the re-read is the truth */
-    s->no_action = r.reply.no_action; /* the parser scans the whole raw text for "No action": a long device name cannot hide it */
+    s->no_action = s->no_action || r.reply.no_action; /* sticky: OFF_THEN_ON must not lose a step-0 'No action' */
+    /* the parser scans the whole raw text for "No action": a long device name cannot hide it */
     s->sent_ok = true;
   }
   if (push && (size_t)s->push_step + 1 < dz_cmd_push_steps(c->push_mode)) { /* the next call of the sequence, one request per pump */
