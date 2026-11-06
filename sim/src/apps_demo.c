@@ -117,6 +117,18 @@ bool appfx_load(appfx_t *f, const char *dir, appfx_set_t set, uint32_t ttl_ms) {
       g_strip_fav = false;
       return ok;
     }
+    case APPFX_SWITCH_TYPES: {
+      static const char doc[] =
+        "{\"status\":\"OK\",\"result\":["
+        "{\"idx\":\"1\",\"Name\":\"Garage Blind\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchType\":\"Blinds\",\"SwitchTypeVal\":3,\"Status\":\"Open\",\"Data\":\"Open\",\"Protected\":false,\"Favorite\":0},"
+        "{\"idx\":\"2\",\"Name\":\"Roller Shutter\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchType\":\"Blinds Percentage\",\"SwitchTypeVal\":13,\"Status\":\"Set Level: 40 %\",\"Data\":\"Set Level: 40 %\",\"Level\":40,\"MaxDimLevel\":100,\"Protected\":false,\"Favorite\":0},"
+        "{\"idx\":\"3\",\"Name\":\"Front Door\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchType\":\"Door Lock\",\"SwitchTypeVal\":19,\"Status\":\"Locked\",\"Data\":\"Locked\",\"Protected\":false,\"Favorite\":0},"
+        "{\"idx\":\"4\",\"Name\":\"Back Door\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchType\":\"Door Contact\",\"SwitchTypeVal\":11,\"Status\":\"Open\",\"Data\":\"Open\",\"Protected\":false,\"Favorite\":0},"
+        "{\"idx\":\"5\",\"Name\":\"Hall Smoke\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchType\":\"Smoke Detector\",\"SwitchTypeVal\":5,\"Status\":\"Off\",\"Data\":\"Off\",\"Protected\":false,\"Favorite\":0},"
+        "{\"idx\":\"6\",\"Name\":\"Gate Button\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchType\":\"Push On Button\",\"SwitchTypeVal\":9,\"Status\":\"Off\",\"Data\":\"Off\",\"Protected\":false,\"Favorite\":0}"
+        "]}";
+      return dz_model_apply(&f->model, doc, sizeof doc - 1, DZ_COMMIT_FULL_DEVICES, f->T, NULL, NULL) == DZ_OK;
+    }
     case APPFX_MANY: {
       static char doc[60000];
       size_t n = (size_t)snprintf(doc, sizeof doc, "{\"status\":\"OK\",\"result\":[");
@@ -149,7 +161,7 @@ void appfx_unload(appfx_t *f) {
 
 const char *const apps_demo_names[] = {
   "home", "home_connecting", "home_offline", "home_token", "home_stale", "home_empty", "home_favs_many", "home_favs_none",
-  "lights", "lights_many", "scenes", "scenes_mixed", "temperature", "weather", "utility", "energy", "energy_counter", "settings", "settings_conn",
+  "lights", "lights_many", "lights_types", "scenes", "scenes_mixed", "temperature", "weather", "utility", "energy", "energy_counter", "settings", "settings_conn",
   "settings_bright", "settings_about",
   "home_climate", "home_climate_f", "climate_temp", "climate_temp_hum_baro", "climate_hum", "climate_wind", "climate_rain", "climate_uv",
   "climate_lux", "climate_air", "climate_value", "climate_text", "climate_unseen",
@@ -200,6 +212,7 @@ static appfx_set_t set_for(const char *n) {
   if (!strcmp(n, "home_favs_none")) return APPFX_MOCK_NOFAV;
   if (!strcmp(n, "home_favs_many")) return APPFX_MOCK;
   if (!strcmp(n, "lights_many")) return APPFX_MANY;
+  if (!strcmp(n, "lights_types")) return APPFX_SWITCH_TYPES;
   if (!strcmp(n, "scenes_mixed") || !strncmp(n, "confirm_group", 13) || !strncmp(n, "fb_", 3)) return APPFX_MOCK_MIXED;
   if (!strncmp(n, "detail_", 7) && strcmp(n, "detail_info") != 0) return APPFX_MOCK;
   if (!strcmp(n, "confirm_scene") || !strcmp(n, "confirm_lock")) return APPFX_MOCK;

@@ -48,7 +48,7 @@ The Domoticz web UI lists a device on a tab chosen from its JSON `Type` and `Sub
 
 | Tab (dzPanel page) | `getdevices` filter | Types (SubType decides where noted) |
 |---|---|---|
-| Lights (LIGHTS) | `light` | Light/Switch, Lighting 1-6, Color Switch, Fan, Security, Curtain, Blinds, Chime, RFY, Thermostat 2/3/4, Remote & IR, Home Confort, FS20, Hunter, Honeywell; Heating Evohome / Relay |
+| Lights (LIGHTS) = the full Switches tab | `light` | Light/Switch, Lighting 1-6, Color Switch, Fan, Security, Curtain, Blinds, Chime, RFY, Thermostat 2/3/4, Remote & IR, Home Confort, FS20, Hunter, Honeywell; Heating Evohome / Relay |
 | Temperature (TEMPERATURE) | `temp` | Temp, Humidity, Temp + Humidity, Temp + Humidity + Baro, Temp + Baro, Thermostat 1, Thermostat 6, Heating Zone / Hot Water, RFXSensor Temperature, General System temperature, Wind TFA, UV TFA |
 | Weather (WEATHER) | `weather` | Temp + Humidity + Baro, Temp + Baro, Rain, Wind, UV, General Visibility / Barometer / Solar Radiation |
 | Utility (UTILITY) | `utility` | P1 Smart Meter, Lux, Current, Energy, Power, Usage, YouLess Meter, Air Quality, Weight, RFXMeter, Setpoint, General kWh / Voltage / Current / Text / Percentage / counters / Waterflow / Custom Sensor / Alert / Pressure / Soil Moisture / Leaf Wetness / Sound Level / Fan / Distance, RFXSensor Voltage / A/D |

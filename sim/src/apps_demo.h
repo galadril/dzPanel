@@ -30,6 +30,7 @@ typedef enum {
   APPFX_CLIMATE_IMPERIAL, /* the same set as a Fahrenheit / mph install */
   APPFX_CLIMATE_NOUNITS,  /* the metric devices but getconfig never read: units unknown, bare numbers */
   APPFX_MOCK_NOFAV,       /* as MOCK, no favourites at all */
+  APPFX_SWITCH_TYPES,     /* generated: six Lights-tab tiles of other classes (blinds, lock, contact, smoke, push) */
   APPFX_MANY              /* generated: 100 lights (the first 8 favourites), 30 temperature, 20 utility; idx 1..150 in that order */
 } appfx_set_t;
 
