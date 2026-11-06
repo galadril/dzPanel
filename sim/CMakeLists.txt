@@ -20,6 +20,7 @@ add_library(ru_ui_lvgl
   ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_theme.c
   ${CMAKE_SOURCE_DIR}/components/ru_ui/fonts/ru_icons_24.c
   ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_widgets.c
+  ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_ring_img.c
   ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_splash.c)
 target_include_directories(ru_ui_lvgl PUBLIC ${CMAKE_SOURCE_DIR}/components/ru_ui/include)
 target_link_libraries(ru_ui_lvgl PUBLIC lvgl_core ru_ui ru_data)
@@ -112,3 +113,9 @@ add_executable(test_wxtile tests/test_wxtile.c)
 target_include_directories(test_wxtile PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 target_link_libraries(test_wxtile ru_sim_core)
 add_test(NAME wxtile COMMAND test_wxtile)
+
+# Light widget (ru_light) and the colour ring image: ring pixels, layouts, touch, in-place setters (466 round, 480 round, 480 square)
+add_executable(test_light tests/test_light.c)
+target_include_directories(test_light PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(test_light ru_sim_core int_domoticz)
+add_test(NAME light COMMAND test_light)
