@@ -126,3 +126,54 @@ void ru_wx_tile_set(lv_obj_t *tile, const ru_wxtile_data_t *d);
 void ru_wx_tile_on_tap(lv_obj_t *tile, ru_tap_cb_t cb, void *ud);
 /* The label objects of a tile, for tests and layout checks: 0 name, 1 icon, 2 value, 3 unit, 4 second line, 5 stale dot. */
 lv_obj_t *ru_wx_tile_part(const lv_obj_t *tile, int which);
+
+/* ---- light control (device detail of dimmers and colour lights; see docs/research/ux.md "Light control").
+ * Square panels: an outer BRIGHTNESS ring and an inner COLOUR / TEMPERATURE ring (conic image, see ru_ring_img.h); round panels: ONE ring
+ * that the chips switch between brightness, colour and white. A centre disc is the ON/OFF button (power glyph, large percent, caption).
+ * Commands are reported on RELEASE only (final = true); during a drag the callback is called with final = false so the app can keep
+ * the screen from being rebuilt under the finger. Setters compare with what is shown and touch only what changed. ---- */
+#include "ru_ring_img.h"
+#define RU_LIGHT_CAP_RGB 1  /* same bits as DZ_COLCAP_* */
+#define RU_LIGHT_CAP_W 2
+#define RU_LIGHT_CAP_CT 4
+typedef enum { RU_LIGHT_NONE = 0, RU_LIGHT_WHITE, RU_LIGHT_TEMP, RU_LIGHT_COLOR } ru_light_mode_t; /* the lamp's mode, as Color m 0..3 */
+typedef enum { RU_LIGHT_CMD_LEVEL, RU_LIGHT_CMD_HUE, RU_LIGHT_CMD_TEMP, RU_LIGHT_CMD_WHITE, RU_LIGHT_CMD_POWER } ru_light_cmd_t;
+typedef enum { RU_LIGHT_FB_NONE, RU_LIGHT_FB_SENDING, RU_LIGHT_FB_OK, RU_LIGHT_FB_WARN, RU_LIGHT_FB_ERROR } ru_light_fb_t;
+typedef struct {
+  ru_ring_color_fn hue_fn;          /* 0..1 along the sweep -> hue colour */
+  ru_ring_color_fn temp_fn;         /* 0 warm .. 1 cool -> white colour */
+  const char *(*hue_word)(float hue);
+  const char *(*warm_word)(int warmth);
+} ru_light_hooks_t;
+typedef struct {
+  int caps;          /* RU_LIGHT_CAP_*; 0 = plain dimmer */
+  bool two_rings;    /* square panel: the two ring layout; round: one ring and chips */
+  int max;           /* MaxDimLevel, 1..100 */
+  const ru_light_hooks_t *hooks;
+} ru_light_cfg_t;
+typedef struct {
+  bool known;        /* false: "--", rings unlit, no knobs */
+  bool on;
+  int level;         /* 0..max, the stored level also while off */
+  int mode;          /* ru_light_mode_t */
+  bool has_hue;      /* colour mode: the hue is known (a white-ish RGB has none: knob hidden) */
+  int hue;           /* 0..359 */
+  int warmth;        /* 0..100, temperature mode */
+  uint32_t color;    /* tint of the lamp 0xRRGGBB (disc, outer ring); 0 = the theme accent */
+} ru_light_state_t;
+/* value: LEVEL device units 0..max; HUE 0..359; TEMP warmth 0..100; WHITE none; POWER 1 = switch on, 0 = off */
+typedef void (*ru_light_cb_t)(lv_obj_t *w, ru_light_cmd_t cmd, int value, bool final, void *ud);
+lv_obj_t *ru_light_create(lv_obj_t *parent, int d, const ru_light_cfg_t *cfg);
+void ru_light_set(lv_obj_t *w, const ru_light_state_t *s);
+void ru_light_set_feedback(lv_obj_t *w, ru_light_fb_t st, const char *text);
+/* not controllable / protected / stale: rings cannot be touched, knobs lose their border, chips are hidden, the caption shows text in warn */
+void ru_light_set_readonly(lv_obj_t *w, bool ro, const char *text);
+void ru_light_on_change(lv_obj_t *w, ru_light_cb_t cb, void *ud);
+/* true when a press at (x, y) (screen px) would start a ring drag: the touch bands of the rings, inside the sweep +- 8 degrees */
+bool ru_light_ring_at(const lv_obj_t *w, int x, int y);
+/* test and layout access: 0 root, 1 brightness arc, 2 colour arc, 3 disc, 4 large text, 5 caption, 6 touch layer, 7 chip pill, 8 power glyph */
+lv_obj_t *ru_light_part(const lv_obj_t *w, int which);
+/* what the colour arc shows now: RU_RING_HUE, RU_RING_TEMP, or -1 when it is hidden or absent; and the shown ring on a round panel */
+int ru_light_view(const lv_obj_t *w);
+int ru_light_chips(const lv_obj_t *w);   /* number of chips */
+void ru_light_press_chip(lv_obj_t *w, int i); /* as a tap on chip i (tests) */

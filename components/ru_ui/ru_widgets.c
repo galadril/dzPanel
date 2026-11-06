@@ -1572,3 +1572,551 @@ lv_obj_t *ru_wx_tile_part(const lv_obj_t *o, int which) {
   wtile_t *s = wd_get(o);
   return which >= 0 && which < 6 ? s->part[which] : NULL;
 }
+
+/* ---------------------------------------------------------------- light */
+
+#define LT_RANGE 360     /* the colour arc runs 0..360: hue in degrees, or the cool fraction of the temperature scale in 1/3.6 % */
+#define LT_MAXPART 9
+#define LT_ANGLE_TOL 8.0f
+#define LT_TAP_PX 8
+
+typedef enum { ZONE_NONE, ZONE_BRI, ZONE_COL, ZONE_DISC } lt_zone_t;
+typedef enum { CHIP_BRI, CHIP_COLOUR, CHIP_WHITE } lt_chip_t;
+
+typedef struct {
+  ru_light_cfg_t cfg;
+  ru_light_hooks_t hk;
+  ring_t bri;
+  lv_obj_t *root, *carc, *touch, *disc, *glyph, *hero, *cap, *pill, *chip[3];
+  int nchip;
+  lt_chip_t chip_kind[3];
+  int d_ring, dc, wc, disc_d, wb;
+  float band_b0, band_b1, band_c0, band_c1, disc_r; /* touch bands (px from the centre) */
+  int max;
+  /* model and view state */
+  ru_light_state_t st;
+  bool have_st;
+  int vkind;            /* RU_RING_HUE / RU_RING_TEMP: what the colour arc shows */
+  bool show_col;        /* round panel: the colour arc is the ring shown (else brightness) */
+  bool user_view;       /* the user picked a chip: kept until the lamp's mode changes */
+  int img_kind;         /* what the arc image holds (-1: none yet) */
+  ru_light_fb_t fb;
+  char fb_text[24];
+  bool ro;
+  char ro_text[24];
+  /* interaction */
+  lt_zone_t zone;
+  bool dragging, moved_far;
+  int px0, py0;
+  int drag_v;           /* the value under the finger (bri device units, hue 0..359, temp arc 0..360) */
+  bool pend;            /* released, waiting for the model: the knob stays where it was left */
+  lt_zone_t pend_zone;
+  int pend_v, pend_vkind;
+  ru_light_cb_t cb;
+  void *ud;
+} light_t;
+
+static light_t *lt_get(const lv_obj_t *o) { return wd_get(o); }
+
+static void sty_bg(lv_obj_t *o, lv_color_t c, lv_opa_t opa, lv_part_t p) {
+  if (!lv_color_eq(lv_obj_get_style_bg_color(o, p), c)) lv_obj_set_style_bg_color(o, c, p);
+  if (lv_obj_get_style_bg_opa(o, p) != opa) lv_obj_set_style_bg_opa(o, opa, p);
+}
+static void sty_border(lv_obj_t *o, int w, lv_color_t c, lv_opa_t opa, lv_part_t p) {
+  if (lv_obj_get_style_border_width(o, p) != w) lv_obj_set_style_border_width(o, w, p);
+  if (!lv_color_eq(lv_obj_get_style_border_color(o, p), c)) lv_obj_set_style_border_color(o, c, p);
+  if (lv_obj_get_style_border_opa(o, p) != opa) lv_obj_set_style_border_opa(o, opa, p);
+}
+static void set_hidden(lv_obj_t *o, bool hide) {
+  if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN) != hide) {
+    if (hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+static void set_clickable(lv_obj_t *o, bool on) {
+  if (lv_obj_has_flag(o, LV_OBJ_FLAG_CLICKABLE) != on) {
+    if (on) lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    else lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+  }
+}
+static lv_color_t rgb_of(uint32_t c) { return lv_color_hex(c); }
+
+static int lt_pct(const light_t *l, int v) { return l->max == 100 ? v : (int)lroundf(100.0f * (float)v / (float)l->max); }
+
+/* angle 0 = 3 o'clock clockwise -> position along the sweep. false when outside the sweep +- tolerance. *p is clamped to 0..1 */
+static bool lt_sweep_p(float deg, float tol, float *p) {
+  float rel = deg - 135.0f;
+  while (rel < 0.0f) rel += 360.0f;
+  while (rel >= 360.0f) rel -= 360.0f;
+  if (rel > 270.0f + tol && rel < 360.0f - tol) return false;
+  if (rel <= 270.0f) *p = rel / 270.0f;
+  else *p = rel < 315.0f ? 1.0f : 0.0f;
+  return true;
+}
+
+static bool lt_centre(const light_t *l, float *cx, float *cy) {
+  lv_area_t a;
+  lv_obj_get_coords(l->touch, &a);
+  *cx = (float)(a.x1 + a.x2 + 1) / 2.0f;
+  *cy = (float)(a.y1 + a.y2 + 1) / 2.0f;
+  return true;
+}
+
+static lt_zone_t lt_zone_of(const light_t *l, int x, int y, float *p) {
+  float cx, cy;
+  lt_centre(l, &cx, &cy);
+  float dx = (float)x - cx, dy = (float)y - cy;
+  float r = sqrtf(dx * dx + dy * dy);
+  float deg = atan2f(dy, dx) * 180.0f / PI_F;
+  if (deg < 0) deg += 360.0f;
+  float pp = 0;
+  if (r < l->disc_r) return ZONE_DISC;
+  if (l->cfg.two_rings) {
+    if (r >= l->band_b0 && r <= l->band_b1 && lt_sweep_p(deg, LT_ANGLE_TOL, &pp)) { if (p) *p = pp; return ZONE_BRI; }
+    if (l->carc && r >= l->band_c0 && r <= l->band_c1 && lt_sweep_p(deg, LT_ANGLE_TOL, &pp)) { if (p) *p = pp; return ZONE_COL; }
+    return ZONE_NONE;
+  }
+  if (r >= l->band_b0 && r <= l->band_b1 && lt_sweep_p(deg, LT_ANGLE_TOL, &pp)) {
+    if (p) *p = pp;
+    return l->show_col && l->carc ? ZONE_COL : ZONE_BRI;
+  }
+  return ZONE_NONE;
+}
+
+static void lt_ensure_img(light_t *l) {
+  if (!l->carc || l->img_kind == l->vkind) return;
+  ru_ring_color_fn fn = l->vkind == RU_RING_HUE ? l->hk.hue_fn : l->hk.temp_fn;
+  const lv_image_dsc_t *im = ru_ring_img_get(l->dc, l->wc, (ru_ring_kind_t)l->vkind, fn);
+  if (!im) return;
+  lv_obj_set_style_arc_image_src(l->carc, im, LV_PART_MAIN);
+  lv_obj_invalidate(l->carc);
+  l->img_kind = l->vkind;
+}
+
+static void icon_recolor(lv_obj_t *icon, lv_color_t c) {
+  lv_obj_t *arc = lv_obj_get_child(icon, 0), *bar = lv_obj_get_child(icon, 1);
+  if (!lv_color_eq(lv_obj_get_style_arc_color(arc, LV_PART_MAIN), c)) lv_obj_set_style_arc_color(arc, c, LV_PART_MAIN);
+  if (!lv_color_eq(lv_obj_get_style_bg_color(bar, LV_PART_MAIN), c)) lv_obj_set_style_bg_color(bar, c, LV_PART_MAIN);
+}
+
+/* the arc value the colour arc shows for the model; -1 = no knob (the lamp is not in this mode, or has no hue) */
+static int lt_model_col_v(const light_t *l) {
+  const ru_light_state_t *s = &l->st;
+  if (!l->have_st || !s->known) return -1;
+  if (l->vkind == RU_RING_HUE) return s->mode == RU_LIGHT_COLOR && s->has_hue ? s->hue % 360 : -1;
+  if (s->mode != RU_LIGHT_TEMP) return -1;
+  int w = s->warmth < 0 ? 0 : s->warmth > 100 ? 100 : s->warmth;
+  return (int)lroundf((float)(100 - w) * 3.6f);
+}
+
+static const char *lt_word(const light_t *l, bool col_view, int col_v) {
+  const ru_light_state_t *s = &l->st;
+  if (!col_view) return "BRIGHTNESS";
+  if (l->vkind == RU_RING_HUE) {
+    if (col_v >= 0 && l->hk.hue_word) return l->hk.hue_word((float)col_v);
+    return s->mode == RU_LIGHT_WHITE ? "WHITE" : "COLOUR";
+  }
+  if (col_v >= 0 && l->hk.warm_word) return l->hk.warm_word((int)lroundf(100.0f - (float)col_v / 3.6f));
+  return "WHITE";
+}
+
+static void lt_paint(light_t *l) {
+  const ru_theme_t *t = ru_theme();
+  const ru_light_state_t *s = &l->st;
+  bool known = l->have_st && s->known;
+  bool on = known && s->on;
+  bool drag_bri = l->dragging && l->zone == ZONE_BRI;
+  bool drag_col = l->dragging && l->zone == ZONE_COL;
+  bool pend_bri = !l->dragging && l->pend && l->pend_zone == ZONE_BRI;
+  bool pend_col = !l->dragging && l->pend && l->pend_zone == ZONE_COL;
+  bool lit = on || drag_bri || drag_col;
+  lv_color_t lamp = s->color ? rgb_of(s->color) : t->accent;
+  bool col_vis = l->carc && (l->cfg.two_rings || l->show_col);
+  bool bri_vis = l->cfg.two_rings || !l->show_col || !l->carc;
+
+  /* brightness ring: the model, or the finger; the tint of the ring and glow follows the MODEL (it changes on release) */
+  int bv = drag_bri ? l->drag_v : pend_bri ? l->pend_v : known ? s->level : 0;
+  set_hidden(l->bri.box, !bri_vis);
+  ring_set(&l->bri, bv);
+  ring_set_lit(&l->bri, known && (on || drag_bri || pend_bri), lamp, true);
+  if (known && !lit && !pend_bri) { /* off: no fill, a dim ghost knob at the stored level */
+    sty_bg(l->bri.arc, ru_dim(t->text_dim, 150), LV_OPA_COVER, LV_PART_KNOB);
+  } else if (known) {
+    sty_bg(l->bri.arc, t->text, LV_OPA_COVER, LV_PART_KNOB);
+  } else {
+    sty_bg(l->bri.arc, t->text, LV_OPA_TRANSP, LV_PART_KNOB);
+  }
+
+  /* colour / temperature ring */
+  int col_v = -1;
+  if (l->carc) {
+    lt_ensure_img(l);
+    int mv = lt_model_col_v(l);
+    col_v = drag_col ? l->drag_v : (pend_col && l->pend_vkind == l->vkind) ? l->pend_v : mv;
+    set_hidden(l->carc, !col_vis);
+    lv_opa_t aop = on || drag_col ? LV_OPA_COVER : LV_OPA_40;
+    if (lv_obj_get_style_arc_opa(l->carc, LV_PART_MAIN) != aop) lv_obj_set_style_arc_opa(l->carc, aop, LV_PART_MAIN);
+    if (col_v >= 0) {
+      if (lv_arc_get_value(l->carc) != col_v) lv_arc_set_value(l->carc, col_v);
+      ru_ring_color_fn fn = l->vkind == RU_RING_HUE ? l->hk.hue_fn : l->hk.temp_fn;
+      lv_color_t kc = rgb_of(fn((float)col_v / (float)LT_RANGE));
+      sty_bg(l->carc, kc, aop, LV_PART_KNOB);
+      sty_border(l->carc, l->ro || !known ? 0 : ru_u(0.6f) < 2 ? 2 : ru_u(0.6f), t->text, aop, LV_PART_KNOB);
+    } else {
+      sty_bg(l->carc, t->text, LV_OPA_TRANSP, LV_PART_KNOB);
+      sty_border(l->carc, 0, t->text, LV_OPA_TRANSP, LV_PART_KNOB);
+    }
+  }
+
+  /* centre disc */
+  lv_color_t dtint = lamp;
+  if (drag_col && l->carc) {
+    ru_ring_color_fn fn = l->vkind == RU_RING_HUE ? l->hk.hue_fn : l->hk.temp_fn;
+    dtint = rgb_of(fn((float)l->drag_v / (float)LT_RANGE));
+  } else if (!drag_col && pend_col && l->carc && col_v >= 0) {
+    ru_ring_color_fn fn = l->vkind == RU_RING_HUE ? l->hk.hue_fn : l->hk.temp_fn;
+    dtint = rgb_of(fn((float)col_v / (float)LT_RANGE));
+  }
+  if (lit || pend_bri || pend_col) {
+    sty_bg(l->disc, ru_dim(dtint, 60), LV_OPA_COVER, LV_PART_MAIN);
+    sty_border(l->disc, 2, ru_dim(dtint, 140), LV_OPA_COVER, LV_PART_MAIN);
+  } else {
+    sty_bg(l->disc, t->surface, LV_OPA_COVER, LV_PART_MAIN);
+    sty_border(l->disc, 2, t->track, LV_OPA_COVER, LV_PART_MAIN);
+  }
+  char buf[24];
+  if (!known) snprintf(buf, sizeof buf, "--");
+  else if (!lit && !pend_bri && !pend_col) snprintf(buf, sizeof buf, "OFF");
+  else snprintf(buf, sizeof buf, "%d%%", lt_pct(l, bv));
+  set_label(l->hero, buf);
+  set_text_color(l->hero, lit || pend_bri || pend_col ? t->text : t->text_dim);
+  icon_recolor(l->glyph, lit || pend_bri || pend_col ? t->text : ru_dim(t->text_dim, 150));
+
+  /* caption: feedback, then the read-only reason, then the word for what the visible ring edits */
+  const char *cap;
+  lv_color_t capc = t->text_dim;
+  if (l->fb != RU_LIGHT_FB_NONE && l->fb_text[0]) {
+    cap = l->fb_text;
+    capc = l->fb == RU_LIGHT_FB_OK ? t->ok : l->fb == RU_LIGHT_FB_WARN ? t->warn : l->fb == RU_LIGHT_FB_ERROR ? t->error : t->text_dim;
+  } else if (l->ro && l->ro_text[0]) {
+    cap = l->ro_text;
+    capc = t->warn;
+  } else if (!known) {
+    cap = "";
+  } else if (l->cfg.two_rings && l->carc) {
+    /* two rings: the caption names the colour (or the white); brightness has the % */
+    cap = lt_word(l, true, col_v);
+  } else {
+    bool cview = l->show_col && l->carc;
+    cap = lt_word(l, cview, col_v);
+  }
+  set_label(l->cap, cap);
+  set_text_color(l->cap, capc);
+
+  /* chips */
+  if (l->pill) {
+    bool show = !l->ro && known;
+    set_hidden(l->pill, !show);
+    for (int i = 0; i < l->nchip; i++) {
+      bool sel;
+      switch (l->chip_kind[i]) {
+        case CHIP_BRI: sel = !l->cfg.two_rings && !l->show_col; break;
+        case CHIP_COLOUR: sel = l->carc && (l->cfg.two_rings || l->show_col) && l->vkind == RU_RING_HUE; break;
+        default: sel = (l->carc && (l->cfg.two_rings || l->show_col) && l->vkind == RU_RING_TEMP) ||
+                       (!(l->cfg.caps & RU_LIGHT_CAP_CT) && s->mode == RU_LIGHT_WHITE); break;
+      }
+      sty_bg(l->chip[i], t->text, sel ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+      set_text_color(l->chip[i], sel ? t->void_bg : t->text_dim);
+    }
+  }
+  set_clickable(l->touch, !l->ro && known);
+}
+
+/* ---- interaction ---- */
+
+static int lt_cmd_value(const light_t *l, lt_zone_t z, int v) {
+  if (z == ZONE_BRI) return v;
+  if (l->vkind == RU_RING_HUE) return v % 360;
+  return (int)lroundf(100.0f - (float)v / 3.6f); /* temperature: warmth 0..100 */
+}
+
+static void lt_point(int *x, int *y) {
+  lv_point_t p = { 0, 0 };
+  lv_indev_t *in = lv_indev_active();
+  if (in) lv_indev_get_point(in, &p);
+  *x = p.x;
+  *y = p.y;
+}
+
+static bool lt_drag_update(light_t *l, int x, int y) {
+  float cx, cy;
+  lt_centre(l, &cx, &cy);
+  float deg = atan2f((float)y - cy, (float)x - cx) * 180.0f / PI_F, p = 0;
+  if (deg < 0) deg += 360.0f;
+  if (!lt_sweep_p(deg, 90.0f, &p)) return false;
+  int v;
+  if (l->zone == ZONE_BRI) v = (int)lroundf(p * (float)l->max);
+  else if (l->vkind == RU_RING_HUE) { v = (int)lroundf(p * (float)LT_RANGE); if (v > 359) v = 359; }
+  else v = (int)lroundf(p * (float)LT_RANGE);
+  if (l->dragging && v == l->drag_v) return false;
+  l->drag_v = v;
+  l->dragging = true;
+  lt_paint(l);
+  return true;
+}
+
+static void lt_emit(light_t *l, ru_light_cmd_t c, int v, bool fin) {
+  if (l->cb) l->cb(l->root, c, v, fin, l->ud);
+}
+
+static void lt_touch_event(lv_event_t *e) {
+  lv_obj_t *o = lv_event_get_target(e);
+  light_t *l = lt_get(lv_obj_get_parent(o));
+  if (!l) return;
+  lv_event_code_t code = lv_event_get_code(e);
+  int x, y;
+  lt_point(&x, &y);
+  if (code == LV_EVENT_PRESSED) {
+    l->zone = lt_zone_of(l, x, y, NULL);
+    l->px0 = x;
+    l->py0 = y;
+    l->moved_far = false;
+    l->dragging = false;
+    if (l->zone == ZONE_BRI || l->zone == ZONE_COL) {
+      l->pend = false;
+      lt_drag_update(l, x, y);
+      if (l->dragging) lt_emit(l, l->zone == ZONE_BRI ? RU_LIGHT_CMD_LEVEL : l->vkind == RU_RING_HUE ? RU_LIGHT_CMD_HUE : RU_LIGHT_CMD_TEMP,
+                               lt_cmd_value(l, l->zone, l->drag_v), false);
+    }
+  } else if (code == LV_EVENT_PRESSING) {
+    if (l->zone == ZONE_DISC) {
+      int dx = x - l->px0, dy = y - l->py0;
+      if (dx * dx + dy * dy >= LT_TAP_PX * LT_TAP_PX) l->moved_far = true;
+    } else if (l->zone == ZONE_BRI || l->zone == ZONE_COL) {
+      if (lt_drag_update(l, x, y))
+        lt_emit(l, l->zone == ZONE_BRI ? RU_LIGHT_CMD_LEVEL : l->vkind == RU_RING_HUE ? RU_LIGHT_CMD_HUE : RU_LIGHT_CMD_TEMP,
+                lt_cmd_value(l, l->zone, l->drag_v), false);
+    }
+  } else if (code == LV_EVENT_RELEASED) {
+    lt_zone_t z = l->zone;
+    l->zone = ZONE_NONE;
+    if (z == ZONE_DISC) {
+      int dx = x - l->px0, dy = y - l->py0;
+      bool far = l->moved_far || dx * dx + dy * dy >= LT_TAP_PX * LT_TAP_PX;
+      if (!far && l->have_st && l->st.known) lt_emit(l, RU_LIGHT_CMD_POWER, l->st.on ? 0 : 1, true);
+    } else if ((z == ZONE_BRI || z == ZONE_COL) && l->dragging) {
+      int v = l->drag_v;
+      l->dragging = false;
+      l->pend = true;
+      l->pend_zone = z;
+      l->pend_v = v;
+      l->pend_vkind = l->vkind;
+      lt_zone_t zz = l->zone;
+      l->zone = z; /* lt_cmd_value reads the ring */
+      int cv = lt_cmd_value(l, z, v);
+      l->zone = zz;
+      lt_paint(l);
+      lt_emit(l, z == ZONE_BRI ? RU_LIGHT_CMD_LEVEL : l->vkind == RU_RING_HUE ? RU_LIGHT_CMD_HUE : RU_LIGHT_CMD_TEMP, cv, true);
+    }
+  } else if (code == LV_EVENT_PRESS_LOST) {
+    l->zone = ZONE_NONE;
+    if (l->dragging) { l->dragging = false; lt_paint(l); }
+  }
+}
+
+static void lt_chip_apply(light_t *l, int i) {
+  if (i < 0 || i >= l->nchip || l->ro) return;
+  switch (l->chip_kind[i]) {
+    case CHIP_BRI: l->show_col = false; l->user_view = true; break;
+    case CHIP_COLOUR: if (!l->cfg.two_rings) l->show_col = true; l->vkind = RU_RING_HUE; l->user_view = true; break;
+    default:
+      if (l->cfg.caps & RU_LIGHT_CAP_CT) { if (!l->cfg.two_rings) l->show_col = true; l->vkind = RU_RING_TEMP; l->user_view = true; }
+      else lt_emit(l, RU_LIGHT_CMD_WHITE, 0, true); /* single white channel: the chip is a plain command, no ring */
+      break;
+  }
+  lt_paint(l);
+}
+
+static void lt_chip_click(lv_event_t *e) {
+  lv_obj_t *o = lv_event_get_target(e);
+  light_t *l = lt_get(lv_obj_get_parent(lv_obj_get_parent(o)));
+  if (l) lt_chip_apply(l, (int)(intptr_t)lv_event_get_user_data(e));
+}
+
+static void lt_derive_view(light_t *l, int prev_mode, bool first) {
+  if (!first && l->st.mode != prev_mode) l->user_view = false;
+  if (l->user_view) return;
+  int caps = l->cfg.caps;
+  bool rgb = caps & RU_LIGHT_CAP_RGB, ct = caps & RU_LIGHT_CAP_CT;
+  if (rgb && ct) l->vkind = (l->st.mode == RU_LIGHT_WHITE || l->st.mode == RU_LIGHT_TEMP) ? RU_RING_TEMP : RU_RING_HUE;
+  else l->vkind = ct && !rgb ? RU_RING_TEMP : RU_RING_HUE;
+}
+
+lv_obj_t *ru_light_create(lv_obj_t *parent, int d, const ru_light_cfg_t *cfg) {
+  const ru_theme_t *t = ru_theme();
+  int caps = cfg->caps & 7;
+  bool colour = (caps & (RU_LIGHT_CAP_RGB | RU_LIGHT_CAP_CT)) != 0;
+  bool two = cfg->two_rings;
+  int S = d + 2 * ring_glow_extent();
+  lv_obj_t *root = ru_cont_new(parent, 0, 0, S, S);
+  lv_obj_align(root, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_update_layout(root);
+  light_t *l = wd_attach(root, sizeof(light_t));
+  l->root = root;
+  l->cfg = *cfg;
+  l->cfg.caps = caps;
+  if (cfg->hooks) l->hk = *cfg->hooks;
+  l->cfg.hooks = NULL;
+  l->max = cfg->max < 1 ? 1 : cfg->max > 100 ? 100 : cfg->max;
+  l->d_ring = d;
+  l->img_kind = -1;
+  l->vkind = (caps & RU_LIGHT_CAP_RGB) ? RU_RING_HUE : RU_RING_TEMP;
+  /* geometry (u = D/100): square: outer ring 86u (2.2u wide) + inner ring 62u (5u wide) + disc 38u; round: one ring (4.4u wide when
+   * chips switch it) + disc 44u. A plain dimmer keeps today's thin ring and gets the disc. */
+  l->wb = (!two && colour) ? ru_u(4.4f) : ru_u(2.2f);
+  l->dc = two ? ru_u(62) : d;
+  l->wc = two ? ru_u(5) : l->wb;
+  l->disc_d = (two && colour) ? ru_u(38) : ru_u(44);
+  l->band_b0 = (two && colour) ? ru_u(37.5f) : ru_u(31);
+  l->band_b1 = ru_u(48.3f);
+  l->band_c0 = ru_u(23.3f);
+  l->band_c1 = ru_u(37.3f);
+  l->disc_r = (two && colour) ? ru_u(23.3f) : ru_u(31);
+
+  ring_init(&l->bri, root, d, l->wb, ROT, SWEEP, l->max, true, false);
+  if (colour) {
+    l->carc = mk_arc(root, l->dc, l->wc, ROT, SWEEP, LT_RANGE);
+    lv_obj_set_style_arc_color(l->carc, t->track, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(l->carc, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    int pad = (ru_u(7.5f) - l->wc) / 2;
+    if (pad < 1) pad = 1;
+    lv_obj_set_style_radius(l->carc, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(l->carc, pad, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(l->carc, LV_OPA_TRANSP, LV_PART_KNOB);
+  }
+  l->disc = circle(root, l->disc_d, 0, 0);
+  l->glyph = ru_icon_power(l->disc, ru_u(7), t->text_dim);
+  lv_obj_align(l->glyph, LV_ALIGN_CENTER, 0, -ru_u(9.5f));
+  l->hero = ru_label_new(l->disc, "--", ru_font_hero(), t->text_dim, l->disc_d / 2, l->disc_d / 2 + ru_u(1.2f));
+  l->cap = ru_label_new(l->disc, "", ru_font_caption(), t->text_dim, l->disc_d / 2, l->disc_d / 2 + ru_u(10.5f));
+  l->touch = lv_obj_create(root);
+  lv_obj_remove_style_all(l->touch);
+  lv_obj_set_size(l->touch, S, S);
+  lv_obj_align(l->touch, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_remove_flag(l->touch, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(l->touch, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(l->touch, lt_touch_event, LV_EVENT_ALL, NULL);
+
+  /* chips: square panels only for lights with colour AND white (a segmented pill COLOUR | WHITE); round panels one per ring the light
+   * has, they switch the single ring */
+  bool rgb = caps & RU_LIGHT_CAP_RGB, white = caps & (RU_LIGHT_CAP_W | RU_LIGHT_CAP_CT);
+  if (two) {
+    if (rgb && white) { l->chip_kind[l->nchip++] = CHIP_COLOUR; l->chip_kind[l->nchip++] = CHIP_WHITE; }
+  } else if (colour) {
+    l->chip_kind[l->nchip++] = CHIP_BRI;
+    if (rgb) l->chip_kind[l->nchip++] = CHIP_COLOUR;
+    if (white) l->chip_kind[l->nchip++] = CHIP_WHITE;
+  }
+  if (l->nchip) {
+    int pw = ru_u(l->nchip == 3 ? 46 : 34), ph = ru_u(8.5f);
+    l->pill = lv_obj_create(root);
+    lv_obj_remove_style_all(l->pill);
+    lv_obj_set_size(l->pill, pw, ph);
+    lv_obj_remove_flag(l->pill, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(l->pill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(l->pill, t->surface, 0);
+    lv_obj_set_style_bg_opa(l->pill, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(l->pill, 1, 0);
+    lv_obj_set_style_border_color(l->pill, ru_dim(t->text_dim, 120), 0);
+    lv_obj_align(l->pill, LV_ALIGN_CENTER, 0, ru_u(27));
+    static const char *const names[3] = { "BRIGHT", "COLOUR", "WHITE" };
+    int cw = (pw - 4) / l->nchip, lh = lv_font_get_line_height(ru_font_caption());
+    for (int i = 0; i < l->nchip; i++) {
+      lv_obj_t *c = lv_label_create(l->pill);
+      l->chip[i] = c;
+      lv_label_set_long_mode(c, LV_LABEL_LONG_MODE_CLIP);
+      lv_label_set_text(c, names[l->chip_kind[i]]);
+      lv_obj_set_size(c, cw, ph - 4);
+      lv_obj_set_pos(c, 2 + i * cw, 2);
+      lv_obj_set_style_text_font(c, ru_font_caption(), 0);
+      lv_obj_set_style_text_align(c, LV_TEXT_ALIGN_CENTER, 0);
+      lv_obj_set_style_pad_top(c, (ph - 4 - lh) / 2, 0);
+      lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
+      lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_add_event_cb(c, lt_chip_click, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    }
+  }
+  lt_paint(l);
+  return root;
+}
+
+void ru_light_set(lv_obj_t *w, const ru_light_state_t *s) {
+  light_t *l = lt_get(w);
+  bool first = !l->have_st;
+  int prev_mode = l->st.mode;
+  bool changed = first || l->st.known != s->known || l->st.on != s->on || l->st.level != s->level || l->st.mode != s->mode ||
+                 l->st.has_hue != s->has_hue || l->st.hue != s->hue || l->st.warmth != s->warmth || l->st.color != s->color;
+  if (!changed) return;
+  l->st = *s;
+  l->have_st = true;
+  if (!first) l->pend = false; /* the model moved: the knob goes to the model value */
+  lt_derive_view(l, prev_mode, first);
+  if (!l->dragging) lt_paint(l);
+}
+
+void ru_light_set_feedback(lv_obj_t *w, ru_light_fb_t st, const char *text) {
+  light_t *l = lt_get(w);
+  if (!text) text = "";
+  if (l->fb == st && !strcmp(l->fb_text, text)) return;
+  if (st != RU_LIGHT_FB_NONE && st != RU_LIGHT_FB_SENDING) l->pend = false;   /* the result is in: the knob goes to the model value */
+  if (st == RU_LIGHT_FB_NONE && l->fb == RU_LIGHT_FB_SENDING) l->pend = false;
+  l->fb = st;
+  snprintf(l->fb_text, sizeof l->fb_text, "%s", text);
+  if (!l->dragging) lt_paint(l);
+}
+
+void ru_light_set_readonly(lv_obj_t *w, bool ro, const char *text) {
+  light_t *l = lt_get(w);
+  if (!text) text = "";
+  if (l->ro == ro && !strcmp(l->ro_text, text)) return;
+  l->ro = ro;
+  snprintf(l->ro_text, sizeof l->ro_text, "%s", text);
+  if (!l->dragging) lt_paint(l);
+}
+
+void ru_light_on_change(lv_obj_t *w, ru_light_cb_t cb, void *ud) {
+  light_t *l = lt_get(w);
+  l->cb = cb;
+  l->ud = ud;
+}
+
+bool ru_light_ring_at(const lv_obj_t *w, int x, int y) {
+  light_t *l = lt_get(w);
+  lt_zone_t z = lt_zone_of(l, x, y, NULL);
+  return z == ZONE_BRI || z == ZONE_COL;
+}
+
+lv_obj_t *ru_light_part(const lv_obj_t *w, int which) {
+  light_t *l = lt_get(w);
+  switch (which) {
+    case 0: return l->root;
+    case 1: return l->bri.arc;
+    case 2: return l->carc;
+    case 3: return l->disc;
+    case 4: return l->hero;
+    case 5: return l->cap;
+    case 6: return l->touch;
+    case 7: return l->pill;
+    case 8: return l->glyph;
+    default: return NULL;
+  }
+}
+
+int ru_light_view(const lv_obj_t *w) {
+  light_t *l = lt_get(w);
+  if (!l->carc || (!l->cfg.two_rings && !l->show_col)) return -1;
+  return l->vkind;
+}
+
+int ru_light_chips(const lv_obj_t *w) { return lt_get(w)->nchip; }
+void ru_light_press_chip(lv_obj_t *w, int i) { lt_chip_apply(lt_get(w), i); }
