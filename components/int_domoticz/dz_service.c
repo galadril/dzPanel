@@ -379,13 +379,13 @@ ru_cfg_test_t dz_service_probe(dz_transport_t *t, void (*set_insecure)(dz_transp
   snprintf(hdr, sizeof hdr, "Authorization: Bearer %s", cfg->token);
   hdrs[0] = hdr;
   dz_net_err_t ne = t->get(t, url, hdrs, timeout_ms, buf, sizeof buf, &r);
-  secure_zero(hdr, sizeof hdr);
+  if (ne != DZ_NET_OK || r.status != 200) secure_zero(hdr, sizeof hdr); /* kept for the MCP check below otherwise */
   if (ne == DZ_NET_TIMEOUT || ne == DZ_NET_CONNECT) return RU_CFG_TEST_UNREACHABLE;
   if (ne == DZ_NET_TLS) return RU_CFG_TEST_TLS;
   if (r.status == 401 || r.status == 403) return RU_CFG_TEST_TOKEN_REJECTED;
   if (ne != DZ_NET_OK || r.status != 200) return RU_CFG_TEST_BAD_RESPONSE;
   dz_result_t res;
-  if (dz_parse_response(buf, r.len, NULL, NULL, &res) != DZ_OK) return RU_CFG_TEST_BAD_RESPONSE;
+  if (dz_parse_response(buf, r.len, NULL, NULL, &res) != DZ_OK) { secure_zero(hdr, sizeof hdr); return RU_CFG_TEST_BAD_RESPONSE; }
   out = RU_CFG_TEST_OK;
   dz_version_t v;
   char ver[16] = "";
@@ -394,20 +394,19 @@ ru_cfg_test_t dz_service_probe(dz_transport_t *t, void (*set_insecure)(dz_transp
    * to idle out on the server (the notification is skipped); its id is wiped here. */
   bool mcp = false;
   if (t->post) {
-    char body[256], sid[65], auth[sizeof "Authorization: Bearer " + RU_CFG_TOKEN_MAX];
-    const char *ph[3] = {auth, "Accept: application/json, text/event-stream", NULL};
+    char body[256], sid[65];
+    const char *ph[3] = {hdr, "Accept: application/json, text/event-stream", NULL}; /* hdr still holds the Authorization header */
     size_t bl = dz_mcp_init_body(body, sizeof body, 1);
     snprintf(url, sizeof url, "%s/mcp", cfg->url);
-    snprintf(auth, sizeof auth, "Authorization: Bearer %s", cfg->token);
     dz_post_t p = {body, bl, "application/json", "Mcp-Session-Id", sid, sizeof sid};
     sid[0] = 0;
     dz_http_result_t pr = {0, 0};
     dz_net_err_t pe = bl ? t->post(t, url, ph, &p, timeout_ms, buf, sizeof buf, &pr) : DZ_NET_CONNECT;
     dz_mcp_reply_t mr;
     mcp = pe == DZ_NET_OK && pr.status == 200 && sid[0] && dz_mcp_parse_reply(buf, pr.len, &mr) == DZ_OK && mr.has_result && !mr.has_error;
-    secure_zero(auth, sizeof auth);
     secure_zero(sid, sizeof sid);
   }
+  secure_zero(hdr, sizeof hdr);
   if (info && info_cap) snprintf(info, info_cap, "%s%scontrol MCP %s", ver, ver[0] ? " " : "", mcp ? "ok" : "unavailable");
   return out;
 }
