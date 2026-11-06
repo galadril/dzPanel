@@ -13,6 +13,7 @@
 
 #include "ru_climate.h"
 #include "ru_climate_ui.h"
+#include "ru_wx.h"
 #include "ru_osal.h"
 
 #define MAX_ROWS 8 /* LVGL objects per screen build: one page of tiles or rows (6 or 4), or the 5 settings rows */
@@ -581,55 +582,43 @@ static ru_dot_state_t dot_of(ru_tile_state_t s) {
   }
 }
 
-/* ---- value tiles of the Temperature and Weather pages: one function per kind, so a richer renderer (icon, big number)
- * can replace one without touching the others. Each fills the small line (kind) and the value text. */
-typedef void (*climate_tile_fn)(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn);
-
-static void ctile_temp(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) {
-  char t[16], h[16];
-  ru_cl_text(dz_dev_room_temp(d), u, t, sizeof t);
-  const dz_reading_t *hr = dz_dev_reading(d, DZ_RK_HUM);
-  if (hr) { ru_cl_text(hr, u, h, sizeof h); snprintf(val, vn, "%s / %s", t, h); snprintf(sub, sn, "TEMP / HUM"); }
-  else { snprintf(val, vn, "%s", t); snprintf(sub, sn, "TEMP"); }
+/* ---- Temperature and Weather tiles (NSPanel style): icon, big value, unit and trend, one small line. What a device shows comes
+ * from ITS OWN readings only (ru_wx.c: one case per kind: temperature/humidity, wind, rain, UV, air, barometer). The widget
+ * is ru_wx_tile_*; a band colours the icon, the value stays white. */
+/* every tile of the Temperature and Weather pages, and a temperature or weather device wherever else it is a tile (favourites) */
+static bool is_wx(const ru_dzapp_t *a, const dz_device_t *d) {
+  if (d->cap == DZ_CAP_SCENE || d->cap == DZ_CAP_GROUP) return false;
+  return d->cap == DZ_CAP_TEMP || d->cap == DZ_CAP_WEATHER || (a->view == RU_VIEW_HOME && (a->section == RU_SEC_TEMP || a->section == RU_SEC_WEATHER));
 }
 
-static void ctile_wind(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) {
-  bool known;
-  ru_cl_summary(d, u, val, vn, &known);
-  if (known && d->dir_str[0] && dz_dev_reading(d, DZ_RK_WIND)) { size_t l = strlen(val); snprintf(val + l, vn - l, " %s", d->dir_str); }
-  snprintf(sub, sn, "WIND");
-}
-
-static void ctile_generic(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn, const char *kind) {
-  bool known;
-  ru_cl_summary(d, u, val, vn, &known);
-  snprintf(sub, sn, "%s", kind);
-}
-static void ctile_rain(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) { ctile_generic(d, u, sub, sn, val, vn, "RAIN"); }
-static void ctile_uv(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) { ctile_generic(d, u, sub, sn, val, vn, "UV"); }
-static void ctile_hum(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) { ctile_generic(d, u, sub, sn, val, vn, "HUMIDITY"); }
-static void ctile_air(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) { ctile_generic(d, u, sub, sn, val, vn, "AIR"); }
-static void ctile_other(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) {
-  if (d->cap == DZ_CAP_WEATHER && d->has_baro && !dz_dev_reading(d, DZ_RK_BARO)) { ru_dzv_baro_text(d, val, vn); snprintf(sub, sn, "BARO"); return; }
-  const dz_reading_t *b = dz_dev_reading(d, DZ_RK_BARO);
-  ctile_generic(d, u, sub, sn, val, vn, b ? "BARO" : cap_label(d->cap));
-}
-
-static void climate_tile(const dz_device_t *d, const dz_units_t *un, char *sub, size_t sn, char *val, size_t vn) {
+static void wx_content(const dz_device_t *d, const dz_units_t *un, ru_wx_tile_t *t) {
   ru_cl_units_t u;
   ru_cl_units(un, &u);
-  climate_tile_fn f;
-  switch (ru_cl_page_of(d)) {
-    case RU_CLP_TEMP: f = ctile_temp; break;
-    case RU_CLP_WIND: f = ctile_wind; break;
-    case RU_CLP_RAIN: f = ctile_rain; break;
-    case RU_CLP_UV: f = ctile_uv; break;
-    case RU_CLP_HUM: f = ctile_hum; break;
-    case RU_CLP_AIR: f = ctile_air; break;
-    default: f = ctile_other; break;
+  ru_wx_tile_build(d, &u, t);
+  if (d->n_rd == 0 && !(d->has_baro && isfinite(d->baro))) { /* a hand-made device: the text of its Data field, no icon */
+    char v[40];
+    bool known;
+    ru_dzv_value_text_u(d, un, v, sizeof v, &known);
+    ru_dzv_clamp(t->value, sizeof t->value, v, sizeof t->value - 3);
+    t->known = known;
   }
-  if (d->n_rd == 0) { bool known; ru_dzv_value_text_u(d, un, val, vn, &known); snprintf(sub, sn, "%s", cap_label(d->cap)); return; } /* hand-made device */
-  f(d, &u, sub, sn, val, vn);
+}
+
+static lv_color_t wx_color(ru_wx_color_t c, lv_color_t none) { return c == RU_WX_NONE ? none : lv_color_hex(ru_wx_color_rgb(c)); }
+
+static void wx_tile_update(ru_dzapp_t *a, lv_obj_t *tile, const dz_device_t *d, ru_val_state_t st) {
+  const ru_theme_t *th = ru_theme();
+  dz_units_t un;
+  get_units(a, &un);
+  ru_wx_tile_t t;
+  wx_content(d, &un, &t);
+  char nm[40];
+  ru_dzv_upper(nm, sizeof nm, t.name); /* the whole app is upper case; the widget cuts a long name with dots */
+  char icon[4];
+  ru_wx_icon_utf8(t.icon, icon);
+  ru_wxtile_data_t w = { nm, icon, wx_color(t.icon_color, th->text), t.value, t.unit, t.second, wx_color(t.second_color, th->text_dim),
+                         t.known ? st : RU_VAL_UNKNOWN };
+  ru_wx_tile_set(tile, &w);
 }
 
 /* The tile content of any entry: an indicator for things with a state, a value for sensors. */
@@ -640,6 +629,14 @@ static void tile_content(const ru_dzapp_t *a, const dz_device_t *d, bool scene, 
   get_units((ru_dzapp_t *)a, &un);
   (void)scene;
   val[0] = 0;
+  if (is_wx(a, d)) { /* for row_info (tests, driver): the tile's value text and small line */
+    ru_wx_tile_t t;
+    *dot = RU_DOT_NONE;
+    wx_content(d, &un, &t);
+    snprintf(val, vn, "%s%s", t.value, t.unit);
+    snprintf(sub, n, "%s", t.second);
+    return;
+  }
   switch (d->cap) {
     case DZ_CAP_SCENE: *dot = RU_DOT_PUSH; snprintf(sub, n, "SCENE"); return;
     case DZ_CAP_GROUP: *dot = dot_of(ru_dzv_tile_state(d)); snprintf(sub, n, "%s", ru_dzv_tile_label(ru_dzv_tile_state(d))); return;
@@ -651,10 +648,7 @@ static void tile_content(const ru_dzapp_t *a, const dz_device_t *d, bool scene, 
       ru_dzv_value_text_u(d, &un, sub, n, &known);
       return;
     case DZ_CAP_TEMP:
-    case DZ_CAP_WEATHER:
-      *dot = RU_DOT_NONE;
-      climate_tile(d, &un, sub, n, val, vn);
-      return;
+    case DZ_CAP_WEATHER: /* handled above */
     case DZ_CAP_READONLY:
     case DZ_CAP_BLINDS:
     case DZ_CAP_SELECTOR:
@@ -702,6 +696,7 @@ static void cb_row(lv_obj_t *w, void *ud) {
 /* The content of a state tile from the model entry: the one place that sets it, on creation and on every refresh. The
  * tile setters compare with what they show and touch nothing that did not change. */
 static void entry_tile_update(ru_dzapp_t *a, lv_obj_t *tile, const dz_device_t *d, bool scene, ru_val_state_t st) {
+  if (is_wx(a, d)) { wx_tile_update(a, tile, d, st); return; }
   char sub[24], val[24];
   ru_dot_state_t dot;
   tile_content(a, d, scene, &dot, sub, sizeof sub, val, sizeof val);
@@ -722,9 +717,10 @@ static lv_obj_t *add_entry_tile(ru_dzapp_t *a, lv_obj_t *parent, int w, int h, c
   char nm[40];
   ru_dzv_upper(nm, sizeof nm, d->name);
   ru_dzv_clamp(nm, sizeof nm, nm, 16);
-  lv_obj_t *tile = ru_state_tile_create(parent, w, h, nm);
+  lv_obj_t *tile = is_wx(a, d) ? ru_wx_tile_create(parent, w, h) : ru_state_tile_create(parent, w, h, nm);
   entry_tile_update(a, tile, d, scene, st);
-  ru_state_tile_on_tap(tile, cb_row, r);
+  if (is_wx(a, d)) ru_wx_tile_on_tap(tile, cb_row, r);
+  else ru_state_tile_on_tap(tile, cb_row, r);
   lv_obj_add_event_cb(tile, cb_press, LV_EVENT_PRESSED, a);
   a->row_tiles[a->nrows++] = tile;
   return tile;

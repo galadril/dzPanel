@@ -1351,6 +1351,7 @@ typedef struct {
   lv_color_t icon_color, second_color;
   ru_val_state_t state;
   const lv_font_t *vfont;
+  int w, h;
   int pos[5][4]; /* x, y, w, h of the five labels as last placed */
   bool placed;
 } wtile_t;
@@ -1385,11 +1386,11 @@ static void wx_styles(void) {
   lv_style_set_text_align(&st_wx_second, LV_TEXT_ALIGN_CENTER);
 }
 
-static lv_obj_t *wx_label(lv_obj_t *parent, lv_style_t *st) {
+static lv_obj_t *wx_label(lv_obj_t *parent, lv_style_t *st, lv_label_long_mode_t mode) {
   lv_obj_t *l = lv_label_create(parent);
   lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_style(l, st, 0);
-  lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  lv_label_set_long_mode(l, mode);
   lv_label_set_text_static(l, "");
   return l;
 }
@@ -1399,6 +1400,19 @@ static int text_w(const char *s, const lv_font_t *f) {
   lv_point_t sz;
   lv_text_get_size(&sz, s, f, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   return sz.x + 1;
+}
+
+/* Cut s (UTF-8) with ".." until it is at most maxw wide. */
+static void fit_text(char *s, const lv_font_t *f, int maxw) {
+  while (s[0] && text_w(s, f) > maxw) {
+    size_t l = strlen(s);
+    size_t cut = l > 3 ? l - 3 : 0;
+    while (cut > 0 && ((unsigned char)s[cut] & 0xC0) == 0x80) cut--;
+    if (l <= 2) { s[0] = 0; break; }
+    s[cut] = 0;
+    strcat(s, "..");
+    if (cut == 0) break;
+  }
 }
 
 /* Place label i at (x, y) with size (w, h) unless it is already there: a style set invalidates even for the same value. */
@@ -1411,34 +1425,35 @@ static void wx_place(wtile_t *s, int i, int x, int y, int w, int h) {
   lv_obj_set_size(l, w, h);
 }
 
-static void wx_layout(lv_obj_t *o, wtile_t *s) {
-  int w = lv_obj_get_width(o), h = lv_obj_get_height(o);
+/* Geometry of the value row from the strings (a pure function of them): the labels are placed, the value text that fits is returned. The
+ * labels clip and never rewrite their text, so the order of text and size changes does not matter. */
+static void wx_layout(lv_obj_t *o, wtile_t *s, char *vshow, size_t vn, char *sshow, size_t sn) {
+  (void)o;
+  int w = s->w, h = s->h;
   int pad = ru_u(1.2f), gap = ru_u(0.8f), room = w - 2 * pad;
   const lv_font_t *cap = ru_font_caption(), *body = ru_font_body(), *icf = ru_font_icon_s();
   int cl = lv_font_get_line_height(cap);
   int name_y = h * 8 / 100, sec_y = h - h * 8 / 100 - cl;
   int rc = (name_y + cl + sec_y) / 2; /* centre line of the value row */
-  /* the name: one line across the tile */
-  wx_place(s, 0, ru_u(1.5f), name_y, w - 2 * ru_u(1.5f), cl);
   /* the value row: icon, value, unit as one centred group; the value font drops until it fits, last the icon goes */
   const lv_font_t *fonts[3] = { ru_font_big(), ru_font_title(), body };
   int uw = text_w(s->unit, body), icw = s->icon[0] ? lv_font_get_line_height(icf) : 0;
   const lv_font_t *vf = body;
   int vw = 0;
   bool icon = icw > 0;
+  snprintf(vshow, vn, "%s", s->value);
   for (int k = 0; k < 4; k++) {
     vf = fonts[k < 3 ? k : 2];
     if (k == 3) icon = false; /* even the small font does not fit beside the icon */
-    vw = text_w(s->value, vf);
-    int total = (icon ? icw + gap : 0) + vw + uw;
-    if (total <= room || k == 3) break;
+    vw = text_w(vshow, vf);
+    if ((icon ? icw + gap : 0) + vw + uw <= room || k == 3) break;
   }
-  int total = (icon ? icw + gap : 0) + vw + uw;
-  if (total > room) { /* still too wide: the value is cut with dots, the unit keeps its room */
-    vw = room - uw - (icon ? icw + gap : 0);
-    if (vw < 0) vw = 0;
-    total = room;
+  int lead = icon ? icw + gap : 0;
+  if (lead + vw + uw > room) { /* still too wide: the value is cut with dots, the unit keeps its room */
+    fit_text(vshow, vf, room - uw - lead);
+    vw = text_w(vshow, vf);
   }
+  int total = lead + vw + uw;
   s->vfont = vf;
   if (lv_obj_get_style_text_font(s->part[2], LV_PART_MAIN) != vf) lv_obj_set_style_text_font(s->part[2], vf, 0);
   int vl = lv_font_get_line_height(vf);
@@ -1451,8 +1466,10 @@ static void wx_layout(lv_obj_t *o, wtile_t *s) {
   int ul = lv_font_get_line_height(body);
   int uy = vy + (vl - vf->base_line) - (ul - body->base_line);
   wx_place(s, 3, x + vw, uy, uw, ul);
-  int sw = text_w(s->second, cap);
-  if (sw > w - 2 * ru_u(2.5f)) sw = w - 2 * ru_u(2.5f); /* the stale dot owns the corner */
+  int sroom = w - 2 * ru_u(2.5f); /* the stale dot owns the corner */
+  snprintf(sshow, sn, "%s", s->second);
+  fit_text(sshow, cap, sroom);
+  int sw = text_w(sshow, cap);
   wx_place(s, 4, (w - sw) / 2, sec_y, sw, cl);
   s->placed = true;
 }
@@ -1477,13 +1494,18 @@ lv_obj_t *ru_wx_tile_create(lv_obj_t *parent, int w, int h) {
   lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(o, LV_OBJ_FLAG_EVENT_BUBBLE);
   wtile_t *s = wd_attach(o, sizeof(wtile_t));
-  s->part[0] = wx_label(o, &st_wx_name);
-  s->part[1] = wx_label(o, &st_wx_icon);
-  lv_label_set_long_mode(s->part[1], LV_LABEL_LONG_CLIP);
-  s->part[2] = wx_label(o, &st_wx_unit); /* the value label: unit style gives font and colour, both are set per tile state below */
+  s->w = w;
+  s->h = h;
+  /* the name label has its final size from the start: LONG_DOT rewrites the text for the width it has when the text is set */
+  int cl = lv_font_get_line_height(ru_font_caption());
+  s->part[0] = wx_label(o, &st_wx_name, LV_LABEL_LONG_DOT);
+  lv_obj_set_pos(s->part[0], ru_u(1.5f), h * 8 / 100);
+  lv_obj_set_size(s->part[0], w - 2 * ru_u(1.5f), cl);
+  s->part[1] = wx_label(o, &st_wx_icon, LV_LABEL_LONG_CLIP);
+  s->part[2] = wx_label(o, &st_wx_unit, LV_LABEL_LONG_CLIP); /* the value label: unit style gives font and colour, both are set per tile state below */
   lv_obj_set_style_text_color(s->part[2], t->text, 0);
-  s->part[3] = wx_label(o, &st_wx_unit);
-  s->part[4] = wx_label(o, &st_wx_second);
+  s->part[3] = wx_label(o, &st_wx_unit, LV_LABEL_LONG_CLIP);
+  s->part[4] = wx_label(o, &st_wx_second, LV_LABEL_LONG_CLIP);
   int dd = ru_u(1.1f); /* 6 px at the usual size */
   lv_obj_t *dot = lv_obj_create(o);
   lv_obj_remove_style_all(dot);
@@ -1512,13 +1534,20 @@ void ru_wx_tile_set(lv_obj_t *o, const ru_wxtile_data_t *d) {
   snprintf(second, sizeof second, "%s", d->second ? d->second : "");
   bool first = !s->inited;
   s->inited = true;
-  if (first || strcmp(name, s->name)) { memcpy(s->name, name, sizeof name); lv_label_set_text(s->part[0], name); }
   bool relayout = first;
-  if (first || strcmp(icon, s->icon)) { memcpy(s->icon, icon, sizeof icon); lv_label_set_text(s->part[1], icon); relayout = true; }
-  if (first || strcmp(value, s->value)) { memcpy(s->value, value, sizeof value); lv_label_set_text(s->part[2], value); relayout = true; }
-  if (first || strcmp(unit, s->unit)) { memcpy(s->unit, unit, sizeof unit); lv_label_set_text(s->part[3], unit); relayout = true; }
-  if (first || strcmp(second, s->second)) { memcpy(s->second, second, sizeof second); lv_label_set_text(s->part[4], second); relayout = true; }
-  if (relayout) wx_layout(o, s);
+  if (first || strcmp(name, s->name)) { memcpy(s->name, name, sizeof name); set_label(s->part[0], name); }
+  if (first || strcmp(icon, s->icon)) { memcpy(s->icon, icon, sizeof icon); relayout = true; }
+  if (first || strcmp(value, s->value)) { memcpy(s->value, value, sizeof value); relayout = true; }
+  if (first || strcmp(unit, s->unit)) { memcpy(s->unit, unit, sizeof unit); relayout = true; }
+  if (first || strcmp(second, s->second)) { memcpy(s->second, second, sizeof second); relayout = true; }
+  if (relayout) {
+    char vshow[sizeof s->value], sshow[sizeof s->second];
+    wx_layout(o, s, vshow, sizeof vshow, sshow, sizeof sshow);
+    set_label(s->part[1], s->icon);
+    set_label(s->part[2], vshow);
+    set_label(s->part[3], s->unit);
+    set_label(s->part[4], sshow);
+  }
   bool grey = d->state != RU_VAL_OK;
   s->state = d->state;
   set_text_color(s->part[1], grey ? t->stale : d->icon_color);

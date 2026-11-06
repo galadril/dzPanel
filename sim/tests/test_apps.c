@@ -876,6 +876,26 @@ static int overlap_tiles(lv_obj_t *o, int *tiles) {
       if (_lv_area_intersect(&x, &nm, &sb)) bad++;
     }
   }
+  /* a weather tile: name, icon, value, unit, small line, dot (ru_wx_tile): nothing touches, everything inside the tile */
+  if (lv_obj_get_child_count(o) == 6 && lv_obj_check_type(lv_obj_get_child(o, 0), &lv_label_class) && lv_obj_check_type(lv_obj_get_child(o, 4), &lv_label_class)) {
+    lv_area_t t;
+    lv_obj_get_coords(o, &t);
+    (*tiles)++;
+    for (uint32_t i = 0; i < 5; i++) {
+      lv_obj_t *a = lv_obj_get_child(o, (int32_t)i);
+      if (lv_obj_has_flag(a, LV_OBJ_FLAG_HIDDEN) || !lv_label_get_text(a)[0]) continue;
+      lv_area_t ca, x;
+      lv_obj_get_coords(a, &ca);
+      if (ca.x1 < t.x1 || ca.x2 > t.x2 || ca.y1 < t.y1 || ca.y2 > t.y2) bad++;
+      for (uint32_t j = i + 1; j < 5; j++) {
+        lv_obj_t *b = lv_obj_get_child(o, (int32_t)j);
+        if (lv_obj_has_flag(b, LV_OBJ_FLAG_HIDDEN) || !lv_label_get_text(b)[0]) continue;
+        lv_area_t cb;
+        lv_obj_get_coords(b, &cb);
+        if (_lv_area_intersect(&x, &ca, &cb)) bad++;
+      }
+    }
+  }
   for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) bad += overlap_tiles(lv_obj_get_child(o, i), tiles);
   return bad;
 }
@@ -920,8 +940,8 @@ static void climate_tiles_long(int size) {
       int expect = cnt[1] - pg * 6 < 6 ? cnt[1] - pg * 6 : 6;
       if (tiles != expect) printf("section %d page %d: tiles %d expected %d\n", k, pg, tiles, expect);
       CHECK(tiles == expect);
-      saw_both = saw_both || shows(a, " / ");
-      saw_wind = saw_wind || shows(a, "TEMP / HUM") || shows(a, "WIND");
+      saw_both = saw_both || shows(a, "%"); /* the humidity line of a temperature tile */
+      saw_wind = saw_wind || shows(a, "G "); /* the gust line of a wind tile */
       saw_dots = saw_dots || shows(a, "...");
       screen_ok(&s, a, "climate tiles", size);
       if (pg + 1 < pages) CHECK(ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2));

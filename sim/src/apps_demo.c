@@ -205,7 +205,7 @@ static void hold_at(int x, int y, uint32_t ms) {
 static appfx_set_t set_for(const char *n) {
   if (!strcmp(n, "home_climate_f") || !strcmp(n, "climate_temp_f") || !strcmp(n, "climate_wind_f") || !strcmp(n, "detail_setpoint_f")) return APPFX_CLIMATE_IMPERIAL;
   if (!strcmp(n, "climate_nounits") || !strcmp(n, "detail_setpoint_nounits")) return APPFX_CLIMATE_NOUNITS;
-  if (!strcmp(n, "home_climate") || !strncmp(n, "climate_", 8) || !strcmp(n, "detail_climate_wind") || !strcmp(n, "detail_thermo6") || !strncmp(n, "detail_setpoint", 15) ||
+  if (!strcmp(n, "home_climate") || !strcmp(n, "temperature") || !strcmp(n, "weather") || !strncmp(n, "climate_", 8) || !strcmp(n, "detail_climate_wind") || !strcmp(n, "detail_thermo6") || !strncmp(n, "detail_setpoint", 15) ||
       !strcmp(n, "detail_radiator") || !strcmp(n, "detail_evohome") || !strcmp(n, "detail_mode") || !strcmp(n, "confirm_setpoint"))
     return APPFX_CLIMATE_METRIC;
   if (!strcmp(n, "home_favs_none")) return APPFX_MOCK_NOFAV;

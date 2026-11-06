@@ -260,11 +260,19 @@ void ru_wx_tile_build(const dz_device_t *d, const ru_cl_units_t *u, ru_wx_tile_t
           if (f != RU_WX_ICON_GAUGE) snprintf(o->second, sizeof o->second, "FORECAST");
         }
       } else if (d->n_rd) {
-        char t[sizeof o->value];
-        bool k;
-        ru_cl_summary(d, u, t, sizeof t, &k); /* lux, text, anything else: its own summary, no icon */
-        snprintf(o->value, sizeof o->value, "%s", t);
-        o->known = k;
+        /* lux, solar, visibility, text, anything else: the first number with its own unit (no icon), else the summary text */
+        const dz_reading_t *g = NULL;
+        for (int i = 0; i < d->n_rd && !g; i++) if (rd_ok(&d->rd[i]) && d->rd[i].kind != DZ_RK_TEXT) g = &d->rd[i];
+        if (g) {
+          split_text(g, u, o->value, sizeof o->value, o->unit, sizeof o->unit);
+          o->known = true;
+        } else {
+          char t[sizeof o->value];
+          bool k;
+          ru_cl_summary(d, u, t, sizeof t, &k);
+          snprintf(o->value, sizeof o->value, "%s", t);
+          o->known = k;
+        }
       }
       break;
     }
