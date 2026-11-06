@@ -331,6 +331,13 @@ static void do_preflight(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   dz_units_t units;
   dz_model_units(c->model, &units);
   if (!fresh.controllable || !cap_allows(&fresh, s->req.kind, &units)) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
+  /* the risk class may have risen since the last poll (a switch that became a lock, a dimmer that became a group member...):
+   * a tap that was SAFE is not a confirmed hold, so the stale decision does not stand */
+  if (fresh.cap != s->pre.cap || (dz_cmd_risk(&fresh, s->req.kind, &units) == DZ_RISK_CONFIRM && !s->req.confirmed)) {
+    s->fail = DZ_FAIL_REJECTED;
+    finish(c, s, DZ_OUT_FAILED, &fresh);
+    return;
+  }
   if (s->req.kind == DZ_CMD_SET_LEVEL && (fresh.max_level <= 0 || fresh.max_level > 100)) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
   s->pre = fresh;
   s->state = 3;

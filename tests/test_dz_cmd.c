@@ -743,6 +743,20 @@ static void test_preflight(void) {
   setup(true);
   xm = X_PREFLIGHT_404;
   CHECK(run(DZ_CMD_ON, "1", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_FAILED && LAST.fail == DZ_FAIL_BAD_RESPONSE && cmd_calls == 0);
+  /* B5: a switch that became a lock between the last poll and the tap: the tap was SAFE, so nothing is sent, confirmed or not */
+  for (int conf = 0; conf < 2; conf++) {
+    setup(true);
+    S[0].stv = 19; strcpy(S[0].status, "Locked"); strcpy(S[0].data, "Locked");
+    CHECK(run(DZ_CMD_OFF, "1", 0, 0, conf, NULL) == DZ_CMD_ACCEPTED);
+    CHECK(nres == 1 && LAST.outcome == DZ_OUT_FAILED && LAST.fail == DZ_FAIL_REJECTED && cmd_calls == 0 && mcp_inits == 0 && applied == 0);
+  }
+  /* the same capability stays SAFE: still sent */
+  setup(true);
+  CHECK(run(DZ_CMD_ON, "1", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  /* a group member command unaffected; a dimmer that turned into something else is refused too */
+  setup(true);
+  S[1].stv = 0; /* dimmer 2 lost its dimming: capability changed to on/off */
+  CHECK(run(DZ_CMD_ON, "2", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.fail == DZ_FAIL_REJECTED && cmd_calls == 0);
   /* a scene that is protected */
   setup(true);
   find("1", true)->protectedf = 1;
