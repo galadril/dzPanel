@@ -1359,7 +1359,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       break;
     }
     case DZ_CAP_MODE: {
-      /* a selector over Modes; the command is thermostatstate (UNVERIFIED on a live server), always behind a hold */
+      /* a selector over Modes, shown read-only: the MCP endpoint has no thermostat-mode tool */
       int n = d.n_modes < MAX_NAMES ? d.n_modes : MAX_NAMES;
       for (int i = 0; i < n; i++) { if (!ru_cl_mode_name(&d, i, a->names[i], NAME_LEN)) snprintf(a->names[i], NAME_LEN, "?"); a->name_ptrs[i] = a->names[i]; }
       if (n < 2) goto info;

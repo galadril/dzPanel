@@ -45,10 +45,6 @@ static const mark_tag_t k_poll_tags[] = {
     {"param=getplans", "get plans begin", "get plans end"},
     {"param=getconfig", "get config begin", "get config end"},
     {"param=getversion", "get version begin", "get version end"},
-    {"param=switchlight", "cmd switch begin", "cmd switch end"},
-    {"param=switchscene", "cmd scene begin", "cmd scene end"},
-    {"param=setsetpoint", "cmd setpoint begin", "cmd setpoint end"},
-    {"param=thermostatstate", "cmd thermostat begin", "cmd thermostat end"},
 };
 
 static dz_net_err_t mark_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms, char *buf,

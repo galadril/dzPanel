@@ -1,7 +1,11 @@
 /* Dev tool, not a unit test. Reads a live Domoticz through the curl transport and compares it with
- * the parser; optionally proves one control path on group idx 6 only (On, then Off, verified).
+ * the parser; optionally proves the MCP control path on one test dimmer (--mcp).
  *
- *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check https://host [--control6 | --tabs | --lights]
+ *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check https://host [--mcp | --tabs | --lights]
+ *
+ * --mcp: the control path through the Domoticz MCP endpoint, via the firmware's own code (dz_cmd: pre-flight read, initialize,
+ * tools/call, verify read). Touches ONLY device idx 907 (a test dimmer): On, Off, level 30, then restores the level and state
+ * it found. Prints statuses and fixed words only. Use it against a server and token you may switch things on.
  *
  * --tabs: compares the server's filter=light|temp|weather|utility membership with dz_tabs_of() and prints a diff
  * report (by Type / SubType and direction only; no idx, name or URL credentials).
@@ -53,16 +57,6 @@ static int req(const char *q, dz_http_result_t *r) {
   printf("  GET %-22s -> net=%s http=%d bytes=%zu\n", strncmp(q, "param=getdevices", 16) == 0 ? "param=getdevices..." : q, dz_net_err_name(e),
          r->status, r->len);
   return e == DZ_NET_OK && r->status == 200;
-}
-
-static int scene_status_off(void) {
-  dz_http_result_t r;
-  if (!req("param=getscenes", &r)) return -1;
-  dz_model_apply(&M, buf, r.len, DZ_COMMIT_FULL_SCENES, ru_now_ms(), NULL, NULL);
-  dz_device_t d;
-  if (!dz_model_get(&M, "6", true, &d, NULL, NULL, ru_now_ms())) return -2;
-  printf("  scene 6 status: %s\n", d.status);
-  return !strcmp(d.status, "Off");
 }
 
 /* ---- --tabs: server filter membership versus dz_tabs_of ---- */
@@ -167,9 +161,61 @@ static int lights_report(void) {
   return tot == on ? 0 : 1;
 }
 
+/* ---- --mcp: On, Off, level 30 and a restore on idx 907 only ---- */
+#define MCP_IDX "907"
+static bool run_cmd(dz_cmd_kind_t kind, int level, const char *what) {
+  ru_sleep_ms(1500);
+  done = 0;
+  outcome = -1;
+  failkind = 0;
+  dz_cmd_req_t q = {.kind = kind, .idx = MCP_IDX, .level = level, .confirmed = true};
+  dz_cmd_err_t e = dz_cmd_submit(&K, &q, ru_now_ms(), NULL);
+  if (e != DZ_CMD_ACCEPTED) { printf("  %-14s refused: %s\n", what, dz_cmd_err_name(e)); return false; }
+  for (int i = 0; !done && i < 200; i++) {
+    uint32_t w = dz_cmd_ms_until_due(&K, ru_now_ms());
+    if (w && w != UINT32_MAX) ru_sleep_ms(w);
+    dz_cmd_pump(&K, ru_now_ms());
+  }
+  printf("  %-14s result: %s (fail=%d) mcp session %s, %u requests\n", what, dz_outcome_name((dz_outcome_t)outcome), failkind,
+         C.mcp_sid[0] ? "held" : "none", C.requests);
+  return outcome == DZ_OUT_CONFIRMED;
+}
+
+static bool read907(dz_device_t *out) {
+  dz_http_result_t r;
+  ru_sleep_ms(1500);
+  if (!req("param=getdevices&rid=" MCP_IDX, &r)) return false;
+  int changed = 0;
+  if (dz_model_apply(&M, buf, r.len, DZ_COMMIT_PARTIAL, ru_now_ms(), NULL, &changed) != DZ_OK) return false;
+  return dz_model_get(&M, MCP_IDX, false, out, NULL, NULL, ru_now_ms());
+}
+
+static int mcp_check(void) {
+  int rc = 0;
+  dz_device_t d0, d1;
+  puts("4. MCP control on one test dimmer (idx 907 only)");
+  if (!read907(&d0)) { puts("  device 907 not readable: refusing"); return 1; }
+  bool was_on = dz_status_is_on(&d0);
+  int lvl0 = d0.has_level ? d0.level : -1;
+  printf("  start: status '%s' level %d cap %s controllable %d protected %d\n", d0.status, lvl0, dz_cap_name(d0.cap), d0.controllable, d0.is_protected);
+  if (d0.cap != DZ_CAP_DIMMER || !d0.controllable || d0.is_protected) { puts("  not a controllable dimmer: refusing"); return 1; }
+  dz_cmd_init(&K, &C, &M, true, on_res, NULL);
+  K.verify_delay_ms = 2500;
+  rc |= !run_cmd(DZ_CMD_ON, -1, "set On");
+  rc |= !run_cmd(DZ_CMD_OFF, -1, "set Off");
+  rc |= !run_cmd(DZ_CMD_SET_LEVEL, 30, "level 30");
+  /* restore: the level it had (when known), then Off if it was Off */
+  if (lvl0 > 0) rc |= !run_cmd(DZ_CMD_SET_LEVEL, lvl0, "restore level");
+  if (!was_on) rc |= !run_cmd(DZ_CMD_OFF, -1, "restore Off");
+  if (!read907(&d1)) { puts("  final read failed"); return 1; }
+  printf("  final: status '%s' level %d (started '%s' level %d)\n", d1.status, d1.has_level ? d1.level : -1, d0.status, lvl0);
+  if (dz_status_is_on(&d1) != was_on) { puts("  WARNING: state differs from the start"); rc = 1; }
+  return rc;
+}
+
 int main(int argc, char **argv) {
   const char *url = argc > 1 ? argv[1] : "https://domoticz.hnogames.nl";
-  bool control = argc > 2 && !strcmp(argv[2], "--control6");
+  bool mcp = argc > 2 && !strcmp(argv[2], "--mcp");
   bool tabs = argc > 2 && !strcmp(argv[2], "--tabs");
   bool lights = argc > 2 && !strcmp(argv[2], "--lights");
   char token[DZ_TOKEN_MAX];
@@ -196,6 +242,14 @@ int main(int argc, char **argv) {
   dz_version_parse(vt, &v);
   printf("  parse=%d version=%d.%d build=%d valid=%d\n", pe, v.year, v.minor, v.build, v.valid);
   if (pe != DZ_OK || !v.valid) rc = 1;
+
+  if (mcp) {
+    rc = mcp_check() || rc;
+    printf("requests made: %u\n", C.requests);
+    dz_model_deinit(&M);
+    dz_transport_destroy(tr);
+    return rc;
+  }
 
   if (lights) {
     gap();
@@ -251,45 +305,6 @@ int main(int argc, char **argv) {
     if (pe != DZ_OK) rc = 1;
   }
 
-  if (control) {
-    puts("4. control path on group 6 only: switchscene On then Off");
-    gap();
-    int off = scene_status_off();
-    if (off != 1) { puts("  group 6 missing or not Off at start: refusing"); return 1; }
-    dz_cmd_init(&K, &C, &M, true, on_res, NULL);
-    K.verify_delay_ms = 3500;
-    const dz_cmd_kind_t seq[2] = {DZ_CMD_SCENE_ON, DZ_CMD_SCENE_OFF};
-    for (int s = 0; s < 2; s++) {
-      gap();
-      done = 0;
-      dz_cmd_req_t q = {.kind = seq[s], .idx = "6", .confirmed = true};
-      dz_cmd_err_t e = dz_cmd_submit(&K, &q, ru_now_ms(), NULL);
-      printf("  submit %s -> %s\n", s ? "Off" : "On", dz_cmd_err_name(e));
-      if (e != DZ_CMD_ACCEPTED) { rc = 1; break; }
-      while (!done) {
-        uint32_t w = dz_cmd_ms_until_due(&K, ru_now_ms());
-        if (w) ru_sleep_ms(w);
-        dz_cmd_pump(&K, ru_now_ms());
-      }
-      printf("  result: %s (fail=%d)\n", dz_outcome_name((dz_outcome_t)outcome), failkind);
-      if (outcome != DZ_OUT_CONFIRMED) rc = 1;
-    }
-    gap();
-    int fin = scene_status_off();
-    printf("  final: group 6 Off verified = %s\n", fin == 1 ? "YES" : "NO");
-    if (fin != 1) {
-      /* leave the house as we found it */
-      gap();
-      dz_cmd_req_t q = {.kind = DZ_CMD_SCENE_OFF, .idx = "6", .confirmed = true};
-      done = 0;
-      dz_cmd_submit(&K, &q, ru_now_ms(), NULL);
-      while (!done) { uint32_t w = dz_cmd_ms_until_due(&K, ru_now_ms()); if (w) ru_sleep_ms(w); dz_cmd_pump(&K, ru_now_ms()); }
-      gap();
-      fin = scene_status_off();
-      printf("  recovery Off verified = %s\n", fin == 1 ? "YES" : "NO");
-      rc = 1;
-    }
-  }
   printf("requests made: %u, state=%s\n", C.requests, dz_conn_state_name(dz_client_state(&C)));
   dz_model_deinit(&M);
   dz_transport_destroy(tr);

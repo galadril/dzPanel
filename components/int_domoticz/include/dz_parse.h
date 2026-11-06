@@ -25,7 +25,7 @@ typedef enum {
   DZ_CAP_SCENE, /* Domoticz "Scene": PUSH ONLY. It has an On command and no Off, and no state worth toggling */
   DZ_CAP_GROUP, /* Domoticz "Group": toggles On and Off; its state is On, Off or Mixed */
   DZ_CAP_SENSOR, /* any other device with a readable value and no control: shown generically from its readings */
-  DZ_CAP_MODE    /* thermostat / fan mode (Mode + Modes); set with thermostatstate (UNVERIFIED on a live server) */
+  DZ_CAP_MODE    /* thermostat / fan mode (Mode + Modes); VIEW ONLY: the MCP endpoint has no tool for it */
 } dz_cap_t;
 
 /* Scenes and groups live in their own idx namespace (getscenes), apart from devices. */
