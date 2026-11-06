@@ -22,7 +22,7 @@ add_library(ru_data components/ru_data/ru_data.c)
 target_include_directories(ru_data PUBLIC components/ru_data/include)
 
 add_library(int_domoticz components/int_domoticz/dz_parse.c components/int_domoticz/dz_tabs.c components/int_domoticz/dz_transport.c
-  components/int_domoticz/dz_model.c components/int_domoticz/dz_client.c components/int_domoticz/dz_cmd.c)
+  components/int_domoticz/dz_model.c components/int_domoticz/dz_client.c components/int_domoticz/dz_cmd.c components/int_domoticz/dz_color.c)
 target_include_directories(int_domoticz PUBLIC components/int_domoticz/include)
 target_link_libraries(int_domoticz PUBLIC m ru_data ru_core)
 
@@ -74,7 +74,7 @@ endif()
 # ===== END UI agent =====
 
 # ===== Client agent: Domoticz transport, client, model, command layer =====
-foreach(t dz_model dz_client dz_cmd dz_mcp dz_mock)
+foreach(t dz_model dz_client dz_cmd dz_mcp dz_mock dz_color)
   add_executable(test_${t} tests/test_${t}.c)
   target_include_directories(test_${t} PRIVATE tests)
   target_link_libraries(test_${t} int_domoticz ru_data ru_core)
@@ -83,6 +83,7 @@ endforeach()
 add_test(NAME dz_model COMMAND test_dz_model)
 add_test(NAME dz_client COMMAND test_dz_client)
 add_test(NAME dz_cmd COMMAND test_dz_cmd)
+add_test(NAME dz_color COMMAND test_dz_color)
 add_test(NAME dz_mcp COMMAND test_dz_mcp)
 # integration: starts the Node mock on a private port, runs the C test against it, stops the mock
 add_test(NAME dz_mock COMMAND bash ${CMAKE_SOURCE_DIR}/tests/run_with_mock.sh $<TARGET_FILE:test_dz_mock>)
