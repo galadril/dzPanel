@@ -16,7 +16,6 @@
 #include "esp_intr_alloc.h"
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
 
@@ -194,14 +193,17 @@ typedef struct {
   esp_lcd_panel_handle_t *out;
   esp_err_t err;
   int core;
-  SemaphoreHandle_t done;
+  unsigned hwm_words; /* stack high-water mark of the task, in words, read just before it finishes */
+  TaskHandle_t waiter; /* notified when the job is done: no object whose lifetime the two tasks would share */
 } panel_job_t;
 
 static void panel_task(void *arg) {
   panel_job_t *j = arg;
   j->core = (int)xPortGetCoreID();
   j->err = panel_new_bounce(j->out);
-  xSemaphoreGive(j->done);
+  j->hwm_words = (unsigned)uxTaskGetStackHighWaterMark(NULL);
+  TaskHandle_t w = j->waiter; /* the job lives on the waiter's stack: not touched after the notification */
+  xTaskNotifyGive(w);
   vTaskDelete(NULL);
 }
 
@@ -209,19 +211,17 @@ static esp_err_t panel_new_on_core1(esp_lcd_panel_handle_t *out_panel) {
 #if CONFIG_FREERTOS_UNICORE
   return panel_new_bounce(out_panel);
 #else
-  panel_job_t job = {.out = out_panel, .err = ESP_FAIL, .core = -1, .done = xSemaphoreCreateBinary()};
-  if (!job.done) return panel_new_bounce(out_panel);
+  panel_job_t job = {.out = out_panel, .err = ESP_FAIL, .core = -1, .hwm_words = 0, .waiter = xTaskGetCurrentTaskHandle()};
   TaskHandle_t th = NULL;
-  /* 4 KB internal stack: only panel_new runs in it (3-wire SPI init table + esp_lcd_new_rgb_panel) */
-  if (xTaskCreatePinnedToCore(panel_task, "lcdinit", 4096, &job, 5, &th, 1) != pdPASS) {
+  /* 6 KB internal stack: the whole of panel_new runs in it (3-wire SPI init table with delays, esp_lcd_new_rgb_panel,
+   * esp_lcd_panel_init, ESP_LOG* with its formatting) */
+  if (xTaskCreatePinnedToCore(panel_task, "lcdinit", 6144, &job, 5, &th, 1) != pdPASS) {
     ESP_LOGW(TAG, "lcdinit task failed: creating the panel on core %d", (int)xPortGetCoreID());
-    vSemaphoreDelete(job.done);
     return panel_new_bounce(out_panel);
   }
-  xSemaphoreTake(job.done, portMAX_DELAY);
-  vSemaphoreDelete(job.done);
-  ESP_LOGI(TAG, "lcd interrupts (VSYNC + GDMA) allocated on core %d (app_main core %d), panel %s", job.core, (int)xPortGetCoreID(),
-           job.err == ESP_OK ? "ok" : esp_err_to_name(job.err));
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  ESP_LOGI(TAG, "lcd interrupts (VSYNC + GDMA) allocated on core %d (app_main core %d), panel %s; lcdinit stack high-water %u of 6144 bytes free",
+           job.core, (int)xPortGetCoreID(), job.err == ESP_OK ? "ok" : esp_err_to_name(job.err), job.hwm_words * (unsigned)sizeof(StackType_t));
 #if CONFIG_RU_HEAP_LOG
   esp_intr_dump(stdout); /* per core list of allocated interrupts: the evidence for the line above */
 #endif
