@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "dz_color.h"
 #include "ru_climate.h"
 #include "ru_climate_ui.h"
 #include "ru_wx.h"
@@ -69,7 +70,9 @@ struct ru_dzapp {
   uint64_t stale_sig;
   uint64_t imm; /* view, section, page, connection, feedback at the last build: a change is never rate limited */
   uint32_t last_build;
-  lv_obj_t *rim; /* status rim of the grid / rows screen, updated in place */
+  lv_obj_t *rim; /* status rim of the grid / rows screen (and of the light detail), updated in place */
+  lv_obj_t *light;      /* the ru_light widget of the open detail page, NULL on every other screen: it is updated in place */
+  uint32_t newest_id;   /* backend: the id of the newest light command; results of older ones are ignored */
   bool detail_thermo;
   uint32_t copies_base;
 #if CONFIG_RU_HEAP_LOG
@@ -258,7 +261,9 @@ static void post_cmd(ru_dzapp_t *a, const req_msg_t *m) {
   if (a->backend) {
     dz_cmd_req_t r = m->req;
     r.idx = m->idx;
-    if (!a->backend->submit(&r, a->backend_ud)) { ru_fb_on_refused(&a->fb, DZ_CMDE_QUEUE_FULL, a->now); return; }
+    uint32_t id = a->backend->submit(&r, a->backend_ud);
+    if (!id) { ru_fb_on_refused(&a->fb, DZ_CMDE_QUEUE_FULL, a->now); return; }
+    if (r.kind == DZ_CMD_SET_LEVEL || dz_cmd_is_colour(r.kind)) a->newest_id = id;
   } else if (ru_queue_send(a->req_q, m, 0) != RU_OK) { ru_fb_on_refused(&a->fb, DZ_CMDE_QUEUE_FULL, a->now); return; }
   ru_fb_begin(&a->fb, m->idx, m->scene, a->now);
 }
@@ -292,8 +297,8 @@ static void refused_for(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd_err_t
   a->fb.scene = scene;
 }
 
-static void submit_or_confirm(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd_kind_t kind, int level, float sp,
-                              const char *verb, bool show_state) {
+static void submit_or_confirm_h(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd_kind_t kind, int level, float sp, int hue,
+                                const char *verb, bool show_state) {
   dz_device_t d;
   ru_val_t v;
   ru_val_state_t st;
@@ -313,6 +318,7 @@ static void submit_or_confirm(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd
   m.req.kind = kind;
   m.req.level = level;
   m.req.setpoint = sp;
+  m.req.hue = (int16_t)hue;
   m.scene = scene;
   snprintf(m.idx, sizeof m.idx, "%s", idx);
   if (risk == DZ_RISK_CONFIRM) {
@@ -323,6 +329,11 @@ static void submit_or_confirm(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd
     return;
   }
   post_cmd(a, &m);
+}
+
+static void submit_or_confirm(ru_dzapp_t *a, const char *idx, bool scene, dz_cmd_kind_t kind, int level, float sp,
+                              const char *verb, bool show_state) {
+  submit_or_confirm_h(a, idx, scene, kind, level, sp, 0, verb, show_state);
 }
 
 static void request_cmd(ru_dzapp_t *a, dz_cmd_kind_t kind, int level, float sp) {
@@ -350,7 +361,9 @@ static void drain_results(ru_dzapp_t *a) {
   res_msg_t r;
   while (ru_queue_recv(a->res_q, &r, 0) == RU_OK) {
     if (r.refused) ru_fb_on_refused(&a->fb, r.err, a->now);
-    else {
+    else if (a->newest_id && (r.r.kind == DZ_CMD_SET_LEVEL || dz_cmd_is_colour(r.r.kind)) && (int32_t)(r.r.id - a->newest_id) < 0) {
+      /* superseded by a newer light command: the UI follows the newest id only */
+    } else {
       /* Backend events carry no device state: for an UNCONFIRMED outcome read it from the model (dz_cmd stored the
        * re-read there), so a Group that stayed Mixed still says "STILL MIXED". */
       if (a->backend && r.r.outcome == DZ_OUT_UNCONFIRMED && !r.r.have_after && a->fb.idx[0]) {
@@ -1144,12 +1157,6 @@ static void lock_cmd(ru_dzapp_t *a, dz_cmd_kind_t k, const char *verb) {
 }
 static void cb_lock_on(lv_obj_t *w, void *ud) { (void)w; lock_cmd(ud, DZ_CMD_ON, "LOCK"); }      /* Domoticz: On = lock */
 static void cb_lock_off(lv_obj_t *w, void *ud) { (void)w; lock_cmd(ud, DZ_CMD_OFF, "UNLOCK"); }  /* Off = unlock */
-static void cb_dimmer(lv_obj_t *w, int v, bool fin, void *ud) {
-  (void)w;
-  ru_dzapp_t *a = ud;
-  touch_guard(a);
-  if (fin) request_cmd(a, DZ_CMD_SET_LEVEL, v, 0);
-}
 static void cb_selector(lv_obj_t *w, int i, bool fin, void *ud) {
   (void)w;
   ru_dzapp_t *a = ud;
@@ -1239,6 +1246,122 @@ static void split_names(ru_dzapp_t *a, const dz_device_t *d, int *n) {
   while (*n < MAX_NAMES && ru_dzv_selector_name(d, *n, a->names[*n], NAME_LEN)) { a->name_ptrs[*n] = a->names[*n]; (*n)++; }
 }
 
+
+/* ---- light control page: the ru_light widget, updated in place (no rebuild on a poll or a command result) ---- */
+static uint32_t hue_rgb_fn(float p) {
+  uint8_t r, g, b;
+  dz_hsb2rgb(p * 360.0f, &r, &g, &b);
+  return (uint32_t)r << 16 | (uint32_t)g << 8 | b;
+}
+static uint32_t temp_rgb_fn(float p) { return dz_temp_rgb(p); }
+static const ru_light_hooks_t k_light_hooks = { hue_rgb_fn, temp_rgb_fn, dz_hue_word, dz_warmth_word };
+
+static void light_state_of(const dz_device_t *d, bool known, ru_light_state_t *o) {
+  memset(o, 0, sizeof *o);
+  dz_state_t ds = dz_device_state(d);
+  o->known = known && ds != DZ_STATE_UNKNOWN;
+  o->on = ds == DZ_STATE_ON;
+  int max = d->max_level > 0 ? d->max_level : 100;
+  o->level = d->has_level ? (d->level < 0 ? 0 : d->level > max ? max : d->level) : (o->on ? max : 0);
+  dz_light_mode_t m = d->col_caps ? dz_light_mode(d) : DZ_LM_NONE;
+  o->mode = (int)m;
+  if (m == DZ_LM_COLOR) {
+    float h, sat;
+    if (dz_rgb_to_hue(d->col_r, d->col_g, d->col_b, &h, &sat)) {
+      o->has_hue = true;
+      o->hue = (int)lroundf(h) % 360;
+      uint8_t r, g, b;
+      dz_hsb2rgb((float)o->hue, &r, &g, &b);
+      o->color = (uint32_t)r << 16 | (uint32_t)g << 8 | b;
+    } else {
+      o->color = 0xFFE3BF; /* a white-ish RGB: no hue, a neutral lamp colour */
+    }
+  } else if (m == DZ_LM_TEMP) {
+    o->warmth = dz_t_to_warmth(d->col_t);
+    o->color = dz_warmth_rgb(o->warmth);
+  } else if (m == DZ_LM_WHITE) {
+    o->color = 0xFFE3BF;
+  }
+}
+
+/* what the light page shows for the state the model has: the setters compare, so an unchanged call touches nothing */
+static void light_apply(ru_dzapp_t *a, const dz_device_t *d, ru_val_state_t st) {
+  if (!a->light) return;
+  bool known = st != RU_VAL_UNKNOWN;
+  ru_light_state_t ls;
+  light_state_of(d, known, &ls);
+  ru_light_set(a->light, &ls);
+  bool ctl = a->allow_control && d->controllable;
+  const char *why = d->is_protected ? "PROTECTED" : !ctl ? "VIEW ONLY" : st == RU_VAL_STALE ? "STALE" : "";
+  ru_light_set_readonly(a->light, why[0] != 0, why);
+  ru_light_fb_t fs = RU_LIGHT_FB_NONE;
+  const char *ft = "";
+  if (!strcmp(a->fb.idx, d->idx) && !a->fb.scene) {
+    switch (a->fb.st) {
+      case RU_FB_PENDING: fs = RU_LIGHT_FB_SENDING; ft = "SENDING"; break;
+      case RU_FB_CONFIRMED: fs = RU_LIGHT_FB_OK; ft = "SET"; break;
+      case RU_FB_UNCONFIRMED: fs = RU_LIGHT_FB_WARN; ft = ru_fb_text(&a->fb); break;
+      case RU_FB_FAILED: fs = RU_LIGHT_FB_ERROR; ft = ru_fb_text(&a->fb); break;
+      default: break;
+    }
+  }
+  ru_light_set_feedback(a->light, fs, ft);
+  if (a->rim) ru_status_rim_set_state(a->rim, rim_for(conn(a), st == RU_VAL_STALE));
+}
+
+/* the structure of the light page: what only a rebuild can change */
+static uint64_t light_struct_sig(const ru_dzapp_t *a, const dz_device_t *d) {
+  uint64_t h = 1469598103934665603ULL;
+  h = fnv(h, d->idx, strlen(d->idx));
+  h = fnv(h, d->name, strlen(d->name));
+  h = fnv(h, &d->cap, sizeof d->cap);
+  h = fnv(h, &d->col_caps, sizeof d->col_caps);
+  h = fnv(h, &d->max_level, sizeof d->max_level);
+  h = fnv(h, &d->controllable, sizeof d->controllable);
+  h = fnv(h, &d->is_protected, sizeof d->is_protected);
+  h = fnv(h, &a->allow_control, sizeof a->allow_control);
+  h = fnv(h, &a->square, sizeof a->square);
+  return h ? h : 1;
+}
+
+static void light_refresh(ru_dzapp_t *a) {
+  dz_device_t d;
+  ru_val_t v;
+  ru_val_state_t st;
+  if (a->light && get_entry(a, a->cur_idx, a->cur_scene, &d, &v, &st)) light_apply(a, &d, st);
+}
+
+/* the brightness a colour command carries: the lamp's Level as a percentage; an Off lamp uses the stored Level, 100 when unknown */
+static int light_brightness(const dz_device_t *d) {
+  int max = d->max_level > 0 ? d->max_level : 100;
+  int pct = d->has_level ? (int)lroundf(100.0f * (float)d->level / (float)max) : 0;
+  return pct < 1 ? 100 : pct > 100 ? 100 : pct;
+}
+
+static void cb_light(lv_obj_t *w, ru_light_cmd_t c, int v, bool fin, void *ud) {
+  (void)w;
+  ru_dzapp_t *a = ud;
+  touch_guard(a);
+  if (!fin) return;
+  a->interact_until = 0; /* the page is updated in place, and the knob waits for the model by itself */
+  dz_device_t d;
+  ru_val_t val;
+  ru_val_state_t st;
+  if (!get_entry(a, a->cur_idx, a->cur_scene, &d, &val, &st)) { ru_fb_on_refused(&a->fb, DZ_CMDE_UNKNOWN_DEVICE, a->now); return; }
+  bool off = dz_device_state(&d) != DZ_STATE_ON;
+  switch (c) {
+    case RU_LIGHT_CMD_LEVEL: submit_or_confirm(a, a->cur_idx, false, DZ_CMD_SET_LEVEL, v, 0, NULL, false); break;
+    case RU_LIGHT_CMD_POWER: submit_or_confirm(a, a->cur_idx, false, v ? DZ_CMD_ON : DZ_CMD_OFF, 0, 0, NULL, false); break;
+    case RU_LIGHT_CMD_HUE: submit_or_confirm_h(a, a->cur_idx, false, DZ_CMD_COLOR_HUE, light_brightness(&d), 0, v, NULL, false); break;
+    case RU_LIGHT_CMD_TEMP: submit_or_confirm(a, a->cur_idx, false, DZ_CMD_COLOR_TEMP, v, 0, NULL, false); break;
+    case RU_LIGHT_CMD_WHITE: submit_or_confirm(a, a->cur_idx, false, DZ_CMD_COLOR_WHITE, light_brightness(&d), 0, NULL, false); break;
+  }
+  /* whether a colour or temperature command switches an Off lamp on is unverified: DZ_COLOR_WHEN_OFF_SENDS_ON decides (default: no) */
+  if (DZ_COLOR_WHEN_OFF_SENDS_ON && off && (c == RU_LIGHT_CMD_HUE || c == RU_LIGHT_CMD_TEMP || c == RU_LIGHT_CMD_WHITE))
+    submit_or_confirm(a, a->cur_idx, false, DZ_CMD_ON, 0, 0, NULL, false);
+  light_refresh(a);
+}
+
 static lv_obj_t *build_detail(ru_dzapp_t *a) {
   const ru_theme_t *t = ru_theme();
   dz_device_t d;
@@ -1246,6 +1369,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
   ru_val_state_t st;
   lv_obj_t *s = ru_screen_new();
   a->list = NULL;
+  a->light = NULL;
   a->nrows = 0;
   if (!get_entry(a, a->cur_idx, a->cur_scene, &d, &v, &st)) {
     ru_status_rim_create(s);
@@ -1295,10 +1419,13 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       break;
     }
     case DZ_CAP_DIMMER: {
-      lv_obj_t *w = ru_dimmer_create(s, ru_u(86), d.max_level > 0 ? d.max_level : 100, "DIMMER");
-      if (unknown || ds == DZ_STATE_UNKNOWN) ru_dimmer_set_unknown(w);
-      else ru_dimmer_set(w, ds == DZ_STATE_ON && d.has_level ? d.level : 0); /* Off shows 0, not the stored level */
-      if (ctl) ru_dimmer_on_change(w, cb_dimmer, a);
+      /* every dimmer and colour light: rings + centre power disc (+ chips); the page is updated in place, see light_tick */
+      ru_light_cfg_t cfg = { .caps = d.col_caps, .two_rings = a->square, .max = d.max_level > 0 ? d.max_level : 100, .hooks = &k_light_hooks };
+      lv_obj_t *w = ru_light_create(s, ru_u(86), &cfg);
+      a->light = w;
+      a->rim = rim;
+      ru_light_on_change(w, cb_light, a);
+      light_apply(a, &d, st);
       name_back(a, s, name, 40);
       dial = true;
       break;
@@ -1417,13 +1544,13 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
   }
 
   /* freshness line: always honest about age when not fresh */
-  if (st == RU_VAL_STALE && !climate) {
+  if (st == RU_VAL_STALE && !climate && !a->light) {
     char age[24], buf[48];
     ru_age_format(ru_val_age_ms(&v, a->now), age, sizeof age);
     snprintf(buf, sizeof buf, "UPDATED %s", age);
     label_u(s, buf, ru_font_small(), t->warn, 0, 33);
   }
-  fb_label(a, s, 26);
+  if (!a->light) fb_label(a, s, 26);
   if (!dial) back_button(a, s, "BACK");
   return s;
 }
@@ -1560,7 +1687,13 @@ static uint64_t struct_sig(ru_dzapp_t *a) {
 static uint64_t screen_sig(ru_dzapp_t *a) {
   STAT_T0();
   uint64_t h;
-  if (grid_view(a)) h = struct_sig(a);
+  dz_device_t ld;
+  ru_val_t lv_;
+  ru_val_state_t lst;
+  if (a->view == RU_VIEW_DETAIL && a->light) {
+    /* the light page: structure only, values go in place */
+    h = get_entry(a, a->cur_idx, a->cur_scene, &ld, &lv_, &lst) ? light_struct_sig(a, &ld) : 1;
+  } else if (grid_view(a)) h = struct_sig(a);
   else {
     fullsig_t f = { a, imm_sig(a) };
     dz_model_foreach(a->model, a->now, fullsig_cb, &f);
@@ -1583,6 +1716,7 @@ static void build_and_show(ru_dzapp_t *a) {
   STAT_T0();
   lv_obj_t *s;
   a->detail_thermo = false;
+  a->light = NULL;
   switch (a->view) {
     case RU_VIEW_CONFIRM: s = build_confirm(a); break;
     case RU_VIEW_DETAIL: s = build_detail(a); break;
@@ -1715,6 +1849,12 @@ void ru_dzapp_ui_tick(ru_dzapp_t *a, uint32_t now_ms) {
   if (time_only && grid_view(a) && stale_sig(a) == a->stale_sig) return; /* only the clock moved and no state with it */
   STAT_INC(evals);
   uint64_t sig = screen_sig(a);
+  if (a->view == RU_VIEW_DETAIL && a->light && a->sig && sig == a->sig) { /* the light page: same structure, new values go in place */
+    STAT_INC(inplace);
+    light_refresh(a);
+    a->imm = imm_sig(a);
+    return;
+  }
   if (grid_view(a)) a->stale_sig = stale_hash(a);
   if (a->sig && sig == a->sig) { /* same structure: new values go into the existing tiles */
     if (grid_view(a)) update_in_place(a);
