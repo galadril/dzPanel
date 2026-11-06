@@ -169,4 +169,19 @@ typedef bool (*dz_device_cb)(const dz_device_t *dev, void *user);
  * when this returns DZ_OK. cb may be NULL. out may be NULL. */
 dz_err_t dz_parse_response(const char *json, size_t len, dz_device_cb cb, void *user, dz_result_t *out);
 
+/* One JSON-RPC 2.0 reply from the Domoticz MCP endpoint (the text-only result of tools/call). Strings are truncated.
+ * DZ_OK: a well-formed object with "result" or "error"; DZ_ERR_STATUS: well-formed with neither; DZ_ERR_SYNTAX otherwise. */
+typedef struct {
+  bool has_id;
+  long long id;
+  bool has_error;
+  int code;             /* error.code */
+  char message[48];     /* error.message */
+  bool has_result;
+  bool is_error;        /* result.isError */
+  bool has_text;
+  char text[96];        /* result.content[0].text */
+} dz_mcp_reply_t;
+dz_err_t dz_mcp_parse_reply(const char *json, size_t len, dz_mcp_reply_t *out);
+
 const char *dz_cap_name(dz_cap_t c);

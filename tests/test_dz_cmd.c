@@ -364,6 +364,50 @@ static void test_encode(void) {
 }
 
 
+static void test_mcp_encode(void) {
+  char b[300];
+  dz_device_t d;
+  memset(&d, 0, sizeof d);
+  d.cap = DZ_CAP_ONOFF;
+  const char *head = "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":";
+  char want[320];
+#define EXP(args_tool, args) (snprintf(want, sizeof want, "%s\"%s\",\"arguments\":%s}}", head, args_tool, args), want)
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "906", &d, -1, 0) > 0 && !strcmp(b, EXP("set_switch_state", "{\"idx\":906,\"state\":\"On\"}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_OFF, "906", &d, -1, 0) > 0 && !strcmp(b, EXP("set_switch_state", "{\"idx\":906,\"state\":\"Off\"}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_TOGGLE, "1", &d, -1, 0) > 0 && !strcmp(b, EXP("toggle_switch_state", "{\"idx\":1}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SET_LEVEL, "2", &d, 30, 0) > 0 && !strcmp(b, EXP("set_dimmer_level", "{\"idx\":2,\"level\":30}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SELECTOR, "4", &d, 20, 0) > 0 && !strcmp(b, EXP("set_dimmer_level", "{\"idx\":4,\"level\":20}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SET_LEVEL, "2", &d, 101, 0) == 0); /* above the MCP range */
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_BLINDS_OPEN, "3", &d, -1, 0) > 0 && !strcmp(b, EXP("control_blinds", "{\"idx\":3,\"command\":\"Open\"}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_BLINDS_CLOSE, "3", &d, -1, 0) > 0 && strstr(b, "\"command\":\"Close\""));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_BLINDS_STOP, "3", &d, -1, 0) > 0 && strstr(b, "\"command\":\"Stop\""));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SCENE_ON, "12", &d, -1, 0) > 0 && !strcmp(b, EXP("switch_scene", "{\"scene_id\":12,\"command\":\"On\"}"))); /* a number */
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SCENE_OFF, "12", &d, -1, 0) > 0 && strstr(b, "\"command\":\"Off\""));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SETPOINT, "9", &d, -1, 21.5f) > 0 && !strcmp(b, EXP("set_setpoint_value", "{\"idx\":9,\"setpoint\":21.5}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SETPOINT, "9", &d, -1, -3.0f) > 0 && strstr(b, "\"setpoint\":-3.0}"));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_MODE, "9", &d, 1, 0) == 0);
+  /* lock types: On always means "lock"; type 20 is sent inverted */
+  d.cap = DZ_CAP_LOCK; d.switch_type = 19;
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "6", &d, -1, 0) > 0 && strstr(b, "\"state\":\"On\""));
+  d.switch_type = 20;
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "6", &d, -1, 0) > 0 && strstr(b, "\"state\":\"Off\""));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_OFF, "6", &d, -1, 0) > 0 && strstr(b, "\"state\":\"On\""));
+  /* push: type 9 sends On, type 10 sends Off */
+  d.cap = DZ_CAP_PUSH; d.switch_type = 9;
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_PUSH, "5", &d, -1, 0) > 0 && strstr(b, "\"state\":\"On\""));
+  d.switch_type = 10;
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_PUSH, "5", &d, -1, 0) > 0 && strstr(b, "\"state\":\"Off\""));
+  /* bad idx and tiny buffers */
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "9x", &d, -1, 0) == 0 && dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "", &d, -1, 0) == 0);
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "1234567890", &d, -1, 0) == 0);
+  CHECK(dz_mcp_encode(b, 40, 5, DZ_CMD_ON, "1", &d, -1, 0) == 0);
+  size_t n = dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "1", &d, -1, 0);
+  CHECK(n > 0 && n < 200); /* small enough for one buffer in dz_client_t */
+  CHECK(!strpbrk(b, "\r\n"));
+#undef EXP
+}
+
+
 /* Domoticz: a Group toggles On/Off and can be Mixed; a Scene is push-only. */
 static void test_scene_group_semantics(void) {
   setup(true);
@@ -413,6 +457,7 @@ static void test_scene_group_semantics(void) {
 
 int main(void) {
   test_encode();
+  test_mcp_encode();
   test_basic_confirm();
   test_timing();
   test_levels();

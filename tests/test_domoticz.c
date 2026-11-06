@@ -579,6 +579,36 @@ static void test_tabs(void) {
   CHECK(dz_parse_response(REV, strlen(REV), collect, &b, NULL) == DZ_OK && b.n == 1 && b.d[0].tabs == (TT | TW));
 }
 
+static void test_mcp_reply(void) {
+  dz_mcp_reply_t r;
+  const char *ok = "{\"id\":7,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"Switch \\\"Kantoor 1\\\" set to Off successfully.\",\"type\":\"text\"}],\"isError\":false}}";
+  CHECK(dz_mcp_parse_reply(ok, strlen(ok), &r) == DZ_OK && r.has_id && r.id == 7 && r.has_result && !r.has_error && !r.is_error && r.has_text);
+  CHECK(!strcmp(r.text, "Switch \"Kantoor 1\" set to Off successfully."));
+  const char *ie = "{\"id\":8,\"jsonrpc\":\"2.0\",\"result\":{\"isError\":true,\"content\":[{\"type\":\"text\",\"text\":\"Device not found\"},{\"type\":\"text\",\"text\":\"second\"}]}}";
+  CHECK(dz_mcp_parse_reply(ie, strlen(ie), &r) == DZ_OK && r.is_error && !strcmp(r.text, "Device not found"));
+  const char *er = "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32600,\"message\":\"Missing session\",\"data\":{\"a\":[1,2]}}}";
+  CHECK(dz_mcp_parse_reply(er, strlen(er), &r) == DZ_OK && r.has_error && r.code == -32600 && !strcmp(r.message, "Missing session") && !r.has_result);
+  const char *nid = "{\"id\":null,\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
+  CHECK(dz_mcp_parse_reply(nid, strlen(nid), &r) == DZ_OK && !r.has_id && r.code == -32700);
+  const char *neither = "{\"id\":1,\"jsonrpc\":\"2.0\"}";
+  CHECK(dz_mcp_parse_reply(neither, strlen(neither), &r) == DZ_ERR_STATUS);
+  CHECK(dz_mcp_parse_reply("<html>Accepted</html>", 21, &r) == DZ_ERR_SYNTAX);
+  CHECK(dz_mcp_parse_reply("", 0, &r) == DZ_ERR_SYNTAX);
+  CHECK(dz_mcp_parse_reply(NULL, 0, &r) == DZ_ERR_SYNTAX);
+  CHECK(dz_mcp_parse_reply(ok, strlen(ok) - 1, &r) == DZ_ERR_SYNTAX);
+  const char *trail = "{\"result\":{}} x";
+  CHECK(dz_mcp_parse_reply(trail, strlen(trail), &r) == DZ_ERR_SYNTAX);
+  /* long text and message are truncated, not rejected */
+  char big[600];
+  snprintf(big, sizeof big, "{\"id\":1,\"result\":{\"content\":[{\"text\":\"%0200d\"}],\"isError\":false},\"error\":{\"message\":\"%0100d\"}}", 1, 2);
+  CHECK(dz_mcp_parse_reply(big, strlen(big), &r) == DZ_OK && strlen(r.text) == 95 && strlen(r.message) == 47);
+  /* mutation: every truncation of a good reply is an error, never a crash */
+  for (size_t n = 0; n < strlen(ok); n++) CHECK(dz_mcp_parse_reply(ok, n, &r) != DZ_OK);
+  /* unknown keys with nested values and wrong types are skipped */
+  const char *odd = "{\"x\":{\"y\":[[1],{\"z\":\"q\"}]},\"id\":\"abc\",\"result\":{\"content\":\"nope\",\"isError\":\"false\",\"extra\":[]}}";
+  CHECK(dz_mcp_parse_reply(odd, strlen(odd), &r) == DZ_OK && !r.has_id && r.has_result && !r.is_error && !r.has_text);
+}
+
 int main(void) {
   test_fixture();
   test_real_capture();
@@ -592,5 +622,6 @@ int main(void) {
   test_truncation();
   test_mutation();
   test_tabs();
+  test_mcp_reply();
   MT_DONE();
 }

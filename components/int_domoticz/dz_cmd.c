@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 const char *dz_cmd_err_name(dz_cmd_err_t e) {
@@ -182,6 +183,50 @@ static bool build_query(const dz_cmd_slot_t *s, char *q, size_t cap) {
     if (n > 0 && (size_t)n < cap && s->level >= 0) n += snprintf(q + n, cap - (size_t)n, "&level=%d", s->level);
   }
   return n > 0 && (size_t)n < cap;
+}
+
+/* The MCP tools/call body for a command (JSON-RPC 2.0). Only integers, fixed words and fmt_setpoint are printed, so no JSON
+ * escaping is needed (no user text is ever sent). Lock type 20 gets the inverted word, as the legacy path did. Returns the
+ * length, or 0 when the command has no MCP tool (MODE), a number does not fit, or the buffer is too small. */
+size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind, const char *idx, const dz_device_t *pre,
+                     int level, float setpoint) {
+  const char *tool = NULL, *word = NULL;
+  char args[96], num[24];
+  if (!idx || !*idx || strlen(idx) > 9 || !pre) return 0;
+  for (const char *p = idx; *p; p++) if (*p < '0' || *p > '9') return 0;
+  unsigned long id = strtoul(idx, NULL, 10);
+  bool lock20 = pre->cap == DZ_CAP_LOCK && pre->switch_type == 20;
+  int n;
+  switch (kind) {
+    case DZ_CMD_ON: tool = "set_switch_state"; word = lock20 ? "Off" : "On"; break;
+    case DZ_CMD_OFF: tool = "set_switch_state"; word = lock20 ? "On" : "Off"; break;
+    case DZ_CMD_PUSH: tool = "set_switch_state"; word = pre->switch_type == 10 ? "Off" : "On"; break;
+    case DZ_CMD_TOGGLE: tool = "toggle_switch_state"; break;
+    case DZ_CMD_SET_LEVEL: case DZ_CMD_SELECTOR: tool = "set_dimmer_level"; if (level < 0 || level > 100) return 0; break;
+    case DZ_CMD_BLINDS_OPEN: tool = "control_blinds"; word = "Open"; break;
+    case DZ_CMD_BLINDS_CLOSE: tool = "control_blinds"; word = "Close"; break;
+    case DZ_CMD_BLINDS_STOP: tool = "control_blinds"; word = "Stop"; break;
+    case DZ_CMD_SCENE_ON: tool = "switch_scene"; word = "On"; break;
+    case DZ_CMD_SCENE_OFF: tool = "switch_scene"; word = "Off"; break;
+    case DZ_CMD_SETPOINT: tool = "set_setpoint_value"; break;
+    case DZ_CMD_MODE: return 0;
+  }
+  switch (kind) {
+    case DZ_CMD_ON: case DZ_CMD_OFF: case DZ_CMD_PUSH: n = snprintf(args, sizeof args, "{\"idx\":%lu,\"state\":\"%s\"}", id, word); break;
+    case DZ_CMD_TOGGLE: n = snprintf(args, sizeof args, "{\"idx\":%lu}", id); break;
+    case DZ_CMD_SET_LEVEL: case DZ_CMD_SELECTOR: n = snprintf(args, sizeof args, "{\"idx\":%lu,\"level\":%d}", id, level); break;
+    case DZ_CMD_BLINDS_OPEN: case DZ_CMD_BLINDS_CLOSE: case DZ_CMD_BLINDS_STOP:
+      n = snprintf(args, sizeof args, "{\"idx\":%lu,\"command\":\"%s\"}", id, word); break;
+    case DZ_CMD_SCENE_ON: case DZ_CMD_SCENE_OFF: /* scene_id is a JSON NUMBER, never a string */
+      n = snprintf(args, sizeof args, "{\"scene_id\":%lu,\"command\":\"%s\"}", id, word); break;
+    default: /* SETPOINT */
+      fmt_setpoint(num, sizeof num, setpoint);
+      n = snprintf(args, sizeof args, "{\"idx\":%lu,\"setpoint\":%s}", id, num); break;
+  }
+  if (n <= 0 || (size_t)n >= sizeof args) return 0;
+  int m = snprintf(out, cap, "{\"jsonrpc\":\"2.0\",\"id\":%lu,\"method\":\"tools/call\",\"params\":{\"name\":\"%s\",\"arguments\":%s}}",
+                   (unsigned long)rpc_id, tool, args);
+  return m > 0 && (size_t)m < cap ? (size_t)m : 0;
 }
 
 /* Did the re-read show the intended state? */

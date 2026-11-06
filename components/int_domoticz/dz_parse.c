@@ -728,6 +728,95 @@ trailer:
   return strcmp(r->status, "OK") == 0 ? DZ_OK : DZ_ERR_STATUS;
 }
 
+/* ---------------------------------------------------------------- MCP reply (JSON-RPC 2.0) */
+
+static bool obj_each(sc_t *s, int depth, bool (*on)(void *ctx, const char *key, sc_t *s, int depth), void *ctx) {
+  char key[24];
+  if (depth > MAX_DEPTH) return false;
+  ws(s);
+  if (s->p >= s->end || *s->p++ != '{') return false;
+  ws(s);
+  if (s->p < s->end && *s->p == '}') { s->p++; return true; }
+  for (;;) {
+    ws(s);
+    if (!str(s, key, sizeof key)) return false;
+    ws(s);
+    if (s->p >= s->end || *s->p++ != ':') return false;
+    ws(s);
+    if (!on(ctx, key, s, depth)) return false;
+    ws(s);
+    if (s->p >= s->end) return false;
+    char c = *s->p++;
+    if (c == '}') return true;
+    if (c != ',') return false;
+  }
+}
+
+static bool mcp_err_key(void *ctx, const char *key, sc_t *s, int depth) {
+  dz_mcp_reply_t *r = ctx;
+  val_t v;
+  if (!read_value(s, &v, depth + 1)) return false;
+  if (!strcmp(key, "code") && v.t == V_NUM) { int i; if (to_int(v.s, &i)) r->code = i; }
+  else if (!strcmp(key, "message")) copy(r->message, sizeof r->message, &v);
+  return true;
+}
+
+static bool mcp_content_item(void *ctx, const char *key, sc_t *s, int depth) {
+  dz_mcp_reply_t *r = ctx;
+  val_t v;
+  if (!read_value(s, &v, depth + 1)) return false;
+  if (!strcmp(key, "text") && v.t == V_STR && !r->has_text) { copy(r->text, sizeof r->text, &v); r->has_text = true; }
+  return true;
+}
+
+static bool mcp_content(sc_t *s, dz_mcp_reply_t *r, int depth) {
+  if (depth > MAX_DEPTH || s->p >= s->end || *s->p != '[') return skip_value(s, depth);
+  s->p++;
+  ws(s);
+  if (s->p < s->end && *s->p == ']') { s->p++; return true; }
+  for (;;) {
+    ws(s);
+    if (s->p < s->end && *s->p == '{') { if (!obj_each(s, depth + 1, mcp_content_item, r)) return false; }
+    else if (!skip_value(s, depth + 1)) return false;
+    ws(s);
+    if (s->p >= s->end) return false;
+    char c = *s->p++;
+    if (c == ']') return true;
+    if (c != ',') return false;
+  }
+}
+
+static bool mcp_result_key(void *ctx, const char *key, sc_t *s, int depth) {
+  dz_mcp_reply_t *r = ctx;
+  if (!strcmp(key, "content")) return mcp_content(s, r, depth + 1);
+  val_t v;
+  if (!read_value(s, &v, depth + 1)) return false;
+  if (!strcmp(key, "isError")) r->is_error = to_bool(&v);
+  return true;
+}
+
+static bool mcp_top_key(void *ctx, const char *key, sc_t *s, int depth) {
+  dz_mcp_reply_t *r = ctx;
+  if (!strcmp(key, "error") && s->p < s->end && *s->p == '{') { r->has_error = true; return obj_each(s, depth + 1, mcp_err_key, r); }
+  if (!strcmp(key, "result") && s->p < s->end && *s->p == '{') { r->has_result = true; return obj_each(s, depth + 1, mcp_result_key, r); }
+  val_t v;
+  if (!read_value(s, &v, depth + 1)) return false;
+  if (!strcmp(key, "id") && v.t == V_NUM) { char *e; long long n = strtoll(v.s, &e, 10); if (!*e && e != v.s) { r->id = n; r->has_id = true; } }
+  return true;
+}
+
+dz_err_t dz_mcp_parse_reply(const char *json, size_t len, dz_mcp_reply_t *out) {
+  dz_mcp_reply_t local;
+  dz_mcp_reply_t *r = out ? out : &local;
+  memset(r, 0, sizeof *r);
+  if (!json) return DZ_ERR_SYNTAX;
+  sc_t s = {json, json + len};
+  if (!obj_each(&s, 1, mcp_top_key, r)) return DZ_ERR_SYNTAX;
+  ws(&s);
+  if (s.p != s.end) return DZ_ERR_SYNTAX;
+  return (r->has_error || r->has_result) ? DZ_OK : DZ_ERR_STATUS;
+}
+
 const char *dz_cap_name(dz_cap_t c) {
   static const char *const n[] = {"readonly", "onoff", "dimmer", "blinds", "selector", "push", "lock",
                                   "status", "thermostat", "temp", "weather", "energy", "scene", "group", "sensor", "mode"};

@@ -114,5 +114,10 @@ bool dz_cmd_pump(dz_cmd_t *c, uint32_t now_ms);
 size_t dz_cmd_pending(const dz_cmd_t *c);
 uint32_t dz_cmd_ms_until_due(const dz_cmd_t *c, uint32_t now_ms); /* UINT32_MAX when idle */
 
+/* The Domoticz MCP tools/call body for a command (see dz_cmd.c). `pre` is the device as last read (lock type, push type).
+ * Returns the length, or 0 if the command has no MCP tool (MODE), idx is not a number, a level exceeds 100, or cap is too small. */
+size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind, const char *idx, const dz_device_t *pre,
+                     int level, float setpoint);
+
 /* Percent-encodes everything outside [A-Za-z0-9-._~]. Returns length, or -1 when it does not fit. */
 int dz_url_encode(char *dst, size_t cap, const char *src);
