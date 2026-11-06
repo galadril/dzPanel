@@ -20,6 +20,12 @@
 //        DewPoint, min/max, Speed, Gust) or C + m/s (default). `climate=1` adds the climate device set below (also --climate).
 //   GET /__mock/reset                       restore devices and settings (metric, no climate set)
 //   GET /__mock/touch?idx=N&status=S        change a device behind the client's back
+//   POST /mcp                               the Domoticz MCP endpoint (JSON-RPC 2.0, plain JSON replies): initialize (answers a
+//        Mcp-Session-Id header), notifications/initialized (202 + HTML body), tools/list (2 pages), tools/call for
+//        set_switch_state, toggle_switch_state, set_dimmer_level, control_blinds, switch_scene, set_setpoint_value. Like the
+//        real server it SKIPS the Protected check and never converts Fahrenheit. Needs a Bearer token; viewer-token gets -32002.
+//        Modes (set with mode=): nomcp -> 503, nomcp404 -> 404 on /mcp only; the other modes hit /mcp too.
+//   GET /__mock/set?mcp=expire              forget every MCP session (next call: 'Session not found')
 //   GET /__mock/stats                       {requests, lastAuth: "present|absent", urls:[...]}  (never echoes a token)
 'use strict';
 const http = require('http');
@@ -35,7 +41,8 @@ const stamp = (t = Date.now()) => new Date(t).toISOString().replace('T', ' ').sl
 const epoch = (s) => Math.floor(Date.parse(s.replace(' ', 'T') + 'Z') / 1000);
 
 const cfg = { latency: arg('latency', 0), fail: arg('fail', 0), mode: 'none', count: 0 };
-const stats = { requests: 0, lastAuth: 'absent', urls: [] };
+const stats = { requests: 0, lastAuth: 'absent', urls: [], mcpInits: 0, mcpCalls: [], mcpLastSession: 'absent' };
+const sessions = new Set();
 
 const hw = { HardwareDisabled: false, HardwareID: 1, HardwareType: 'Dummy (Does nothing, use for virtual switches only)', HardwareTypeVal: 15 };
 const base = (idx, Name, Type, SubType, extra) => ({
@@ -162,7 +169,7 @@ const reset = () => {
   scenes.forEach((s) => { s._t = epoch(s.LastUpdate); });
   const g = devices.find((d) => d.Type === 'Group'); delete g.SubType;
   cfg.mode = 'none'; cfg.count = 0; cfg.latency = arg('latency', 0); cfg.fail = arg('fail', 0);
-  stats.requests = 0; stats.urls = [];
+  stats.requests = 0; stats.urls = []; stats.mcpInits = 0; stats.mcpCalls = []; stats.mcpLastSession = 'absent'; sessions.clear();
 };
 reset();
 
@@ -172,14 +179,14 @@ const clean = ({ _t, ...d }) => (units === 'imperial' ? toImperial(d) : d);
 const sorted = (o) => Array.isArray(o) ? o.map(sorted)
   : o && typeof o === 'object' ? Object.fromEntries(Object.keys(o).sort().map((k) => [k, sorted(o[k])])) : o;
 const pretty = (o) => JSON.stringify(sorted(o), null, '\t');
-const send = (res, code, text, type = 'application/json') => { res.writeHead(code, { 'Content-Type': type }); res.end(text); };
+const send = (res, code, text, type = 'application/json') => { res.writeHead(code, { 'Content-Type': type }); res.end(text); return true; };
 const reply = (res, code, obj) => send(res, code, pretty(obj));
 
 function levelText(d) { return d.Level >= d.MaxDimLevel ? 'On' : `Set Level: ${d.Level} %`; }
 
-function doSwitch(d, cmd, level) {
+function doSwitch(d, cmd, level, mcp = false) {
   const v = d.SwitchTypeVal;
-  if (d.Protected) return { status: 'ERROR', message: 'WRONG CODE' };
+  if (d.Protected && !mcp) return { status: 'ERROR', message: 'WRONG CODE' };
   if (d.Type !== 'Light/Switch' && d.Type !== 'Color Switch' && !d.Type.startsWith('Lighting')) return { status: 'ERR' };
   if (cmd === 'Toggle') cmd = (d.Status === 'Off' || d.Status === 'Closed' || d.Status === 'Unlocked') ? 'On' : 'Off';
   if (cmd === 'On' || cmd === 'Off') {
@@ -202,6 +209,8 @@ function doSwitch(d, cmd, level) {
       d.Level = d.LevelInt = n; d.Status = ''; d.Data = names[n / 10];
     } else if (v === 7) {
       d.Level = d.LevelInt = n; d.Status = n ? levelText(d) : 'Off';
+    } else if (mcp && (v === 13 || v === 21)) {
+      d.Level = d.LevelInt = n; d.Status = n >= 100 ? 'Open' : n === 0 ? 'Closed' : `Set Level: ${n} %`;
     } else return { status: 'ERR' };
   } else if (cmd === 'Open' || cmd === 'Close' || cmd === 'Stop') {
     if (v !== 3 && v !== 13 && v !== 14 && v !== 15 && v !== 21 && v !== 22) return { status: 'ERR' };
@@ -210,6 +219,13 @@ function doSwitch(d, cmd, level) {
   if (v !== 18) d.Data = d.Status;
   touch(d);
   return { status: 'OK', title: 'SwitchLight' };
+}
+
+function doSetpoint(d, sp) {
+  if (d.min !== undefined && (sp < d.min || sp > d.max)) return false;
+  if (sp < 5 && d.min === undefined || sp > 35 && d.min === undefined) return false;
+  d.SetPoint = d.Data = sp.toFixed(1); touch(d);
+  return true;
 }
 
 function sunFields() {
@@ -250,35 +266,42 @@ function tabOf(type, sub) {
   return t;
 }
 
-function handleJson(req, res, u) {
-  const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
-  stats.lastAuth = m ? 'present' : 'absent';
-  const rights = m && m[1] in TOKENS ? TOKENS[m[1]] : -1;
+function modeFault(req, res, mcp) {
   const mode = cfg.mode;
-  const active = mode !== 'none';
+  const active = mode !== 'none' && (mcp || !mode.startsWith('nomcp'));
   if (active && cfg.count > 0 && --cfg.count === 0) cfg.mode = 'none'; // `count` limits how many requests are hit
   if (active) {
     switch (mode) {
+      case 'nomcp': return send(res, 503, 'MCP disabled', 'text/plain');
+      case 'nomcp404': return send(res, 404, '<html><body>Not Found</body></html>', 'text/html');
       case 'html': return send(res, 200, '<!DOCTYPE html><html><head><title>Proxy</title></head><body><h1>Login required</h1></body></html>', 'text/html');
       case 'http500': return send(res, 500, '<html>Internal Server Error</html>', 'text/html');
       case 'http502': return send(res, 502, '<html><body>Bad Gateway</body></html>', 'text/html');
       case 'http404': return send(res, 404, '<html><body>Not Found</body></html>', 'text/html');
       case '401': return send(res, 401, 'Unauthorized', 'text/plain');
       case '403': return send(res, 403, 'Forbidden', 'text/plain');
-      case 'drop': return req.socket.destroy();
-      case 'hang': return undefined;
+      case 'drop': { req.socket.destroy(); return true; }
+      case 'hang': return true;
       case 'truncate': res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': 5000 });
-        res.write('{"ActTime": 1, "result": [{"idx": "1", "Name": "Cut'); return setTimeout(() => req.socket.destroy(), 30);
+        res.write('{"ActTime": 1, "result": [{"idx": "1", "Name": "Cut'); setTimeout(() => req.socket.destroy(), 30); return true;
       case 'huge': return send(res, 200, '{"status":"OK","title":"Devices","pad":"' + 'x'.repeat(300000) + '"}');
       case 'garbage': return send(res, 200, '\x00\x01not json at all{{{[[');
       case 'statuserr': return reply(res, 200, { status: 'ERR', title: 'Devices' });
       case 'nostatus': return reply(res, 200, { title: 'Devices', result: [] });
       case 'chunked': res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.write('{"status":"OK",'); return setTimeout(() => res.end('"title":"GetVersion","version":"2026.4"}'), 10);
-      case 'slowbody': res.writeHead(200, { 'Content-Type': 'application/json' }); res.write('{"status":"OK",'); return undefined;
+        res.write('{"status":"OK",'); setTimeout(() => res.end('"title":"GetVersion","version":"2026.4"}'), 10); return true;
+      case 'slowbody': res.writeHead(200, { 'Content-Type': 'application/json' }); res.write('{"status":"OK",'); return true;
       default: break;
     }
   }
+  return false;
+}
+
+function handleJson(req, res, u) {
+  const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
+  stats.lastAuth = m ? 'present' : 'absent';
+  const rights = m && m[1] in TOKENS ? TOKENS[m[1]] : -1;
+  if (modeFault(req, res, false)) return undefined;
   if (rights < 0) return reply(res, 401, { status: 'ERR' });
   if (cfg.fail && Math.random() < cfg.fail) return reply(res, 500, { status: 'ERR' });
   const q = u.searchParams, p = q.get('param');
@@ -333,12 +356,103 @@ function handleJson(req, res, u) {
     let sp = Number(q.get('setpoint'));
     if (!d || d.SetPoint === undefined || !Number.isFinite(sp)) return ok({ status: 'ERR' });
     if (units === 'imperial' && d.vunit === '°C') sp = Math.round((sp - 32) * 5 / 9 * 10) / 10;  // the server converts F -> C itself
-    if (d.min !== undefined && (sp < d.min || sp > d.max)) return ok({ status: 'ERR' });
-    if (sp < 5 && d.min === undefined || sp > 35 && d.min === undefined) return ok({ status: 'ERR' });
-    d.SetPoint = d.Data = sp.toFixed(1); touch(d);
-    return ok({ title: 'SetSetpoint' });
+    return doSetpoint(d, sp) ? ok({ title: 'SetSetpoint' }) : ok({ status: 'ERR' });
   }
   return ok({ status: 'ERR', message: 'unknown command' });
+}
+
+
+// ---------------------------------------------------------------- MCP (POST /mcp)
+const TOOLS = ['set_switch_state', 'toggle_switch_state', 'set_dimmer_level', 'control_blinds', 'switch_scene', 'set_setpoint_value']
+  .map((name) => ({ name, description: name, inputSchema: { type: 'object' } }));
+const TOOLS_FILLER = Array.from({ length: 4 }, (_, i) => ({ name: 'get_filler_' + i, description: 'x', inputSchema: { type: 'object' } }));
+
+function mcpRespond(res, id, body) { return send(res, 200, JSON.stringify({ id, jsonrpc: '2.0', ...body })); }
+const rpcErr = (code, message) => ({ error: { code, message } });
+const textResult = (text, isError = false) => ({ result: { content: [{ text, type: 'text' }], isError } });
+const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
+const isOnStatus = (d) => d.Status !== 'Off';
+
+function mcpTool(name, a, rights) {
+  if (!TOOLS.some((t) => t.name === name)) return rpcErr(-32601, 'Tool not found');
+  if (rights < 1) return rpcErr(-32002, 'Permission denied');
+  a = a && typeof a === 'object' ? a : {};
+  if (name === 'switch_scene') {
+    if (!isNum(a.scene_id) || !['On', 'Off'].includes(a.command)) return rpcErr(-32602, 'Invalid params');
+    const sc = byIdx(scenes, a.scene_id);
+    if (!sc) return textResult(`Scene ${a.scene_id} not found`, true);
+    if (a.command === 'Off' && sc.Type === 'Scene') return textResult(`Error switching scene "${sc.Name}".`);
+    sc.Status = sc.Data = a.command; touch(sc);
+    const g = devices.find((d) => d.Type === 'Group' && d.idx === sc.idx);
+    if (g) { g.Status = g.Data = a.command; touch(g); }
+    return textResult(`Scene "${sc.Name}" switched ${a.command} successfully.`);
+  }
+  if (!isNum(a.idx)) return rpcErr(-32602, 'Invalid params');
+  const d = byIdx(devices, a.idx);
+  if (!d || d.Type === 'Group') return textResult(`Device with idx ${a.idx} not found`, true);
+  let cmd, level = null, word = '';
+  switch (name) {
+    case 'set_switch_state':
+      if (!['On', 'Off'].includes(a.state)) return rpcErr(-32602, 'Invalid params');
+      cmd = a.state; word = a.state;
+      if ((d.SwitchTypeVal === 0 || d.SwitchTypeVal === 7) && isOnStatus(d) === (cmd === 'On'))
+        return textResult(`Switch "${d.Name}" was already ${cmd}. No action taken.`);
+      break;
+    case 'toggle_switch_state': cmd = 'Toggle'; word = 'toggled'; break;
+    case 'set_dimmer_level':
+      if (!isNum(a.level)) return rpcErr(-32602, 'Invalid params');
+      cmd = 'Set Level'; level = String(Math.max(0, Math.min(100, Math.round(a.level)))); word = `level ${level}`;
+      break;
+    case 'control_blinds':
+      if (!['Open', 'Close', 'Stop'].includes(a.command)) return rpcErr(-32602, 'Invalid params');
+      cmd = a.command; word = a.command; break;
+    default: { // set_setpoint_value: the value goes in as-is (no Fahrenheit conversion), like the real tool
+      if (!isNum(a.setpoint)) return rpcErr(-32602, 'Invalid params');
+      if (d.SetPoint === undefined || !doSetpoint(d, a.setpoint)) return textResult(`Error setting setpoint of "${d.Name}".`);
+      return textResult(`Setpoint of "${d.Name}" set to ${a.setpoint} successfully.`);
+    }
+  }
+  const r = doSwitch(d, cmd, level, true);   // mcp = true: Protected is NOT checked
+  if (r.status !== 'OK') return textResult(`Error switching "${d.Name}".`);
+  return textResult(`Switch "${d.Name}" set to ${word} successfully.`);
+}
+
+function handleMcp(req, res) {
+  if (modeFault(req, res, true)) return;
+  const m = /^Bearer (.+)$/.exec(req.headers.authorization || '');
+  stats.lastAuth = m ? 'present' : 'absent';
+  const rights = m && m[1] in TOKENS ? TOKENS[m[1]] : -1;
+  if (rights < 0) return send(res, 401, JSON.stringify({ error: 'Unauthorized' }));
+  if (req.headers['mcp-protocol-version']) return send(res, 400, JSON.stringify({ error: 'Unsupported protocol version' }));
+  let raw = '';
+  req.on('data', (c) => { raw += c; if (raw.length > 8192) req.destroy(); });
+  req.on('end', () => {
+    stats.requests++;
+    let j;
+    try { j = JSON.parse(raw); } catch (e) { return mcpRespond(res, null, rpcErr(-32700, 'Parse error')); }
+    if (!j || j.jsonrpc !== '2.0' || typeof j.method !== 'string') return mcpRespond(res, j && j.id !== undefined ? j.id : null, rpcErr(-32600, 'Invalid Request'));
+    const sid = req.headers['mcp-session-id'];
+    stats.mcpLastSession = sid ? 'present' : 'absent';
+    if (j.method === 'initialize') {
+      const id = require('crypto').randomBytes(16).toString('hex');
+      sessions.add(id); stats.mcpInits++;
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Mcp-Session-Id': id });
+      return res.end(JSON.stringify({ id: j.id, jsonrpc: '2.0', result: { protocolVersion: '2025-06-18', capabilities: { tools: {} },
+        serverInfo: { name: 'Domoticz', version: VERSION } } }));
+    }
+    if (j.method.startsWith('notifications/')) return send(res, 202, '<html><body>Accepted</body></html>', 'text/html');
+    if (!sid) return mcpRespond(res, j.id, rpcErr(-32600, 'Missing session'));
+    if (!sessions.has(sid)) return mcpRespond(res, j.id, rpcErr(-32001, 'Session not found'));
+    if (j.method === 'tools/list') {
+      const all = TOOLS.concat(TOOLS_FILLER), cur = j.params && j.params.cursor;
+      return mcpRespond(res, j.id, cur === 'p2' ? { result: { tools: all.slice(3) } } : { result: { tools: all.slice(0, 3), nextCursor: 'p2' } });
+    }
+    if (j.method !== 'tools/call') return mcpRespond(res, j.id, rpcErr(-32601, 'Method not found'));
+    const p = j.params || {};
+    stats.mcpCalls.push({ tool: String(p.name), args: p.arguments });
+    if (stats.mcpCalls.length > 200) stats.mcpCalls.shift();
+    return mcpRespond(res, j.id, mcpTool(p.name, p.arguments, rights));
+  });
 }
 
 http.createServer((req, res) => {
@@ -354,6 +468,7 @@ http.createServer((req, res) => {
         withClimate = true;
         const c = makeClimate(); c.forEach((d) => { d._t = epoch(d.LastUpdate); }); devices.push(...c);
       }
+      if (q.get('mcp') === 'expire') sessions.clear();
       cfg.count = q.has('count') ? Number(q.get('count')) : 0;
     } else if (u.pathname === '/__mock/reset') reset();
     else if (u.pathname === '/__mock/touch') {
@@ -366,6 +481,10 @@ http.createServer((req, res) => {
     return send(res, 200, '{"ok":true}');
   }
   const doit = () => {
+    if (u.pathname === '/mcp') {
+      if (req.method !== 'POST') return send(res, 405, 'Method Not Allowed', 'text/plain');
+      return handleMcp(req, res);
+    }
     if (u.pathname !== '/json.htm') return reply(res, 404, { status: 'ERR' });
     stats.requests++;
     stats.urls.push(u.search.replace(/token=[^&]*/g, 'token=<redacted>').slice(0, 160));

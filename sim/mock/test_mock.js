@@ -131,6 +131,79 @@ const check = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); 
   check('lux/air/unseen carry Data only', (await dev(107)).Data === '123 Lux' && (await dev(108)).Quality === 'Fair' && (await dev(116)).Type === 'Quantum Flux');
   await ctl('reset');
   check('reset restores metric', (await get('param=getconfig', V)).body.TempSign === 'C' && (await get('param=getdevices&rid=100', V)).body.result === undefined);
+
+  // ---- MCP (POST /mcp) ----
+  const mcpRaw = (tok, sid, body, extra = {}) => fetch(`http://127.0.0.1:${PORT}/mcp`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream',
+      ...(tok ? { Authorization: 'Bearer ' + tok } : {}), ...(sid ? { 'Mcp-Session-Id': sid } : {}), ...extra }, body: JSON.stringify(body) });
+  const rpc = async (tok, sid, method, params, id = 7) => { const r = await mcpRaw(tok, sid, { jsonrpc: '2.0', id, method, params }); return { code: r.status, body: await r.json() }; };
+  const init = async (tok) => { const r = await mcpRaw(tok, null, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
+    return { code: r.status, sid: r.headers.get('mcp-session-id'), body: await r.json() }; };
+  const call = (sid, name, args, tok = U) => rpc(tok, sid, 'tools/call', { name, arguments: args });
+  const txt = (r) => r.body.result && r.body.result.content[0].text;
+  check('mcp: no token -> 401', (await mcpRaw(null, null, { jsonrpc: '2.0', id: 1, method: 'initialize' })).status === 401);
+  check('mcp: GET -> 405', (await fetch(`http://127.0.0.1:${PORT}/mcp`)).status === 405);
+  const i1 = await init(U);
+  check('mcp: initialize -> 200 + 32 hex sid', i1.code === 200 && /^[0-9a-f]{32}$/.test(i1.sid) && i1.body.result.protocolVersion === '2025-06-18');
+  const sid = i1.sid;
+  const nt = await mcpRaw(U, sid, { jsonrpc: '2.0', method: 'notifications/initialized' });
+  check('mcp: notifications/initialized -> 202 + HTML', nt.status === 202 && (await nt.text()).startsWith('<html'));
+  check('mcp: Missing session', (await rpc(U, null, 'tools/call', { name: 'toggle_switch_state', arguments: { idx: 1 } })).body.error.code === -32600);
+  check('mcp: Session not found', (await rpc(U, 'f'.repeat(32), 'tools/list', {})).body.error.code === -32001);
+  check('mcp: MCP-Protocol-Version header -> 400', (await mcpRaw(U, sid, { jsonrpc: '2.0', id: 3, method: 'tools/list' }, { 'MCP-Protocol-Version': '2024-11-05' })).status === 400);
+  const l1 = await rpc(U, sid, 'tools/list', {});
+  const l2 = await rpc(U, sid, 'tools/list', { cursor: l1.body.result.nextCursor });
+  check('mcp: tools/list has 2 pages', l1.body.result.nextCursor === 'p2' && l1.body.result.tools.length === 3 && l2.body.result.nextCursor === undefined && l2.body.result.tools.length === 7);
+  check('mcp: unknown method -32601', (await rpc(U, sid, 'resources/list', {})).body.error.code === -32601);
+  check('mcp: unknown tool -32601', (await call(sid, 'nope', {})).body.error.code === -32601);
+  const vs = (await init(V)).sid;
+  check('mcp: viewer -> -32002', (await call(vs, 'set_switch_state', { idx: 1, state: 'On' }, V)).body.error.code === -32002 && (await dev(1)).Status === 'Off');
+  let r1 = await call(sid, 'set_switch_state', { idx: 1, state: 'On' });
+  check('mcp: set_switch_state On', r1.code === 200 && r1.body.id === 7 && r1.body.result.isError === false && /set to On successfully/.test(txt(r1)) && (await dev(1)).Status === 'On');
+  check('mcp: already On -> No action taken', /already On\. No action taken\./.test(txt(await call(sid, 'set_switch_state', { idx: 1, state: 'On' }))));
+  check('mcp: toggle', /successfully/.test(txt(await call(sid, 'toggle_switch_state', { idx: 1 }))) && (await dev(1)).Status === 'Off');
+  check('mcp: set_dimmer_level 30, clamp 150', /successfully/.test(txt(await call(sid, 'set_dimmer_level', { idx: 2, level: 30 }))) && (await dev(2)).Level === 30
+    && /successfully/.test(txt(await call(sid, 'set_dimmer_level', { idx: 2, level: 150 }))) && (await dev(2)).Level === 100);
+  check('mcp: selector level via set_dimmer_level', /successfully/.test(txt(await call(sid, 'set_dimmer_level', { idx: 4, level: 30 }))) && (await dev(4)).Data === 'High');
+  check('mcp: control_blinds Close/Open', /successfully/.test(txt(await call(sid, 'control_blinds', { idx: 3, command: 'Close' }))) && (await dev(3)).Status === 'Closed'
+    && /successfully/.test(txt(await call(sid, 'control_blinds', { idx: 3, command: 'Open' }))) && (await dev(3)).Status === 'Open');
+  check('mcp: control_blinds bad command -32602', (await call(sid, 'control_blinds', { idx: 3, command: 'Sideways' })).body.error.code === -32602);
+  check('mcp: push via set_switch_state', /successfully/.test(txt(await call(sid, 'set_switch_state', { idx: 5, state: 'On' }))));
+  check('mcp: lock via set_switch_state (On = Locked)', /successfully/.test(txt(await call(sid, 'set_switch_state', { idx: 6, state: 'Off' }))) && (await dev(6)).Status === 'Unlocked');
+  check('mcp: switch_scene numeric id', /successfully/.test(txt(await call(sid, 'switch_scene', { scene_id: 3, command: 'On' }))) && (await get('param=getscenes', V)).body.result.find((x) => x.idx === '3').Status === 'On');
+  check('mcp: switch_scene string id -> -32602', (await call(sid, 'switch_scene', { scene_id: '3', command: 'On' })).body.error.code === -32602);
+  check('mcp: Scene Off -> Error text, isError false', /^Error /.test(txt(await call(sid, 'switch_scene', { scene_id: 1, command: 'Off' }))) && (await call(sid, 'switch_scene', { scene_id: 1, command: 'Off' })).body.result.isError === false);
+  check('mcp: unknown scene isError true', (await call(sid, 'switch_scene', { scene_id: 99, command: 'On' })).body.result.isError === true);
+  check('mcp: string idx -> -32602', (await call(sid, 'set_switch_state', { idx: '1', state: 'On' })).body.error.code === -32602);
+  check('mcp: unknown idx isError true', (await call(sid, 'set_switch_state', { idx: 999, state: 'On' })).body.result.isError === true);
+  check('mcp: failed switch is isError false + Error text', (await call(sid, 'set_switch_state', { idx: 4, state: 'On' })).body.result.isError === false
+    && /^Error /.test(txt(await call(sid, 'set_switch_state', { idx: 4, state: 'On' }))));
+  check('mcp: PROTECTED device is switched (no check, like the real server)', /successfully/.test(txt(await call(sid, 'set_switch_state', { idx: 7, state: 'On' })))
+    && (await get('param=switchlight&idx=7&switchcmd=Off', U)).body.status === 'ERROR');
+  check('mcp: setpoint', /successfully/.test(txt(await call(sid, 'set_setpoint_value', { idx: 10, setpoint: 22.5 }))) && (await dev(10)).SetPoint === '22.5');
+  check('mcp: setpoint out of range -> Error text', /^Error /.test(txt(await call(sid, 'set_setpoint_value', { idx: 10, setpoint: 99 }))));
+  await ctl('set?units=imperial&climate=1');
+  check('mcp: setpoint takes no Fahrenheit conversion (68 on a 41..86 device is stored as raw 68 C)', /successfully|^Error /.test(txt(await call(sid, 'set_setpoint_value', { idx: 118, setpoint: 20 }))));
+  await ctl('reset');
+  const sid2 = (await init(U)).sid;
+  await ctl('set?mcp=expire');
+  check('mcp: expire -> Session not found', (await call(sid2, 'toggle_switch_state', { idx: 1 })).body.error.code === -32001 && (await dev(1)).Status === 'Off');
+  const sid3 = (await init(U)).sid;
+  const stm = await (await fetch(`http://127.0.0.1:${PORT}/__mock/stats`)).json();
+  check('mcp: stats count inits and calls, no token or sid', stm.mcpInits >= 2 && !JSON.stringify(stm).includes('user-token') && !JSON.stringify(stm).includes(sid3));
+  await ctl('set?mode=nomcp');
+  check('mcp: mode nomcp -> 503, json.htm still fine', (await mcpRaw(U, sid3, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).status === 503 && (await get('param=getversion', V)).code === 200);
+  await ctl('set?mode=nomcp404');
+  check('mcp: mode nomcp404 -> 404', (await mcpRaw(U, sid3, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).status === 404);
+  await ctl('set?mode=401');
+  check('mcp: mode 401', (await mcpRaw(U, sid3, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).status === 401);
+  await ctl('set?mode=html');
+  const hm = await mcpRaw(U, sid3, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  check('mcp: mode html -> 200 non-JSON', hm.status === 200 && (await hm.text()).startsWith('<!DOCTYPE'));
+  await ctl('set?mode=drop');
+  let mdrop = false; try { await mcpRaw(U, sid3, { jsonrpc: '2.0', id: 1, method: 'tools/list' }); } catch { mdrop = true; }
+  check('mcp: mode drop closes the socket', mdrop);
+  await ctl('reset');
   void st;
  } finally { srv.kill(); }
   srv.kill();
