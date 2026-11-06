@@ -1,5 +1,8 @@
-/* Command layer: validates a command against the model, sends it, then re-reads the device
- * (read-after-write) and reports CONFIRMED / UNCONFIRMED / FAILED. The HTTP "OK" is never trusted.
+/* Command layer: validates a command against the model, re-reads the device (pre-flight: Protected devices are refused here
+ * because the MCP endpoint skips Domoticz's own check), sends it through the Domoticz MCP endpoint (dz_client_mcp_call; there
+ * is NO legacy json.htm fallback for commands: it returns 403 for User-rights access tokens), then re-reads the device
+ * (read-after-write) and reports CONFIRMED / UNCONFIRMED / FAILED. MCP results are text only: the reply is never trusted
+ * beyond "it did not say Error".
  * Driven by dz_cmd_pump from the same task as dz_client_step (they share the client buffer). */
 #pragma once
 #include <stdbool.h>
@@ -22,8 +25,8 @@ typedef enum {
   DZ_CMD_SCENE_ON, DZ_CMD_SCENE_OFF,         /* scenes and groups (a Scene has no Off) */
   DZ_CMD_SETPOINT,                           /* setpoint in the server's own unit (TempSign or vunit), clamped to min..max */
   DZ_CMD_PUSH,                               /* push buttons */
-  DZ_CMD_MODE                                /* thermostat / fan mode: level = a Mode index from Modes. UNVERIFIED: never
-                                                exercised against a live server (OpenZWave only) */
+  DZ_CMD_MODE                                /* thermostat / fan mode: level = a Mode index from Modes. VIEW ONLY: the Domoticz MCP
+                                                endpoint has no tool for it, so dz_cmd_supported is false and submit refuses */
 } dz_cmd_kind_t;
 
 typedef struct {
@@ -43,7 +46,8 @@ typedef enum {
   DZ_CMDE_BAD_ARG,           /* missing idx, level not valid for a selector, non-finite setpoint... */
   DZ_CMDE_NEEDS_CONFIRM,
   DZ_CMDE_STALE,             /* model data for the device is not fresh: refuse rather than guess */
-  DZ_CMDE_QUEUE_FULL
+  DZ_CMDE_QUEUE_FULL,
+  DZ_CMDE_UNSUPPORTED        /* no MCP tool for it: thermostat MODE, SETPOINT on a Fahrenheit server (shown read-only) */
 } dz_cmd_err_t;
 const char *dz_cmd_err_name(dz_cmd_err_t e);
 
@@ -54,7 +58,10 @@ typedef enum {
   DZ_FAIL_FORBIDDEN,     /* 403: token lacks switch rights (viewer) */
   DZ_FAIL_SERVER,        /* HTTP 5xx or "status" != OK */
   DZ_FAIL_TRANSPORT,     /* could not reach the server */
-  DZ_FAIL_BAD_RESPONSE   /* HTML page, unexpected HTTP status */
+  DZ_FAIL_BAD_RESPONSE,  /* HTML page, unexpected HTTP status, session error after the retry, JSON-RPC parse/request error */
+  DZ_FAIL_NO_MCP,        /* the server has no MCP endpoint (HTTP 404 / 405 / 503, or JSON-RPC -32601): started with -nomcp or too old */
+  DZ_FAIL_REJECTED,      /* isError true or -32602: the device / scene is gone or the arguments were refused */
+  DZ_FAIL_PROTECTED      /* the pre-flight re-read shows the device is Protected: MCP skips Domoticz's own check, so we refuse */
 } dz_fail_t;
 const char *dz_outcome_name(dz_outcome_t o);
 
@@ -79,10 +86,11 @@ typedef struct {
   char idx[12];
   int level;
   dz_device_t pre;
-  int state; /* 0 free, 1 queued, 2 waiting verify */
+  int state; /* 0 free, 1 queued (pre-flight read due), 2 waiting verify, 3 pre-flight done (MCP call due) */
   uint32_t due_ms;
   int reads;
   bool sent_ok, uncertain;
+  bool no_action;            /* the server said "already ... No action taken" */
   dz_fail_t fail;
 } dz_cmd_slot_t;
 
@@ -99,6 +107,11 @@ typedef struct {
 
 void dz_cmd_init(dz_cmd_t *c, dz_client_t *client, dz_model_t *model, bool allow_control, dz_cmd_cb cb, void *user);
 
+/* Can this device take this command through the MCP tools at all? false for MODE (no tool), SETPOINT on a device whose value
+ * unit is Fahrenheit (the setpoint tool takes Celsius only), and a capability that does not take the command. The UI renders
+ * such controls read-only. dz_cmd_submit additionally refuses SETPOINT when the SERVER units are Fahrenheit. */
+bool dz_cmd_supported(const dz_device_t *d, dz_cmd_kind_t kind);
+
 /* Risk of a command on a device, so the UI can decide whether to demand a hold before submitting. */
 dz_risk_t dz_cmd_risk(const dz_device_t *d, dz_cmd_kind_t kind);
 
@@ -109,7 +122,8 @@ bool dz_cmd_scene_tap_kind(const dz_device_t *d, dz_cmd_kind_t *kind);
 /* Validate and queue. On DZ_CMD_ACCEPTED *id is the request id; the result arrives via the callback. */
 dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms, uint32_t *id);
 
-/* Does at most one HTTP request. Returns true if it did. */
+/* Does one step of one command: the pre-flight GET, the MCP call (initialize + call when there is no session yet) or a verify GET.
+ * Returns true if it did. */
 bool dz_cmd_pump(dz_cmd_t *c, uint32_t now_ms);
 size_t dz_cmd_pending(const dz_cmd_t *c);
 uint32_t dz_cmd_ms_until_due(const dz_cmd_t *c, uint32_t now_ms); /* UINT32_MAX when idle */
@@ -118,6 +132,3 @@ uint32_t dz_cmd_ms_until_due(const dz_cmd_t *c, uint32_t now_ms); /* UINT32_MAX 
  * Returns the length, or 0 if the command has no MCP tool (MODE), idx is not a number, a level exceeds 100, or cap is too small. */
 size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind, const char *idx, const dz_device_t *pre,
                      int level, float setpoint);
-
-/* Percent-encodes everything outside [A-Za-z0-9-._~]. Returns length, or -1 when it does not fit. */
-int dz_url_encode(char *dst, size_t cap, const char *src);

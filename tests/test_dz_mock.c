@@ -238,6 +238,17 @@ static dz_cmd_err_t run(dz_cmd_kind_t kind, const char *idx, int level, float sp
   return e;
 }
 
+static int nposts(void) {
+  dz_http_result_t r;
+  const char *k = "\"mcpInits\":";
+  (void)k;
+  if (get("/__mock/stats", NULL, 3000, small, sizeof small, &r) != DZ_NET_OK) return -1;
+  const char *p = strstr(small, "\"mcpCalls\":[");
+  int n = 0;
+  for (; p && (p = strstr(p + 1, "\"tool\"")); ) n++;
+  return n;
+}
+
 static void test_commands(void) {
   ctl("reset");
   setup("user-token", false);
@@ -263,10 +274,27 @@ static void test_commands(void) {
   ru_sleep_ms(1100);
   pump_client(1);
   dz_device_t d;
+  dz_http_result_t r0;
   CHECK(dz_model_get(&M, "1", false, &d, NULL, NULL, T) && !strcmp(d.status, "Off"));
   /* the mock refuses and says HTTP OK + status ERR: FAILED, not CONFIRMED */
   ctl("set?mode=statuserr&count=1");
   CHECK(run(DZ_CMD_ON, "1", 0, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_FAILED && LASTR.fail == DZ_FAIL_SERVER);
+  /* the endpoint skips the Protected check: the pre-flight read catches a device that became protected after the last poll */
+  ctl("touch?idx=1&protected=1");
+  CHECK(run(DZ_CMD_ON, "1", 0, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_FAILED && LASTR.fail == DZ_FAIL_PROTECTED);
+  CHECK(get("/json.htm?type=command&param=getdevices&rid=1", "viewer-token", 3000, rbuf, sizeof rbuf, &r0) == DZ_NET_OK && strstr(rbuf, "\"Status\": \"Off\""));
+  ctl("touch?idx=1&protected=0");
+  ru_sleep_ms(1100);
+  pump_client(1); /* the model learns that it is unprotected again */
+  /* a server started with -nomcp */
+  ctl("set?mode=nomcp");
+  CHECK(run(DZ_CMD_ON, "1", 0, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_FAILED && LASTR.fail == DZ_FAIL_NO_MCP);
+  ctl("set?mode=nomcp404");
+  CHECK(run(DZ_CMD_ON, "1", 0, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_FAILED && LASTR.fail == DZ_FAIL_NO_MCP);
+  ctl("set?mode=none");
+  /* the session is dropped by the server: one re-initialize, the command still lands */
+  ctl("set?mcp=expire");
+  CHECK(run(DZ_CMD_ON, "1", 0, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED);
   /* a viewer token cannot switch: 403 -> FAILED(forbidden), polling is NOT stopped */
   ctl("reset");
   setup("viewer-token", false);
@@ -298,17 +326,17 @@ static void test_climate_mock(void) {
   CHECK(dz_model_get(&M, "122", false, &d, &v, &st, T) && !dz_model_plan_temp(&M, &d, &s2, &v, &st, T));
   CHECK(dz_model_get(&M, "104", false, &d, &v, &st, T) && dz_dev_reading(&d, DZ_RK_AUXTEMP) && !dz_dev_room_temp(&d));
   /* setpoint in Fahrenheit: read-after-write confirms, values above max are clamped to the device's range */
-  CHECK(run(DZ_CMD_SETPOINT, "118", 0, 70.0f, true) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED && LASTR.after.setpoint > 69.9f && LASTR.after.setpoint < 70.1f);
-  CHECK(run(DZ_CMD_SETPOINT, "118", 0, 200.0f, true) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED && LASTR.after.setpoint > 85.9f && LASTR.after.setpoint < 86.1f);
-  CHECK(run(DZ_CMD_SETPOINT, "118", 0, 70.0f, false) == DZ_CMDE_NEEDS_CONFIRM);
-  CHECK(run(DZ_CMD_SETPOINT, "123", 0, 70.0f, true) == DZ_CMDE_NOT_CONTROLLABLE); /* radiator without range */
-  CHECK(run(DZ_CMD_SETPOINT, "124", 0, 70.0f, true) == DZ_CMDE_NOT_CONTROLLABLE); /* Evohome zone */
-  /* thermostat mode: UNVERIFIED on a real server (OpenZWave only); the mock mirrors Cmd_SetThermostatState */
-  CHECK(run(DZ_CMD_MODE, "125", 2, 0, false) == DZ_CMDE_NEEDS_CONFIRM);
-  CHECK(run(DZ_CMD_MODE, "125", 9, 0, true) == DZ_CMDE_BAD_ARG);
-  CHECK(run(DZ_CMD_MODE, "125", 2, 0, true) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED && LASTR.after.mode == 2);
-  /* a Mode command to a non-mode device, and a setpoint to a mode device, are refused */
-  CHECK(run(DZ_CMD_MODE, "118", 1, 0, true) == DZ_CMDE_NOT_CONTROLLABLE && run(DZ_CMD_SETPOINT, "125", 0, 20.0f, true) == DZ_CMDE_NOT_CONTROLLABLE);
+  /* Fahrenheit server: the MCP setpoint tool takes Celsius only (it would store 70 as 70 C), so every setpoint is read-only,
+   * and so is the thermostat mode (no MCP tool). Nothing is sent. */
+  int sent = nposts();
+  CHECK(!dz_cmd_supported(&d, DZ_CMD_SETPOINT));
+  CHECK(run(DZ_CMD_SETPOINT, "118", 0, 70.0f, true) == DZ_CMDE_UNSUPPORTED);
+  CHECK(run(DZ_CMD_SETPOINT, "123", 0, 70.0f, true) == DZ_CMDE_UNSUPPORTED && run(DZ_CMD_SETPOINT, "124", 0, 70.0f, true) == DZ_CMDE_UNSUPPORTED);
+  CHECK(run(DZ_CMD_MODE, "125", 2, 0, true) == DZ_CMDE_UNSUPPORTED && run(DZ_CMD_MODE, "125", 9, 0, true) == DZ_CMDE_UNSUPPORTED);
+  CHECK(nposts() == sent);
+  CHECK(dz_model_get(&M, "125", false, &d, &v, &st, T) && d.cap == DZ_CAP_MODE && !dz_cmd_supported(&d, DZ_CMD_MODE));
+  /* a setpoint to a mode device is refused */
+  CHECK(run(DZ_CMD_SETPOINT, "125", 0, 20.0f, true) == DZ_CMDE_UNSUPPORTED || run(DZ_CMD_SETPOINT, "125", 0, 20.0f, true) == DZ_CMDE_NOT_CONTROLLABLE);
   ctl("reset");
 }
 

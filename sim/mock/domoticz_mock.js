@@ -19,7 +19,7 @@
 //   GET /__mock/set?units=imperial|metric   getconfig answers TempSign F + WindSign mph (and converts Temp, SetPoint, Chill,
 //        DewPoint, min/max, Speed, Gust) or C + m/s (default). `climate=1` adds the climate device set below (also --climate).
 //   GET /__mock/reset                       restore devices and settings (metric, no climate set)
-//   GET /__mock/touch?idx=N&status=S        change a device behind the client's back
+//   GET /__mock/touch?idx=N&status=S        change a device behind the client's back (also &timeout=0|1, &protected=0|1)
 //   POST /mcp                               the Domoticz MCP endpoint (JSON-RPC 2.0, plain JSON replies): initialize (answers a
 //        Mcp-Session-Id header), notifications/initialized (202 + HTML body), tools/list (2 pages), tools/call for
 //        set_switch_state, toggle_switch_state, set_dimmer_level, control_blinds, switch_scene, set_setpoint_value. Like the
@@ -476,6 +476,7 @@ http.createServer((req, res) => {
       if (!d) return send(res, 404, '{}');
       if (q.has('status')) d.Status = d.Data = q.get('status');
       if (q.has('timeout')) d.HaveTimeout = q.get('timeout') === '1';
+      if (q.has('protected')) d.Protected = q.get('protected') === '1';
       touch(d);
     } else if (u.pathname === '/__mock/stats') return send(res, 200, JSON.stringify(stats));
     return send(res, 200, '{"ok":true}');

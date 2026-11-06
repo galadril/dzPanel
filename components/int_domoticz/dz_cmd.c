@@ -7,28 +7,12 @@
 
 const char *dz_cmd_err_name(dz_cmd_err_t e) {
   static const char *const n[] = {"accepted", "control-disabled", "unknown-device", "protected", "not-controllable",
-                                  "bad-arg", "needs-confirm", "stale", "queue-full"};
-  return (unsigned)e < 9 ? n[e] : "?";
+                                  "bad-arg", "needs-confirm", "stale", "queue-full", "unsupported"};
+  return (unsigned)e < 10 ? n[e] : "?";
 }
 const char *dz_outcome_name(dz_outcome_t o) {
   static const char *const n[] = {"confirmed", "unconfirmed", "failed"};
   return (unsigned)o < 3 ? n[o] : "?";
-}
-
-int dz_url_encode(char *dst, size_t cap, const char *src) {
-  static const char hex[] = "0123456789ABCDEF";
-  size_t n = 0;
-  for (; *src; src++) {
-    unsigned char c = (unsigned char)*src;
-    bool plain = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' ||
-                 c == '_' || c == '~';
-    if (n + (plain ? 1 : 3) + 1 > cap) return -1;
-    if (plain) dst[n++] = (char)c;
-    else { dst[n++] = '%'; dst[n++] = hex[c >> 4]; dst[n++] = hex[c & 15]; }
-  }
-  if (n >= cap) return -1;
-  dst[n] = 0;
-  return (int)n;
 }
 
 void dz_cmd_init(dz_cmd_t *c, dz_client_t *client, dz_model_t *model, bool allow_control, dz_cmd_cb cb, void *user) {
@@ -54,10 +38,20 @@ static bool cap_allows(const dz_device_t *d, dz_cmd_kind_t k) {
     case DZ_CMD_SELECTOR: return d->cap == DZ_CAP_SELECTOR;
     case DZ_CMD_SCENE_ON: return dz_cap_is_scene_ns(d->cap);   /* a scene is pushed; a group is switched on */
     case DZ_CMD_SCENE_OFF: return d->cap == DZ_CAP_GROUP;       /* a Scene has no Off: never sent */
-    case DZ_CMD_SETPOINT: return d->cap == DZ_CAP_THERMOSTAT;
+    case DZ_CMD_SETPOINT: return d->cap == DZ_CAP_THERMOSTAT && !strstr(d->vunit, "\xC2\xB0" "F"); /* the tool takes Celsius only */
     case DZ_CMD_PUSH: return d->cap == DZ_CAP_PUSH;
-    case DZ_CMD_MODE: return d->cap == DZ_CAP_MODE;
+    case DZ_CMD_MODE: return false; /* the MCP endpoint has no thermostat-mode tool: shown read-only */
   }
+  return false;
+}
+
+bool dz_cmd_supported(const dz_device_t *d, dz_cmd_kind_t kind) { return d && cap_allows(d, kind); }
+
+/* Commands the capability would take but MCP cannot carry (decided before the generic NOT_CONTROLLABLE). */
+static bool unsupported(const dz_device_t *d, dz_cmd_kind_t k, const dz_units_t *u, bool have_u) {
+  if (k == DZ_CMD_MODE) return d->cap == DZ_CAP_MODE;
+  if (k == DZ_CMD_SETPOINT && d->cap == DZ_CAP_THERMOSTAT)
+    return strstr(d->vunit, "\xC2\xB0" "F") || (have_u && u->have_temp && u->temp[0] == 'F');
   return false;
 }
 
@@ -87,16 +81,21 @@ dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms
   if (strlen(req->idx) >= sizeof((dz_cmd_slot_t *)0)->idx) return DZ_CMDE_BAD_ARG;
   if (!dz_model_get(c->model, req->idx, is_scene_cmd(req->kind), &d, &v, &st, now_ms)) return DZ_CMDE_UNKNOWN_DEVICE;
   if (d.is_protected) return DZ_CMDE_PROTECTED;
+  dz_units_t units;
+  bool have_units = dz_model_units(c->model, &units);
+  if (unsupported(&d, req->kind, &units, have_units)) return DZ_CMDE_UNSUPPORTED;
   if (!d.controllable || !cap_allows(&d, req->kind)) return DZ_CMDE_NOT_CONTROLLABLE;
 
   int level = -1;
   float setpoint = req->setpoint;
   if (req->kind == DZ_CMD_SET_LEVEL) {
+    if (d.max_level > 100) return DZ_CMDE_BAD_ARG; /* the MCP level tool takes 0..100 only */
     level = req->level < 0 ? 0 : req->level > d.max_level ? d.max_level : req->level;
   } else if (req->kind == DZ_CMD_SELECTOR) {
     int cnt = selector_count(&d);
     if (req->level < 0 || req->level % 10 != 0 || (cnt ? req->level / 10 >= cnt : req->level > d.max_level))
       return DZ_CMDE_BAD_ARG;
+    if (req->level > 100) return DZ_CMDE_BAD_ARG;
     level = req->level;
   } else if (req->kind == DZ_CMD_SETPOINT) {
     if (!isfinite(req->setpoint) || req->setpoint < -1000.0f || req->setpoint > 1000.0f) return DZ_CMDE_BAD_ARG;
@@ -153,36 +152,6 @@ static void fmt_setpoint(char *out, size_t cap, float sp) {
   bool neg = t < 0;
   if (neg) t = -t;
   snprintf(out, cap, "%s%ld.%ld", neg ? "-" : "", t / 10, t % 10);
-}
-
-static bool build_query(const dz_cmd_slot_t *s, char *q, size_t cap) {
-  const char *sw = NULL;
-  char enc[48], num[24];
-  switch (s->req.kind) {
-    case DZ_CMD_ON: sw = (s->pre.cap == DZ_CAP_LOCK && s->pre.switch_type == 20) ? "Off" : "On"; break;
-    case DZ_CMD_OFF: sw = (s->pre.cap == DZ_CAP_LOCK && s->pre.switch_type == 20) ? "On" : "Off"; break;
-    case DZ_CMD_TOGGLE: sw = "Toggle"; break;
-    case DZ_CMD_SET_LEVEL: case DZ_CMD_SELECTOR: sw = "Set Level"; break;
-    case DZ_CMD_BLINDS_OPEN: sw = "Open"; break;
-    case DZ_CMD_BLINDS_CLOSE: sw = "Close"; break;
-    case DZ_CMD_BLINDS_STOP: sw = "Stop"; break;
-    case DZ_CMD_PUSH: sw = s->pre.switch_type == 10 ? "Off" : "On"; break;
-    case DZ_CMD_SCENE_ON: case DZ_CMD_SCENE_OFF: case DZ_CMD_SETPOINT: case DZ_CMD_MODE: break;
-  }
-  int n;
-  if (s->req.kind == DZ_CMD_SCENE_ON || s->req.kind == DZ_CMD_SCENE_OFF) {
-    n = snprintf(q, cap, "param=switchscene&idx=%s&switchcmd=%s", s->idx, s->req.kind == DZ_CMD_SCENE_ON ? "On" : "Off");
-  } else if (s->req.kind == DZ_CMD_MODE) {
-    n = snprintf(q, cap, "param=thermostatstate&idx=%s&state=%d", s->idx, s->level);
-  } else if (s->req.kind == DZ_CMD_SETPOINT) {
-    fmt_setpoint(num, sizeof num, s->req.setpoint);
-    n = snprintf(q, cap, "param=setsetpoint&idx=%s&setpoint=%s", s->idx, num);
-  } else {
-    if (dz_url_encode(enc, sizeof enc, sw) < 0) return false;
-    n = snprintf(q, cap, "param=switchlight&idx=%s&switchcmd=%s", s->idx, enc);
-    if (n > 0 && (size_t)n < cap && s->level >= 0) n += snprintf(q + n, cap - (size_t)n, "&level=%d", s->level);
-  }
-  return n > 0 && (size_t)n < cap;
 }
 
 /* The MCP tools/call body for a command (JSON-RPC 2.0). Only integers, fixed words and fmt_setpoint are printed, so no JSON
@@ -247,8 +216,11 @@ static bool matches(const dz_cmd_slot_t *s, const dz_device_t *a) {
       if (s->level == 0) return !strcmp(a->status, "Off");
       return dz_status_is_on(a) && a->has_level && a->level == s->level;
     case DZ_CMD_SELECTOR: return a->has_level && (a->level == s->level || a->level_int == s->level);
-    case DZ_CMD_BLINDS_OPEN: return !strncmp(a->status, "Open", 4);
-    case DZ_CMD_BLINDS_CLOSE: return !strncmp(a->status, "Closed", 6);
+    /* Blinds: Domoticz applies inversion (ReverseState / ReversePosition, the old types 6 and 16) on the server and reports the
+     * user-facing state, so Open is "Open" or, on percentage blinds that report "Set Level: N %", level 100; Close is "Closed"
+     * or level 0. Not verified against a live inverted blind. */
+    case DZ_CMD_BLINDS_OPEN: return !strncmp(a->status, "Open", 4) || (a->has_level && a->level >= 100 && !strncmp(a->status, "Set Level", 9));
+    case DZ_CMD_BLINDS_CLOSE: return !strncmp(a->status, "Closed", 6) || (a->has_level && a->level <= 0 && !strncmp(a->status, "Set Level", 9));
     case DZ_CMD_SCENE_ON:
       if (p->cap == DZ_CAP_SCENE) {
         /* A scene is pushed and then reads "On" for good, so "On" alone proves nothing if it was On before:
@@ -295,43 +267,121 @@ static void finish(dz_cmd_t *c, dz_cmd_slot_t *s, dz_outcome_t o, const dz_devic
   if (c->cb) c->cb(&r, c->user);
 }
 
-static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
-  char q[160];
+/* One re-read of the device (or scene list) the command is about. Returns the failure to report, DZ_FAIL_NONE when the
+ * request worked; *got says whether the device was in the answer. Updates the model like a poll would. */
+static dz_fail_t read_one(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now, dz_device_t *out, bool *got) {
+  char q[64];
+  bool scene = is_scene_cmd(s->req.kind);
+  if (scene) snprintf(q, sizeof q, "param=getscenes");
+  else snprintf(q, sizeof q, "param=getdevices&rid=%s", s->idx);
   dz_http_result_t hr;
-  if (!build_query(s, q, sizeof q)) { s->fail = DZ_FAIL_BAD_RESPONSE; finish(c, s, DZ_OUT_FAILED, NULL); return; }
   dz_net_err_t e = dz_client_request(c->client, q, &hr);
-  if (e == DZ_NET_TIMEOUT) {
-    /* the switch may or may not have happened: the re-read decides */
-    s->uncertain = true;
-  } else if (e == DZ_NET_CONNECT || e == DZ_NET_TLS) {
-    s->fail = DZ_FAIL_TRANSPORT;
-    finish(c, s, DZ_OUT_FAILED, NULL);
-    return;
-  } else if (hr.status == 401) {
-    s->fail = DZ_FAIL_UNAUTHORIZED;
-    dz_client_note_auth_failure(c->client);
-    finish(c, s, DZ_OUT_FAILED, NULL);
-    return;
-  } else if (hr.status == 403) {
-    s->fail = DZ_FAIL_FORBIDDEN;
-    finish(c, s, DZ_OUT_FAILED, NULL);
-    return;
-  } else if (hr.status >= 500) {
-    s->fail = DZ_FAIL_SERVER;
-    finish(c, s, DZ_OUT_FAILED, NULL);
-    return;
-  } else if (hr.status != 200) {
+  grab_t g;
+  memset(&g, 0, sizeof g);
+  g.idx = s->idx;
+  g.scene = scene;
+  *got = false;
+  if (e == DZ_NET_CONNECT || e == DZ_NET_TLS || e == DZ_NET_TIMEOUT) return DZ_FAIL_TRANSPORT;
+  if (e != DZ_NET_OK) return DZ_FAIL_BAD_RESPONSE;
+  if (hr.status == 401) { dz_client_note_auth_failure(c->client); return DZ_FAIL_UNAUTHORIZED; }
+  if (hr.status == 403) return DZ_FAIL_FORBIDDEN;
+  if (hr.status >= 500) return DZ_FAIL_SERVER;
+  if (hr.status != 200) return DZ_FAIL_BAD_RESPONSE;
+  dz_result_t res;
+  dz_err_t pe = dz_parse_response(c->client->cfg.buf, hr.len, grab_cb, &g, &res);
+  if (pe == DZ_ERR_STATUS) return DZ_FAIL_SERVER;
+  if (pe != DZ_OK) return DZ_FAIL_BAD_RESPONSE;
+  if (g.found) {
+    *got = true;
+    *out = g.got;
+    dz_model_begin(c->model);
+    dz_model_stage_cb(&g.got, c->model);
+    dz_model_commit(c->model, DZ_COMMIT_PARTIAL, NULL, now);
+  }
+  return DZ_FAIL_NONE;
+}
+
+/* The MCP endpoint skips Domoticz's Protected check and its per-user device check, so this is the guard: one small GET right
+ * before the call (it also refreshes the pre-state: lock type, push type, status, LastUpdate). */
+static void do_preflight(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
+  dz_device_t fresh;
+  bool got;
+  dz_fail_t f = read_one(c, s, now, &fresh, &got);
+  if (f != DZ_FAIL_NONE) { s->fail = f; finish(c, s, DZ_OUT_FAILED, NULL); return; }
+  if (!got) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, NULL); return; } /* gone since the last poll */
+  if (fresh.is_protected) { s->fail = DZ_FAIL_PROTECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
+  if (!fresh.controllable || !cap_allows(&fresh, s->req.kind)) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
+  s->pre = fresh;
+  s->state = 3;
+  s->due_ms = now;
+}
+
+/* JSON-RPC error code -> failure. -32001 / -32600 only reach here after the one retry (BAD_RESPONSE). */
+static dz_fail_t rpc_error_fail(int code) {
+  switch (code) {
+    case -32601: return DZ_FAIL_NO_MCP;
+    case -32002: return DZ_FAIL_FORBIDDEN;
+    case -32000: case -32003: case -32004: case -32603: return DZ_FAIL_SERVER;
+    case -32602: return DZ_FAIL_REJECTED;
+    default: return DZ_FAIL_BAD_RESPONSE; /* -32700, -32600, -32001 and anything unknown */
+  }
+}
+
+static dz_fail_t http_fail(int status) {
+  if (status == 401) return DZ_FAIL_UNAUTHORIZED;
+  if (status == 403) return DZ_FAIL_FORBIDDEN;
+  if (status == 404 || status == 405 || status == 503) return DZ_FAIL_NO_MCP;
+  if (status >= 500) return DZ_FAIL_SERVER;
+  return DZ_FAIL_BAD_RESPONSE;
+}
+
+static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
+  dz_client_t *cl = c->client;
+  if (!dz_mcp_encode(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->req.kind, s->idx, &s->pre, s->level,
+                     s->req.setpoint)) {
     s->fail = DZ_FAIL_BAD_RESPONSE;
     finish(c, s, DZ_OUT_FAILED, NULL);
     return;
-  } else {
-    dz_result_t res;
-    dz_err_t pe = dz_parse_response(c->client->cfg.buf, hr.len, NULL, NULL, &res);
-    if (pe != DZ_OK) {
-      s->fail = pe == DZ_ERR_STATUS ? DZ_FAIL_SERVER : DZ_FAIL_BAD_RESPONSE;
+  }
+  dz_mcp_result_t r;
+  bool ok = dz_client_mcp_call(cl, now, cl->mcp_call, &r);
+  bool reply = r.net == DZ_NET_OK && r.http == 200 && r.parse == DZ_OK; /* a JSON-RPC answer, even if the call failed */
+  if (!ok && !reply) {
+    if (r.net == DZ_NET_TIMEOUT && r.stage == DZ_MCP_STAGE_CALL) {
+      s->uncertain = true; /* the call may have run (never retried): the re-read decides */
+    } else if (r.net == DZ_NET_TIMEOUT || r.net == DZ_NET_CONNECT || r.net == DZ_NET_TLS) {
+      s->fail = DZ_FAIL_TRANSPORT; /* includes a timeout in initialize: nothing was sent yet */
+      finish(c, s, DZ_OUT_FAILED, NULL);
+      return;
+    } else {
+      s->fail = r.net == DZ_NET_OK ? http_fail(r.http) : DZ_FAIL_BAD_RESPONSE;
+      if (s->fail == DZ_FAIL_UNAUTHORIZED) dz_client_note_auth_failure(cl);
       finish(c, s, DZ_OUT_FAILED, NULL);
       return;
     }
+  } else if (r.session_lost) {
+    s->fail = DZ_FAIL_BAD_RESPONSE; /* still no session after one re-initialize */
+    finish(c, s, DZ_OUT_FAILED, NULL);
+    return;
+  } else if (r.reply.has_error) {
+    s->fail = rpc_error_fail(r.reply.code);
+    finish(c, s, DZ_OUT_FAILED, NULL);
+    return;
+  } else if (!r.reply.has_result) {
+    s->fail = DZ_FAIL_BAD_RESPONSE;
+    finish(c, s, DZ_OUT_FAILED, NULL);
+    return;
+  } else if (r.reply.is_error) {
+    s->fail = DZ_FAIL_REJECTED; /* device / scene not found, bad arguments */
+    finish(c, s, DZ_OUT_FAILED, NULL);
+    return;
+  } else if (!strncmp(r.reply.text, "Error ", 6)) {
+    s->fail = DZ_FAIL_SERVER; /* the switch itself failed: isError false, text starts with Error */
+    finish(c, s, DZ_OUT_FAILED, NULL);
+    return;
+  } else {
+    /* anything else, including "... was already X. No action taken.": the re-read is the truth */
+    s->no_action = strstr(r.reply.text, "No action taken") != NULL;
     s->sent_ok = true;
   }
   s->state = 2;
@@ -339,31 +389,12 @@ static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
 }
 
 static void do_verify(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
-  char q[64];
-  bool scene = is_scene_cmd(s->req.kind);
-  if (scene) snprintf(q, sizeof q, "param=getscenes");
-  else snprintf(q, sizeof q, "param=getdevices&rid=%s", s->idx);
-  dz_http_result_t hr;
-  dz_net_err_t e = dz_client_request(c->client, q, &hr);
-  s->reads++;
-  grab_t g;
-  memset(&g, 0, sizeof g);
-  g.idx = s->idx;
-  g.scene = scene;
+  dz_device_t after;
   bool got = false;
-  if ((e == DZ_NET_OK) && hr.status == 200) {
-    dz_result_t res;
-    got = dz_parse_response(c->client->cfg.buf, hr.len, grab_cb, &g, &res) == DZ_OK && g.found;
-    if (got) {
-      dz_model_begin(c->model);
-      dz_model_stage_cb(&g.got, c->model);
-      dz_model_commit(c->model, DZ_COMMIT_PARTIAL, NULL, now);
-    }
-  } else if (hr.status == 401) {
-    dz_client_note_auth_failure(c->client);
-  }
-  if (got && matches(s, &g.got)) { finish(c, s, DZ_OUT_CONFIRMED, &g.got); return; }
-  if (s->reads >= 2) { finish(c, s, DZ_OUT_UNCONFIRMED, got ? &g.got : NULL); return; }
+  dz_fail_t f = read_one(c, s, now, &after, &got);
+  s->reads++;
+  if (got && f == DZ_FAIL_NONE && matches(s, &after)) { finish(c, s, DZ_OUT_CONFIRMED, &after); return; }
+  if (s->reads >= 2) { finish(c, s, DZ_OUT_UNCONFIRMED, got ? &after : NULL); return; }
   s->due_ms = now + c->verify_delay_ms;
 }
 
@@ -376,7 +407,8 @@ bool dz_cmd_pump(dz_cmd_t *c, uint32_t now) {
     if (!best || (int32_t)(s->id - best->id) < 0) best = s;
   }
   if (!best) return false;
-  if (best->state == 1) do_send(c, best, now);
+  if (best->state == 1) do_preflight(c, best, now);
+  else if (best->state == 3) do_send(c, best, now);
   else do_verify(c, best, now);
   return true;
 }
