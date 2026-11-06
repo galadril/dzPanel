@@ -247,7 +247,7 @@ dz_err_t dz_model_apply(dz_model_t *m, const char *json, size_t len, dz_commit_t
 
 static void out_entry(const dz_model_t *m, const dz_entry_t *e, dz_device_t *dev, ru_val_t *val, ru_val_state_t *st,
                       bool *scene, uint32_t now) {
-  if (dev) *dev = e->dev;
+  if (dev) { *dev = e->dev; ((dz_model_t *)m)->copies++; }
   if (val) *val = e->val;
   if (st) *st = entry_state(m, e, now);
   if (scene) *scene = e->is_scene;
@@ -288,6 +288,17 @@ uint16_t dz_model_order_at(dz_model_t *m, size_t i) {
   ru_mutex_unlock(m->mu);
   return o;
 }
+
+void dz_model_foreach(dz_model_t *m, uint32_t now_ms, dz_model_visit_fn cb, void *ud) {
+  ru_mutex_lock(m->mu);
+  for (size_t i = 0; i < m->n; i++) {
+    const dz_entry_t *e = &m->e[i];
+    if (!cb(i, &e->dev, e->is_scene, entry_state(m, e, now_ms), e->order, ud)) break;
+  }
+  ru_mutex_unlock(m->mu);
+}
+
+uint32_t dz_model_copies(dz_model_t *m) { ru_mutex_lock(m->mu); uint32_t v = m->copies; ru_mutex_unlock(m->mu); return v; }
 
 size_t dz_model_count(dz_model_t *m) { ru_mutex_lock(m->mu); size_t v = m->n; ru_mutex_unlock(m->mu); return v; }
 GETTER(dz_model_overflow, overflow, uint32_t)

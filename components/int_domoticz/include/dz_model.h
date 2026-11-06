@@ -55,6 +55,7 @@ typedef struct {
   uint32_t changes;           /* cumulative added/changed/removed entries */
   uint32_t generation;        /* bumps once per commit that changed anything */
   uint32_t commits, aborts;
+  uint32_t copies;            /* dz_device_t copies handed out by dz_model_at/get (test and diagnostics counter) */
   uint16_t tail_n;            /* entries added by delta/partial since the last complete full commit */
   dz_units_t units;           /* DZ_UNITS: all have_ flags false until getconfig was read */
   int64_t server_epoch_s;     /* server clock at last commit (from ServerTime), -1 unknown */
@@ -84,6 +85,12 @@ bool dz_model_get(dz_model_t *m, const char *idx, bool scene, dz_device_t *dev, 
 bool dz_model_at(dz_model_t *m, size_t i, dz_device_t *dev, ru_val_t *val, ru_val_state_t *st, bool *scene,
                  uint32_t now_ms);
 size_t dz_model_count(dz_model_t *m);
+/* Visit every entry under ONE lock, with a const pointer and NO copy. cb returns false to stop. The pointer is valid
+ * only inside cb, which must be quick and must not call back into the model. */
+typedef bool (*dz_model_visit_fn)(size_t i, const dz_device_t *d, bool scene, ru_val_state_t st, uint16_t order, void *ud);
+void dz_model_foreach(dz_model_t *m, uint32_t now_ms, dz_model_visit_fn cb, void *ud);
+/* number of dz_device_t copies made by dz_model_at/dz_model_get so far */
+uint32_t dz_model_copies(dz_model_t *m);
 /* The server's own order (the user's Domoticz order with order=Name): position in the last COMPLETE full response
  * (FULL_DEVICES for devices, FULL_SCENES for scenes), counted separately per kind. An entry that arrived through a
  * delta or partial read sorts after all of them (0xFE00 + arrival number, capped at 0xFFFE) until the next complete

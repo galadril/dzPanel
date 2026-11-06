@@ -34,6 +34,13 @@ void sim_pointer(int x, int y, bool down);
 typedef void (*sim_touch_hook_t)(int x, int y, bool down, uint32_t t_ms, void *ud);
 void sim_set_touch_hook(sim_touch_hook_t fn, void *ud);
 
+/* Invalidation meter (LV_EVENT_INVALIDATE_AREA on the display): pixels summed over all invalidated areas, number of
+ * areas, number of full-screen areas, since the last reset. Tests use it to prove a data refresh redraws little. */
+void sim_inv_reset(void);
+long sim_inv_pixels(void);
+long sim_inv_count(void);
+long sim_inv_full(void);
+
 /* force a full redraw and run LVGL until settled */
 void sim_render(void);
 

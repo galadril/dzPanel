@@ -24,8 +24,29 @@ static uint32_t tick_cb(void) {
   return g_clock;
 }
 
+static long g_inv_px, g_inv_n, g_inv_full;
+static int g_size_px;
+static void inv_cb(lv_event_t *e) {
+  const lv_area_t *a = lv_event_get_param(e);
+  if (!a) return;
+  long w = lv_area_get_width(a), h = lv_area_get_height(a);
+  g_inv_px += w * h;
+  g_inv_n++;
+  if (w >= g_size_px && h >= g_size_px) g_inv_full++;
+}
+void sim_inv_reset(void) { g_inv_px = g_inv_n = g_inv_full = 0; }
+long sim_inv_pixels(void) { return g_inv_px; }
+long sim_inv_count(void) { return g_inv_n; }
+long sim_inv_full(void) { return g_inv_full; }
+
+static sim_t *g_sim;
+static void *g_buf;
 static void flush_cb(lv_display_t *d, const lv_area_t *a, uint8_t *px) {
-  (void)a; (void)px; /* LVGL renders straight into sim_t.fb (full mode) */
+  /* PARTIAL mode like the device: LVGL renders each invalidated area into the draw buffer, copied here into sim_t.fb */
+  int w = lv_area_get_width(a), h = lv_area_get_height(a);
+  uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_XRGB8888);
+  for (int y = 0; y < h; y++)
+    memcpy(&g_sim->fb[(size_t)(a->y1 + y) * (size_t)g_sim->size + (size_t)a->x1], px + (size_t)y * stride, (size_t)w * 4u);
   lv_display_flush_ready(d);
 }
 
@@ -57,8 +78,13 @@ bool sim_init_ex(sim_t *s, int size, bool square) {
   lv_tick_set_cb(tick_cb);
   g_disp = lv_display_create(size, size);
   lv_display_set_color_format(g_disp, LV_COLOR_FORMAT_XRGB8888);
-  lv_display_set_buffers(g_disp, s->fb, NULL, (uint32_t)size * (uint32_t)size * 4u, LV_DISPLAY_RENDER_MODE_FULL);
+  g_sim = s;
+  g_buf = malloc((size_t)size * (size_t)size * 4 + 64);
+  lv_display_set_buffers(g_disp, g_buf, NULL, (uint32_t)size * (uint32_t)size * 4u, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(g_disp, flush_cb);
+  g_size_px = size;
+  sim_inv_reset();
+  lv_display_add_event_cb(g_disp, inv_cb, LV_EVENT_INVALIDATE_AREA, NULL);
   g_indev = lv_indev_create();
   lv_indev_set_type(g_indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(g_indev, indev_cb);
@@ -68,6 +94,8 @@ bool sim_init_ex(sim_t *s, int size, bool square) {
 
 void sim_shutdown(sim_t *s) {
   lv_deinit();
+  free(g_buf);
+  g_buf = NULL;
   g_disp = NULL;
   g_indev = NULL;
   free(s->fb);
