@@ -603,12 +603,12 @@ static void test_kinds_table(void) {
   setup(true);
   CHECK(run(DZ_CMD_SCENE_ON, "2", 0, 0, true, NULL) == DZ_CMD_ACCEPTED);
   CHECK(run(DZ_CMD_SCENE_OFF, "2", 0, 0, true, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && strstr(LASTB, "\"scene_id\":2,\"command\":\"Off\""));
-  /* percentage blinds that report "Set Level: N %" instead of Open / Closed: level 100 is open, level 0 is closed */
+  /* B4: a percentage blind that reports only "Set Level: N %" is NOT confirmed (100 = open is unverified on a real blind) */
   setup(true);
   pblind_levels = true;
-  CHECK(run(DZ_CMD_BLINDS_OPEN, "14", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && !strcmp(LAST.after.status, "Set Level: 100 %"));
-  CHECK(run(DZ_CMD_BLINDS_CLOSE, "14", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && !strcmp(LAST.after.status, "Set Level: 0 %"));
-  /* but a blind stuck at 30 % did not open */
+  CHECK(run(DZ_CMD_BLINDS_OPEN, "14", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED && !strcmp(LAST.after.status, "Set Level: 100 %") && LAST.fail == DZ_FAIL_NONE);
+  CHECK(run(DZ_CMD_BLINDS_CLOSE, "14", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED && !strcmp(LAST.after.status, "Set Level: 0 %"));
+  /* and a blind that stayed at 30 % is unconfirmed too */
   xm = X_IGNORE;
   CHECK(run(DZ_CMD_BLINDS_OPEN, "14", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
   pblind_levels = false;

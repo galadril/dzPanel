@@ -235,10 +235,10 @@ static bool matches(const dz_cmd_slot_t *s, const dz_device_t *a) {
     }
     case DZ_CMD_SELECTOR: return a->has_level && (a->level == s->level || a->level_int == s->level);
     /* Blinds: Domoticz applies inversion (ReverseState / ReversePosition, the old types 6 and 16) on the server and reports the
-     * user-facing state, so Open is "Open" or, on percentage blinds that report "Set Level: N %", level 100; Close is "Closed"
-     * or level 0. Not verified against a live inverted blind. */
-    case DZ_CMD_BLINDS_OPEN: return !strncmp(a->status, "Open", 4) || (a->has_level && a->level >= 100 && !strncmp(a->status, "Set Level", 9));
-    case DZ_CMD_BLINDS_CLOSE: return !strncmp(a->status, "Closed", 6) || (a->has_level && a->level <= 0 && !strncmp(a->status, "Set Level", 9));
+     * user-facing state. Confirmed on the WORDS only: "Open" / "Closed". A level-only status ("Set Level: N %") is NOT accepted:
+     * whether 100 means open and 0 closed (or the reverse) is unverified on a real blind, so it stays UNCONFIRMED. */
+    case DZ_CMD_BLINDS_OPEN: return !strncmp(a->status, "Open", 4);
+    case DZ_CMD_BLINDS_CLOSE: return !strncmp(a->status, "Closed", 6);
     case DZ_CMD_SCENE_ON:
       if (p->cap == DZ_CAP_SCENE) {
         /* A scene is pushed and then reads "On" for good, so "On" alone proves nothing if it was On before:
