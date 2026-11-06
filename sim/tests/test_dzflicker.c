@@ -1,12 +1,14 @@
 /* Flicker budget: a data refresh must redraw only what changed. Widget setters with identical input invalidate nothing;
  * the Domoticz screens update tiles in place instead of rebuilding the screen. Pixels are counted from LVGL's
  * LV_EVENT_INVALIDATE_AREA on the display (sim_inv_*). */
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "apps_demo.h"
 #include "mini_test.h"
+#include "ru_icons.h"
 #include "ru_widgets.h"
 
 #ifndef FIXTURE_DIR
@@ -398,6 +400,116 @@ static void test_utility_rows(void) {
   appfx_unload(&f);
 }
 
+/* ---- weather tiles at app level (APPFX_CLIMATE_METRIC: a temperature sensor, rain gauge and UV sensor with units) ---- */
+static lv_obj_t *wx_tile_of(lv_obj_t *o, const char *name) {
+  uint32_t n = lv_obj_get_child_count(o);
+  for (uint32_t i = 0; i < n; i++) {
+    lv_obj_t *c = lv_obj_get_child(o, (int32_t)i);
+    if (n >= 6 && lv_obj_check_type(c, &lv_label_class) && i == 0 && !strcmp(lv_label_get_text(c), name)) return o;
+    lv_obj_t *r = wx_tile_of(c, name);
+    if (r) return r;
+  }
+  return NULL;
+}
+
+static int count_desc(lv_obj_t *o) {
+  int n = 0;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) n += 1 + count_desc(lv_obj_get_child(o, (int32_t)i));
+  return n;
+}
+
+static lv_color_t rgb(uint32_t v) { return lv_color_hex(v); }
+
+static void push_json(appfx_t *f, const char *fmt, ...) {
+  char b[700];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(b, sizeof b, fmt, ap);
+  va_end(ap);
+  push(f, b);
+}
+
+static void test_wx_tiles(void) {
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
+  CHECK(a != NULL);
+  ru_dzapp_set_display_info(a, "sim", false);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f.T);
+  const long px = (long)S.size * S.size;
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  settle();
+  lv_obj_t *scr = lv_screen_active();
+  lv_obj_t *tile = wx_tile_of(scr, "TEMP SENSOR");
+  CHECK(tile != NULL);
+  if (!tile) { ru_dzapp_destroy(a); appfx_unload(&f); return; }
+  CHECK(count_desc(tile) == 6); /* name, icon, value, unit, small line, dot */
+  lv_obj_t *icon = ru_wx_tile_part(tile, 1), *val = ru_wx_tile_part(tile, 2);
+  CHECK(!strcmp(lv_label_get_text(val), "21.5") && !strcmp(lv_label_get_text(icon), RU_ICON_THERMOMETER));
+  CHECK(lv_color_eq(lv_obj_get_style_text_color(icon, LV_PART_MAIN), rgb(0x3DDC84)) && lv_color_eq(lv_obj_get_style_text_color(val, LV_PART_MAIN), rgb(0xE6E9EE)));
+  /* a value change: the same screen and the same tile, a small area, the icon follows the band, the value stays white */
+  const char *tdev = "{\"idx\":\"100\",\"Name\":\"Temp Sensor\",\"Type\":\"Temp\",\"SubType\":\"LaCrosse TX3\",\"Temp\":%.1f,\"Data\":\"%.1f C\",\"Favorite\":1,\"trend\":2}";
+  push_json(&f, tdev, 36.0, 36.0);
+  sim_inv_reset();
+  tick(&f, a, 300);
+  printf("  wx value change: %ld px (%.1f%%)\n", sim_inv_pixels(), 100.0 * (double)sim_inv_pixels() / (double)px);
+  CHECK(lv_screen_active() == scr && wx_tile_of(scr, "TEMP SENSOR") == tile);
+  CHECK(sim_inv_pixels() > 0 && sim_inv_pixels() < px / 20);
+  CHECK(!strcmp(lv_label_get_text(val), "36.0"));
+  CHECK(lv_color_eq(lv_obj_get_style_text_color(icon, LV_PART_MAIN), rgb(0xFF5A5F)) && lv_color_eq(lv_obj_get_style_text_color(val, LV_PART_MAIN), rgb(0xE6E9EE)));
+  /* nothing changed: nothing redrawn */
+  settle();
+  for (int i = 0; i < 4; i++) tick(&f, a, 250);
+  CHECK(sim_inv_pixels() == 0 && lv_screen_active() == scr);
+  /* Weather: rain gauge (rate 0.4 drizzle, 0 cloud, 12 pouring), UV 1/4/9/12 */
+  ru_dzapp_show_section(a, RU_SEC_WEATHER);
+  tick(&f, a, 300);
+  settle();
+  lv_obj_t *rain = wx_tile_of(lv_screen_active(), "RAIN GAUGE"), *uv = wx_tile_of(lv_screen_active(), "UV SENSOR");
+  CHECK(rain && uv);
+  if (rain && uv) {
+    const char *rdev = "{\"idx\":\"105\",\"Name\":\"Rain Gauge\",\"Type\":\"Rain\",\"SubType\":\"RainByRate\",\"Rain\":\"12.5\",\"RainRate\":\"%s\",\"Data\":\"0;12.5\",\"Favorite\":1}";
+    const char *rate[] = { "0.4", "0", "12" };
+    const char *ric[] = { RU_ICON_CLOUD_DRIZZLE, RU_ICON_CLOUD, RU_ICON_CLOUD_RAIN };
+    uint32_t rcol[] = { 0x4DB3FF, 0x8A93A0, 0x8C7CFF };
+    for (int i = 0; i < 3; i++) {
+      push_json(&f, rdev, rate[i]);
+      tick(&f, a, 300);
+      lv_obj_t *ri = ru_wx_tile_part(rain, 1);
+      if (strcmp(lv_label_get_text(ri), ric[i])) printf("  rain %s: wrong icon\n", rate[i]);
+      CHECK(!strcmp(lv_label_get_text(ri), ric[i]) && lv_color_eq(lv_obj_get_style_text_color(ri, LV_PART_MAIN), rgb(rcol[i])));
+    }
+    const char *udev = "{\"idx\":\"106\",\"Name\":\"UV Sensor\",\"Type\":\"UV\",\"SubType\":\"UV3\",\"UVI\":\"%d\",\"Temp\":20.1,\"Data\":\"%d UVI\",\"Favorite\":1}";
+    int uvi[] = { 1, 4, 9, 12 };
+    const char *uic[] = { RU_ICON_SUN_DIM, RU_ICON_SUN, RU_ICON_SUN, RU_ICON_SUN };
+    uint32_t ucol[] = { 0x3DDC84, 0xFFC247, 0xFF5A5F, 0x8C7CFF };
+    for (int i = 0; i < 4; i++) {
+      push_json(&f, udev, uvi[i], uvi[i]);
+      tick(&f, a, 300);
+      lv_obj_t *ui = ru_wx_tile_part(uv, 1), *uw = ru_wx_tile_part(uv, 4);
+      CHECK(!strcmp(lv_label_get_text(ui), uic[i]) && lv_color_eq(lv_obj_get_style_text_color(ui, LV_PART_MAIN), rgb(ucol[i])));
+      CHECK(lv_color_eq(lv_obj_get_style_text_color(uw, LV_PART_MAIN), rgb(ucol[i]))); /* the UV word carries the band colour too */
+    }
+    CHECK(lv_screen_active() == lv_obj_get_screen(uv)); /* all of it in place, no rebuild of the screen */
+    /* stale: no new data past the TTL; the same screen, grey icon and value, warn dot, border, no band colour */
+    lv_obj_t *scr2 = lv_screen_active();
+    tick(&f, a, 700000);
+    tick(&f, a, 1000);
+    CHECK(lv_screen_active() == scr2 || wx_tile_of(lv_screen_active(), "UV SENSOR"));
+    lv_obj_t *t2 = wx_tile_of(lv_screen_active(), "UV SENSOR");
+    CHECK(t2 != NULL);
+    if (t2) {
+      CHECK(lv_color_eq(lv_obj_get_style_text_color(ru_wx_tile_part(t2, 1), LV_PART_MAIN), ru_theme()->stale));
+      CHECK(lv_color_eq(lv_obj_get_style_text_color(ru_wx_tile_part(t2, 2), LV_PART_MAIN), ru_theme()->stale));
+      CHECK(!lv_obj_has_flag(ru_wx_tile_part(t2, 5), LV_OBJ_FLAG_HIDDEN) && lv_obj_has_state(t2, LV_STATE_USER_1));
+    }
+  }
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
 int main(void) {
   CHECK(sim_init(&S, 480));
   test_setters_idempotent();
@@ -413,6 +525,7 @@ int main(void) {
   test_units_change();
   test_pages_count();
   test_utility_rows();
+  test_wx_tiles();
   sim_shutdown(&S);
   MT_DONE();
 }
