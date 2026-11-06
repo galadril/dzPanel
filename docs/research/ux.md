@@ -489,7 +489,7 @@ Face B "Orbit": seconds bead around rim, time smaller, the day progress as faint
           ● ○ ○   (rooms as pages)   bottom: room dots + last refresh "12 s ago" (micro)
 ```
 - Alternative tile view: 2x2 cards in the safe square (each 30u x 30u), giant icons, for kiosk use.
-- Detail screen (dimmer): big arc slider along the rim (drag the bead), centre = % and name, +/- buttons, tap centre = on/off.
+- Detail screen (dimmer and colour lights): see section 12a (Light control). Earlier idea kept for the record: big arc slider along the rim, centre = % and name, tap centre = on/off.
 - Lock action: hold-to-confirm (9.6). Read-only mode (MVP): rows show a lock glyph instead of switch.
 
 ### 10.4a Domoticz page model (as built)
@@ -684,3 +684,23 @@ temperature / humidity: thermometer (small line: humidity %); humidity only: dro
 
 ### 11.4 Icon font and its licence
 25 Lucide icons (ISC; the arrows and the moon derive from Feather, MIT), private-use codepoints from U+E000 (`tools/icons/manifest.txt`, macros in `components/ru_ui/include/ru_icons.h`), one 24 px 4 bpp uncompressed LVGL font `ru_icons_24` (7.2 KB of const bitmap, flash only), accessor `ru_font_icon_s()`. Lucide has no filled variants; the set is outlined (Phosphor Fill, MIT, would be the filled alternative). `lv_font_conv` needs the npm registry, which the build host cannot reach, so `python3 -I tools/icons/gen_icons.py --size 24` (standard library only) strokes the SVGs itself (`tools/icons/lucide/`, Lucide 1.70.0). The generated C is committed, so builds need neither Python nor node. Licence text and sources: `docs/third-party/`.
+
+## 12a. Light control (device detail of every dimmer, tunable-white and colour light)
+
+Code: widget `ru_light_*` in `components/ru_ui/ru_widgets.c`, the colour ring image `components/ru_ui/ru_ring_img.c`, colour maths `components/int_domoticz/dz_color.c`, wiring `ru_dzapp.c` (`light_apply`, `cb_light`, `light_tick` path in `ru_dzapp_ui_tick`). Tests: `sim/tests/test_light.c` (ring pixels, layouts, touch bands), `test_dzlight.c` (through the app), screens `detail_ww`, `detail_color`, `detail_color_white`, `detail_color_off`, `detail_color_protected`.
+
+**Square panel (two rings; u = D/100, 4.8 px at 480).** Outer ring = BRIGHTNESS: d 86u, 2.2u wide, glow, coloured with the lamp's colour (accent for a plain dimmer); touch band r 37.5u to 48.3u. Inner ring = COLOUR or TEMPERATURE: d 62u, 5u wide, a conic gradient (an RGB565 image drawn by a plain `lv_arc`: `lv_obj_set_style_arc_image_src`), a 7.5u knob filled with the current colour and a white border; touch band r 23.3u to 37.3u. The press angle must lie inside the 270 degree sweep +- 8 degrees, so the gap at the bottom and the dead zones never start a drag. Centre disc d 38u = the ON/OFF button (power glyph, large percent, caption); a tap fires only when the finger moved less than 8 px. Chips (one segmented pill 34u x 8.5u at y = +27u) only on lights with colour AND white: COLOUR | WHITE. On RGBWW the WHITE chip swaps the inner ring in place to the temperature scale (same arc, regenerated bitmap); on RGBW (one white channel) WHITE is a plain tap that sends "set white", no ring. Pure RGB lights and tunable-white lights have no chips (WW shows the temperature ring directly).
+
+**Round panel (466, small AMOLED).** One ring plus chips BRIGHT | COLOUR | WHITE (only those the light supports) that switch which value the ring edits; a plain dimmer keeps its thin ring and the disc. Same disc.
+
+**Colours.** Hue ring: 270 degrees of arc = hue 0..360 (red at both ends, yellow at the left, green upper left, cyan at the top, blue upper right, magenta at the right). Temperature ring left to right: warm #FF9F45, #FFE3BF, cool #D6E6FF with ordered dithering (RGB565 would band). The caption is a WORD: RED ORANGE YELLOW GREEN CYAN BLUE PURPLE PINK, or WARM SOFT NEUTRAL COOL DAYLIGHT, never a Kelvin number (the tool's kelvin is not real Kelvin on Hue). The disc fill is the colour dimmed (`ru_dim` 60/255), opaque.
+
+**Dragging and commands.** While dragging only the knob, its fill, the disc fill and the large text change (the outer ring and glow re-tint on release). The command is sent on RELEASE only (no live commands: each is an HTTP call plus the 1.5 s verify). The caption shows SENDING (dim), SET (ok, 2 s), NOT CONFIRMED (warn) or the failure (error); the knob stays where it was left until the model moves or the result is in, then snaps to the model value. A colour command carries the lamp's Level as brightness (an Off lamp: its stored Level, 100 when unknown). A page update from a poll or a result never rebuilds the screen: the setters compare and touch only what changed (the screen and arc objects stay; a rebuild happens only when the structure changes: capabilities, controllable, protected, name, N/M).
+
+**Off.** The disc is the surface colour with a track-coloured border, a dim power glyph and OFF as the large text; the brightness indicator is hidden with a dim ghost knob at the stored Level; the inner ring stays at 40% opacity with its knob at the last colour (Domoticz keeps it).
+
+**Protected, not controllable, stale.** Rings cannot be touched, knobs lose their border, chips are hidden, the caption says PROTECTED, VIEW ONLY or STALE in warn.
+
+**Swipe.** On any detail page a left swipe steps to the next device of the list the user came from, right to the previous one, stopping at the ends (no wrap); a light page shows N/M above the name pill. A swipe is never taken from a control: a ring's touch band (light), the thermostat or selector dial, the blinds buttons, or while a control is held. The disc, the dead zones and the chips are free. The pill halves are not tappable yet (no room next to the name pill on a round panel).
+
+**Budget.** About 24 objects (the dimmer was 15), shared styles, one 178 KB (480) / 167 KB (466) PSRAM buffer for the ring image, reused for hue and temperature and cached by (diameter, width, kind). The colour pages are a declared exception to the 12% lit-pixel rule of section 2 (a hue wheel is lit by definition; they are interactive pages, never always-on faces); `test_apps.c` allows 25% for them. Not yet checked on hardware: the look on the real AMOLED and the IPS, touch feel, and the behaviour of the lamp for every command.

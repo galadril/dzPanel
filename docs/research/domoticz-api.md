@@ -82,7 +82,7 @@ Headers: `Content-Type: application/json`, `Accept: application/json, text/event
 | Scene, group | `switch_scene {scene_id: <JSON number>, command: "On"\|"Off"}` (`Off` only for groups; the id is a number, never a string) |
 | Thermostat setpoint | `set_setpoint_value {idx, setpoint: <number>}`, **Celsius servers only** |
 | Thermostat mode | **no tool: shown read-only** ("MODE: VIEW ONLY") |
-| Colour | `set_color_brightness`, `set_color_temperature` exist but are not used yet |
+| Colour | `set_color_brightness {idx, hue: 0..360, brightness: 0..100, iswhite?}` (`DZ_CMD_COLOR_HUE`, and `hue: 0, iswhite: true` for `DZ_CMD_COLOR_WHITE`), `set_color_temperature {idx, kelvin}` (`DZ_CMD_COLOR_TEMP`, kelvin = 6500 - 38 * warmth); see "Colour lights" below |
 
 The tools call the same `MainWorker::SwitchLight` as `switchlight`, so command words, the type 20 lock inversion and the blind inversion (done server-side from the device options, see below) behave like the legacy path.
 
@@ -101,6 +101,18 @@ The Domoticz `json.htm` command URLs (`switchlight`, `switchscene`, `setsetpoint
 Source for the switch commands: `WebServerCommands.cpp` (`switchlight`, `switchscene`) and the MCP tools (`SwitchLight` in `mainworker.cpp`).
 
 **Safety already in the server:** on `json.htm` protected devices and scenes demand a passcode and a Viewer token is refused at the command level; **the MCP endpoint skips the passcode check**, so our own risk levels (`SAFE`, `CONFIRM`, `LOCKED`) and the protected refusal are the real guard.
+
+### Colour lights (read in the Domoticz source; NOT yet seen on a real lamp unless marked)
+
+`Type` is `Color Switch`; the `SubType` says what the lamp can do: `RGB`, `RGBW` / `RGBWZ` (RGB plus one white channel), `RGBWW` / `RGBWWZ` (RGB plus warm and cold white, so a colour temperature), `WW` (tunable white only), `White` (a plain dimmer). The firmware keeps this as `col_caps` (`DZ_COLCAP_RGB` 1, `_W` 2, `_CT` 4; capability stays `DZ_CAP_DIMMER`).
+
+`getdevices` carries `Color`, a JSON **string** (escaped): `{"m":3,"t":0,"r":255,"g":0,"b":0,"cw":0,"ww":0}`. `m` is the colour mode: 0 none, 1 white, 2 colour temperature, 3 RGB, 4 custom RGB + WW/CW. `t` is the temperature (0 coolest, 255 warmest) when `m` is 2. `r g b` is the colour; `cw ww` the white channels. The firmware reads these keys with a tiny scanner (`color_scan` in `dz_parse.c`): numbers clamped 0..255, `has_color` only when `m` is present, empty or malformed text ignored. The real capture shows the keys in alphabetical order and a lamp that is Off keeps its last colour.
+
+The brightness is NOT in the colour: it is the device `Level` (0..`MaxDimLevel`). `set_dimmer_level` on a colour lamp keeps the stored colour.
+
+`set_color_brightness {idx, hue, brightness, iswhite}`: hue is clamped 0..360 and turned into RGB with `hsb2rgb(hue, 1.0, 1.0)`: **saturation and value are always full, a pale colour cannot be requested**. It sets mode RGB (White with `iswhite`), the brightness becomes the Level, brightness 0 sends Off. On Philips Hue hardware RGB goes out as XY and white as hue 0 saturation 0 (the bulb's own white, not a colour temperature). `set_color_temperature {idx, kelvin}`: kelvin clamped 2700..6500, warmth L = 100 * (6500 - K) / 3800, `t = round(L * 255 / 100)`, mode 2, the brightness is kept (the level is replaced by the last level). The kelvin is the tool's scale only: on Hue it is not real Kelvin, so the UI shows WORDS (WARM, SOFT, NEUTRAL, COOL, DAYLIGHT), never Kelvin numbers.
+
+Verify (`matches` in `dz_cmd.c`): HUE needs `m == 3`, a hue within 8 degrees of the one asked (the bridge's XY conversion drifts; the hue is computed from RGB with `dz_rgb_to_hue`, saturation at least 0.8), and the Level within one percent; WHITE needs `m == 1`; TEMP needs `m == 2` and `t` within 3 of the expected. The lamp is not required to be On. Whether a colour or temperature command switches an Off lamp on is **unverified**: `DZ_COLOR_WHEN_OFF_SENDS_ON` (default 0) decides whether the UI follows with an On. A queued colour (or level) command for the same lamp that has not been sent yet is replaced by the newer one (`dz_cmd_submit`). `tests/dz_live_check --color-test [--hue-test]` is the live test (fixed words and numbers only).
 
 ### Live updates: WebSocket
 
