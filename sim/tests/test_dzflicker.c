@@ -249,6 +249,65 @@ static void test_order_only(void) {
   appfx_unload(&f);
 }
 
+/* a temperature device with extra JSON members appended (fields the old detail hash did not cover) */
+static void push_temp_extra(appfx_t *f, int idx, double t, const char *extra) {
+  char b[400];
+  snprintf(b, sizeof b, "{\"idx\":\"%d\",\"Name\":\"Temp %03d\",\"Type\":\"Temp\",\"SubType\":\"LaCrosse TX3\",\"Temp\":%.1f,\"Data\":\"%.1f C\",\"Favorite\":0%s}", idx, idx, t, t, extra);
+  push(f, b);
+}
+
+/* an open detail page follows every change of its device at once (no 2 s limit, whole-entry signature) */
+static void test_detail_live(void) {
+  appfx_t f;
+  ru_dzapp_t *a = start_many(&f);
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  tick(&f, a, 300);
+  CHECK(ru_dzapp_tap_row(a, 2)); /* idx 103 */
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && !strcmp(ru_dzapp_current_idx(a), "103"));
+  tick(&f, a, 10);
+  static const char *extras[] = { ",\"ForecastStr\":\"Sunny\"", ",\"HumidityStatus\":\"Wet\"", ",\"Protected\":true", ",\"MaxDimLevel\":32" };
+  static const char *names[] = { "forecast", "hum_status", "is_protected", "max_level" };
+  for (size_t i = 0; i < 4; i++) {
+    lv_obj_t *s0 = lv_screen_active();
+    push_temp_extra(&f, 103, 21.5, extras[i]);
+    tick(&f, a, 10); /* far inside the 2 s window of the last build */
+    if (lv_screen_active() == s0) printf("  detail: %s change not shown\n", names[i]);
+    CHECK(lv_screen_active() != s0);
+  }
+  /* a plain value change is shown on the next tick as well */
+  lv_obj_t *s1 = lv_screen_active();
+  CHECK(!tree_has_text(s1, "27.3"));
+  push_temp_extra(&f, 103, 27.3, ",\"MaxDimLevel\":32,\"Protected\":true,\"HumidityStatus\":\"Wet\",\"ForecastStr\":\"Sunny\"");
+  tick(&f, a, 10);
+  CHECK(lv_screen_active() != s1 && tree_has_text(lv_screen_active(), "27.3"));
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
+/* the pager dots on a non-grid screen follow a newly appearing section */
+static void test_dots_nongrid(void) {
+  appfx_t f;
+  ru_dzapp_t *a = start_many(&f);
+  /* a model with lights only; open a detail page */
+  char doc[400];
+  size_t n = (size_t)snprintf(doc, sizeof doc, "{\"status\":\"OK\",\"result\":[%s", lamp(1, "L", "Off", 1));
+  snprintf(doc + n, sizeof doc - n, ",%s]}", lamp(5, "L", "Off", 0));
+  CHECK(dz_model_apply(&f.model, doc, strlen(doc), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
+  tick(&f, a, 2100);
+  CHECK(!ru_dzapp_section_available(a, RU_SEC_TEMP));
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  tick(&f, a, 300);
+  ru_dzapp_open_sub(a, RU_SUB_ABOUT);
+  tick(&f, a, 10);
+  lv_obj_t *s0 = lv_screen_active();
+  push(&f, temp_dev(5, 20.0)); /* same count: lamp 5 becomes a sensor */
+  tick(&f, a, 10);
+  CHECK(ru_dzapp_section_available(a, RU_SEC_TEMP));
+  CHECK(lv_screen_active() != s0);
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
 int main(void) {
   CHECK(sim_init(&S, 480));
   test_setters_idempotent();
@@ -258,6 +317,8 @@ int main(void) {
   test_copy_budget();
   test_rate_limit();
   test_order_only();
+  test_detail_live();
+  test_dots_nongrid();
   sim_shutdown(&S);
   MT_DONE();
 }

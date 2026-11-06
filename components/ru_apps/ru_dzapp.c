@@ -1523,30 +1523,12 @@ static bool fullsig_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_
   else if (a->section == RU_SEC_ENERGY) rel = sec_match(RU_SEC_ENERGY, d, scene);
   else rel = a->section != RU_SEC_SETTINGS;
   if (!rel) return true;
+  /* the whole entry, so no field can change unseen (the model compares the same bytes to detect a change) */
   uint64_t h = f->h;
-  char txt[32];
-  bool known;
-  ru_dzv_value_text(d, txt, sizeof txt, &known);
-  h = fnv(h, d->idx, strlen(d->idx));
-  h = fnv(h, d->name, strlen(d->name));
-  h = fnv(h, txt, strlen(txt));
-  h = fnv(h, d->status, strlen(d->status));
+  h = fnv(h, d, sizeof *d);
   h = fnv(h, &st, sizeof st);
   h = fnv(h, &scene, sizeof scene);
-  h = fnv(h, &d->favorite, sizeof d->favorite);
-  h = fnv(h, &d->tabs, sizeof d->tabs);
   h = fnv(h, &order, sizeof order);
-  h = fnv(h, &d->level, sizeof d->level);
-  h = fnv(h, &d->level_int, sizeof d->level_int);
-  h = fnv(h, &d->setpoint, sizeof d->setpoint);
-  h = fnv(h, &d->usage_w, sizeof d->usage_w);
-  h = fnv(h, &d->temp, sizeof d->temp);
-  h = fnv(h, &d->n_rd, sizeof d->n_rd);
-  for (int k = 0; k < d->n_rd; k++) { h = fnv(h, &d->rd[k].kind, sizeof d->rd[k].kind); h = fnv(h, &d->rd[k].v, sizeof d->rd[k].v); h = fnv(h, d->rd[k].unit, strlen(d->rd[k].unit)); }
-  h = fnv(h, d->data, strlen(d->data));
-  h = fnv(h, &d->trend, sizeof d->trend);
-  h = fnv(h, &d->battery, sizeof d->battery);
-  h = fnv(h, &d->mode, sizeof d->mode);
   f->h = h;
   return true;
 }
@@ -1584,6 +1566,8 @@ static uint64_t screen_sig(ru_dzapp_t *a) {
   else {
     fullsig_t f = { a, imm_sig(a) };
     dz_model_foreach(a->model, a->now, fullsig_cb, &f);
+    unsigned mask = avail_mask(a); /* the pager dots show which sections exist */
+    f.h = fnv(f.h, &mask, sizeof mask);
     if (a->view == RU_VIEW_SUB) { size_t n = dz_model_count(a->model); f.h = fnv(f.h, &n, sizeof n); }
     dz_units_t un;
     get_units(a, &un);
@@ -1740,7 +1724,7 @@ void ru_dzapp_ui_tick(ru_dzapp_t *a, uint32_t now_ms) {
   }
   /* a change the user or the connection made rebuilds at once; a background change at most once per REBUILD_MIN_MS */
   bool urgent = !a->sig || imm_sig(a) != a->imm;
-  if (!urgent && now_ms - a->last_build < REBUILD_MIN_MS) { a->ctl = 0; return; } /* looked at again on the next tick */
+  if (!urgent && grid_view(a) && /* only the grids are rate limited; detail, energy and sub screens follow the data at once */ now_ms - a->last_build < REBUILD_MIN_MS) { a->ctl = 0; return; } /* looked at again on the next tick */
   int sx = a->list ? (int)lv_obj_get_scroll_x(a->list) : 0, sy = a->list ? (int)lv_obj_get_scroll_y(a->list) : 0;
   build_and_show(a);
   a->sig = sig;
