@@ -42,7 +42,7 @@ static sim_t S[] = {
 
 typedef enum { X_OK, X_IGNORE, X_401, X_403, X_500, X_ERR, X_HTML, X_CONNECT, X_TIMEOUT_APPLIED, X_TIMEOUT_IGNORED, X_VERIFY_FAIL,
                X_ISERROR, X_NOACTION, X_NOMCP503, X_NOMCP404, X_RPCERR, X_EXPIRE_ONCE, X_EXPIRED_NEXT, X_EXPIRE_ALWAYS, X_INIT_TIMEOUT,
-               X_PREFLIGHT_404, X_TLS, X_TLS_APPLIED, X_TOOLARGE, X_TOOLARGE_APPLIED, X_INIT_CONNECT, X_INIT_TLS, X_INIT_TOOLARGE, X_FOREIGN_ID } xmode_t;
+               X_PREFLIGHT_404, X_TLS, X_TLS_APPLIED, X_TOOLARGE, X_TOOLARGE_APPLIED, X_INIT_CONNECT, X_INIT_TLS, X_INIT_TOOLARGE, X_FOREIGN_ID, X_NOACTION_LONG } xmode_t;
 static xmode_t xm;
 static int ticks; /* each effective command bumps the fake LastUpdate */
 static int cmd_calls, read_calls;
@@ -103,6 +103,7 @@ static bool jstr(const char *body, const char *key, char *out, size_t cap) {
 }
 
 static int applied; /* effective changes made by tools/call */
+static bool push_skip; /* a push button that stays On makes the server skip the call, like set_switch_state does for a matching state */
 static bool srv_round_up; /* the server converts a percentage to its own units rounding up */
 static bool pblind_levels; /* percentage blinds report Set Level: N % instead of Open / Closed */
 static void apply_call(const char *body) {
@@ -140,6 +141,13 @@ static void apply_call(const char *body) {
   touch(s);
 }
 
+static bool would_skip(const char *body) {
+  char tool[40], idx[16], st[16];
+  if (!push_skip || !jstr(body, "name", tool, sizeof tool) || strcmp(tool, "set_switch_state")) return false;
+  if (!jnum(body, "idx", idx, sizeof idx) || !jstr(body, "state", st, sizeof st)) return false;
+  sim_t *d = find(idx, false);
+  return d && (d->stv == 9 || d->stv == 10) && !strcmp(d->data, st);
+}
 static int rpc_code = -32603; /* for X_RPCERR */
 static char bigbody[40000]; /* an answer that does not fit the 32 KB client buffer */
 static int mcp_inits, mcp_notifs;
@@ -169,6 +177,12 @@ static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_ht
       case X_ISERROR: return fake_body(MCP_OK("Device not found", "true"), 200, buf, cap, out);
       case X_HTML: return fake_body("<html>proxy</html>", 200, buf, cap, out);
       case X_CONNECT: return DZ_NET_CONNECT;
+      case X_NOACTION_LONG: {
+        char t[500], name[301];
+        memset(name, 'N', 300); name[300] = 0;
+        snprintf(t, sizeof t, "{\"id\":9,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"Switch \\\"%s\\\" was already On. No action taken.\",\"type\":\"text\"}],\"isError\":false}}", name);
+        return fake_body(t, 200, buf, cap, out);
+      }
       case X_FOREIGN_ID: fake_force_id = 4242; { dz_net_err_t e = fake_body(MCP_OK("Switch set successfully.", "false"), 200, buf, cap, out); fake_force_id = 0; return e; }
       case X_TLS: return DZ_NET_TLS;
       case X_TLS_APPLIED: apply_call(f->body); return DZ_NET_TLS;
@@ -188,7 +202,10 @@ static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_ht
       }
       case X_EXPIRE_ONCE: case X_EXPIRE_ALWAYS:
         return fake_body("{\"id\":9,\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32001,\"message\":\"Session not found\"}}", 200, buf, cap, out);
-      default: apply_call(f->body); return fake_body(MCP_OK("Switch set successfully.", "false"), 200, buf, cap, out);
+      default:
+        if (would_skip(f->body)) return fake_body(MCP_OK("Switch was already On. No action taken.", "false"), 200, buf, cap, out);
+        apply_call(f->body);
+        return fake_body(MCP_OK("Switch set successfully.", "false"), 200, buf, cap, out);
     }
   }
   read_calls++;
@@ -221,6 +238,7 @@ static void reset_sim(void) {
   memcpy(S, init, sizeof S); /* every test starts from the table above */
   group_mixed = false;
   srv_round_up = false;
+  push_skip = false;
   ticks = 5; /* the first touch must differ from the table's 10:00:00 */
 }
 
@@ -362,6 +380,55 @@ static void test_blinds_push(void) {
   xm = X_IGNORE;
   CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
   CHECK(run(DZ_CMD_BLINDS_STOP, "3", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+}
+
+/* B8: PUSH buttons. The server skips a set_switch_state whose state already matches ("No action taken") and a Push On button stays
+ * On, so a plain push may never fire again: that is reported as its own outcome, never as a confirmation. */
+static void test_push(void) {
+  setup(true);
+  push_skip = true;
+  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && nres == 1);
+  CHECK(LAST.outcome == DZ_OUT_NO_ACTION && LAST.no_action && LAST.sent && !LAST.uncertain && LAST.fail == DZ_FAIL_NONE && LAST.have_after);
+  CHECK(cmd_calls == 1 && applied == 0 && read_calls == 2); /* pre-flight and ONE verify read: a skipped push will not fire later */
+  CHECK(!strcmp(dz_outcome_name(LAST.outcome), "no-action"));
+  /* the reply text is long (a device name of 300 characters, truncated in the stored text): the marker is still seen */
+  setup(true);
+  xm = X_NOACTION_LONG;
+  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_NO_ACTION && LAST.no_action);
+  /* a switch (not a push) answering "No action taken" stays UNCONFIRMED: only PUSH has the distinct outcome */
+  setup(true);
+  xm = X_NOACTION;
+  CHECK(run(DZ_CMD_ON, "1", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED && LAST.no_action && LAST.sent);
+  /* the server fires every call: confirmed by the new LastUpdate */
+  setup(true);
+  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && !LAST.no_action && LAST.sent);
+  CHECK(strstr(LASTB, "\"name\":\"set_switch_state\"") && strstr(LASTB, "\"state\":\"On\""));
+  CHECK(run(DZ_CMD_PUSH, "15", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"state\":\"Off\"")); /* a Push Off button */
+  /* the flags are read: an uncertain call says so */
+  setup(true);
+  xm = X_TIMEOUT_IGNORED;
+  CHECK(run(DZ_CMD_ON, "1", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.uncertain && !LAST.sent && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  /* the swappable implementation: toggle_switch_state, and Off then On */
+  setup(true);
+  push_skip = true;
+  K.push_mode = DZ_PUSH_TOGGLE;
+  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"name\":\"toggle_switch_state\"") && !strstr(LASTB, "state\":") && cmd_calls == 1);
+  CHECK(LAST.outcome == DZ_OUT_CONFIRMED);
+  setup(true);
+  push_skip = true;
+  K.push_mode = DZ_PUSH_OFF_THEN_ON;
+  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && cmd_calls == 2 && nres == 1);
+  CHECK(strstr(F.bodies[(F.posts - 2) % 16], "\"state\":\"Off\"") && strstr(LASTB, "\"state\":\"On\""));
+  CHECK(LAST.outcome == DZ_OUT_CONFIRMED && mcp_inits == 1);
+  /* encode: the default and the explicit default agree; the modes differ */
+  char a[300], b2[300];
+  dz_device_t d;
+  memset(&d, 0, sizeof d);
+  d.cap = DZ_CAP_PUSH; d.switch_type = 9;
+  CHECK(dz_mcp_encode(a, sizeof a, 3, DZ_CMD_PUSH, "5", &d, -1, 0) > 0);
+  CHECK(dz_mcp_encode_push(b2, sizeof b2, 3, "5", &d, DZ_PUSH_MODE_DEFAULT, 0) > 0 && !strcmp(a, b2));
+  CHECK(dz_cmd_push_steps(DZ_PUSH_SET_STATE) == 1 && dz_cmd_push_steps(DZ_PUSH_TOGGLE) == 1 && dz_cmd_push_steps(DZ_PUSH_OFF_THEN_ON) == 2);
+  CHECK(dz_mcp_encode_push(b2, sizeof b2, 3, "x5", &d, DZ_PUSH_TOGGLE, 0) == 0);
 }
 
 static void test_risk(void) {
@@ -777,6 +844,7 @@ int main(void) {
   test_levels();
   test_level_percent();
   test_blinds_push();
+  test_push();
   test_risk();
   test_refusals();
   test_scene_group_semantics();

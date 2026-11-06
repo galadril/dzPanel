@@ -14,6 +14,12 @@
  * tools/call, verify read). Touches ONLY the device given by --idx (a test dimmer): On, Off, level 30, then restores the state
  * (and the level, when it was known). Prints statuses and fixed words only (no device text or names).
  *
+ * --push-test [--push-mode set|toggle|offon]: the --idx device must be a push button. Presses it twice through the firmware's own
+ * command path, 3 s apart, and prints the outcome of each press as fixed words (confirmed / unconfirmed / failed / no-action), the
+ * failure class, and whether the call was answered, answered "No action taken", or was uncertain. --push-mode picks the MCP call
+ * that fires the push: set (set_switch_state with the type's word, the default), toggle (toggle_switch_state) or offon (the opposite
+ * word, then the type's word). Needs --allow-write.
+ *
  * --tabs: compares the server's filter=light|temp|weather|utility membership with dz_tabs_of() and prints a diff
  * report (by Type / SubType and direction only; no idx, name or URL credentials).
  *
@@ -206,6 +212,37 @@ static void state_word(const dz_device_t *d, char *o, size_t cap) {
   else snprintf(o, cap, "on");
 }
 
+static bool last_sent, last_noaction, last_uncertain;
+static void on_res_push(const dz_cmd_result_t *r, void *u) {
+  on_res(r, u);
+  last_sent = r->sent;
+  last_noaction = r->no_action;
+  last_uncertain = r->uncertain;
+}
+
+static int push_test(dz_push_mode_t mode) {
+  dz_device_t d0;
+  int first = -1, second = -1;
+  puts("5. push test on the --idx device (two presses, 3 s apart)");
+  if (!read_dev(&d0)) { puts("  device not readable: refusing"); return 1; }
+  printf("  start: cap %s controllable %d protected %d switchtype %d\n", dz_cap_name(d0.cap), d0.controllable, d0.is_protected, d0.switch_type);
+  if (d0.cap != DZ_CAP_PUSH || !d0.controllable || d0.is_protected) { puts("  not a controllable push button: refusing"); return 1; }
+  dz_cmd_init(&K, &C, &M, true, on_res_push, NULL);
+  K.verify_delay_ms = 2500;
+  K.push_mode = mode;
+  for (int i = 0; i < 2; i++) {
+    if (i) ru_sleep_ms(3000);
+    char what[16];
+    snprintf(what, sizeof what, "press %d", i + 1);
+    (void)run_cmd(DZ_CMD_PUSH, -1, what);
+    printf("  %s: outcome=%s fail=%d sent=%d no-action=%d uncertain=%d\n", what, dz_outcome_name((dz_outcome_t)outcome), failkind, last_sent,
+           last_noaction, last_uncertain);
+    if (i == 0) first = outcome; else second = outcome;
+  }
+  printf("push-test: first=%s second=%s\n", dz_outcome_name((dz_outcome_t)first), dz_outcome_name((dz_outcome_t)second));
+  return first == DZ_OUT_CONFIRMED && second == DZ_OUT_CONFIRMED ? 0 : 1;
+}
+
 static int mcp_check(void) {
   int rc = 0;
   dz_device_t d0, d1;
@@ -247,12 +284,13 @@ static bool idx_ok(const char *v) {
 }
 
 static void usage(void) {
-  puts("usage: dz_live_check --url URL [--token-env NAME] [--idx N --allow-write --mcp] [--tabs | --lights]");
+  puts("usage: dz_live_check --url URL [--token-env NAME] [--idx N --allow-write (--mcp | --push-test [--push-mode set|toggle|offon])] [--tabs | --lights]");
 }
 
 int main(int argc, char **argv) {
   const char *url = NULL, *tenv = "DOMOTICZ_ACCESSTOKEN";
-  bool mcp = false, tabs = false, lights = false, allow_write = false;
+  bool mcp = false, tabs = false, lights = false, allow_write = false, push = false;
+  dz_push_mode_t pmode = DZ_PUSH_MODE_DEFAULT;
   g_idx[0] = 0;
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
@@ -265,6 +303,14 @@ int main(int argc, char **argv) {
     }
     else if (!strcmp(a, "--allow-write")) allow_write = true;
     else if (!strcmp(a, "--mcp")) mcp = true;
+    else if (!strcmp(a, "--push-test")) push = true;
+    else if (!strcmp(a, "--push-mode") && i + 1 < argc) {
+      const char *v = argv[++i];
+      if (!strcmp(v, "set")) pmode = DZ_PUSH_SET_STATE;
+      else if (!strcmp(v, "toggle")) pmode = DZ_PUSH_TOGGLE;
+      else if (!strcmp(v, "offon")) pmode = DZ_PUSH_OFF_THEN_ON;
+      else { puts("--push-mode: set, toggle or offon"); return 2; }
+    }
     else if (!strcmp(a, "--tabs")) tabs = true;
     else if (!strcmp(a, "--lights")) lights = true;
     else { usage(); return 2; }
@@ -272,6 +318,8 @@ int main(int argc, char **argv) {
   if (!url) { puts("--url is required"); usage(); return 2; }
   if (mcp && !allow_write) { puts("--mcp writes to the device: refusing without --allow-write"); return 2; }
   if (mcp && !g_idx[0]) { puts("--mcp needs --idx N"); return 2; }
+  if (push && !allow_write) { puts("--push-test writes to the device: refusing without --allow-write"); return 2; }
+  if (push && !g_idx[0]) { puts("--push-test needs --idx N"); return 2; }
   char token[DZ_TOKEN_MAX];
   const char *tv = getenv(tenv);
   if (!tv || !*tv || strlen(tv) >= sizeof token) { puts("token environment variable not set"); return 2; }
@@ -298,6 +346,14 @@ int main(int argc, char **argv) {
   dz_version_parse(vt, &v);
   printf("  parse=%d version=%d.%d build=%d valid=%d\n", pe, v.year, v.minor, v.build, v.valid);
   if (pe != DZ_OK || !v.valid) rc = 1;
+
+  if (push) {
+    rc = push_test(pmode) || rc;
+    printf("requests made: %u\n", C.requests);
+    dz_model_deinit(&M);
+    dz_transport_destroy(tr);
+    return rc;
+  }
 
   if (mcp) {
     rc = mcp_check() || rc;

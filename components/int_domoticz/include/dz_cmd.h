@@ -51,7 +51,20 @@ typedef enum {
 } dz_cmd_err_t;
 const char *dz_cmd_err_name(dz_cmd_err_t e);
 
-typedef enum { DZ_OUT_CONFIRMED, DZ_OUT_UNCONFIRMED, DZ_OUT_FAILED } dz_outcome_t;
+/* DZ_OUT_NO_ACTION: only for PUSH. The server said "No action taken" (the button already reads the state the call asked for, so the
+ * tool skipped it) and the re-read shows no new LastUpdate: the button did NOT fire. Shown as "ALREADY PRESSED", not "NOT CONFIRMED". */
+typedef enum { DZ_OUT_CONFIRMED, DZ_OUT_UNCONFIRMED, DZ_OUT_FAILED, DZ_OUT_NO_ACTION } dz_outcome_t;
+
+/* How a PUSH button is fired through MCP. Which call really forces a push (set_switch_state On skips when the state already matches)
+ * is decided by a live test; the choice lives in ONE small function (push_call in dz_cmd.c) selected by this constant. */
+typedef enum {
+  DZ_PUSH_SET_STATE,    /* set_switch_state with the type's own word (On, Off for a Push Off button) */
+  DZ_PUSH_TOGGLE,       /* toggle_switch_state */
+  DZ_PUSH_OFF_THEN_ON   /* set_switch_state with the opposite word, then the type's own word (two calls) */
+} dz_push_mode_t;
+#ifndef DZ_PUSH_MODE_DEFAULT
+#define DZ_PUSH_MODE_DEFAULT DZ_PUSH_SET_STATE
+#endif
 typedef enum {
   DZ_FAIL_NONE,
   DZ_FAIL_UNAUTHORIZED,  /* 401: token rejected (polling is stopped too) */
@@ -74,6 +87,9 @@ typedef struct {
   int level_sent;           /* after clamping, -1 if not a level command */
   bool have_after;
   dz_device_t after;        /* the re-read state, when we got one */
+  bool sent;                /* the MCP call was answered and reported no error */
+  bool uncertain;           /* the call may or may not have run (transport error after the send): the re-read decided */
+  bool no_action;           /* the server answered "No action taken" */
 } dz_cmd_result_t;
 
 typedef void (*dz_cmd_cb)(const dz_cmd_result_t *r, void *user);
@@ -91,6 +107,7 @@ typedef struct {
   int reads;
   bool sent_ok, uncertain;
   bool no_action;            /* the server said "already ... No action taken" */
+  int push_step;             /* PUSH: which call of the sequence is next (DZ_PUSH_OFF_THEN_ON has two) */
   dz_fail_t fail;
 } dz_cmd_slot_t;
 
@@ -99,6 +116,7 @@ typedef struct {
   dz_model_t *model;
   bool allow_control;
   uint32_t verify_delay_ms;  /* default 1500; a second read follows after the same delay */
+  dz_push_mode_t push_mode;  /* default DZ_PUSH_MODE_DEFAULT; the live test may set another */
   dz_cmd_cb cb;
   void *user;
   uint32_t next_id;
@@ -131,5 +149,8 @@ uint32_t dz_cmd_ms_until_due(const dz_cmd_t *c, uint32_t now_ms); /* UINT32_MAX 
 
 /* The Domoticz MCP tools/call body for a command (see dz_cmd.c). `pre` is the device as last read (lock type, push type).
  * Returns the length, or 0 if the command has no MCP tool (MODE), idx is not a number, a level exceeds 100, or cap is too small. */
+/* The body of step `step` (0-based) of a PUSH in `mode` (see dz_push_mode_t). */
+size_t dz_mcp_encode_push(char *out, size_t cap, uint32_t rpc_id, const char *idx, const dz_device_t *pre, dz_push_mode_t mode, int step);
+size_t dz_cmd_push_steps(dz_push_mode_t mode); /* calls in a push sequence */
 size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind, const char *idx, const dz_device_t *pre,
                      int level, float setpoint);

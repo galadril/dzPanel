@@ -764,6 +764,15 @@ static bool mcp_err_key(void *ctx, const char *key, sc_t *s, int depth) {
 static bool mcp_content_item(void *ctx, const char *key, sc_t *s, int depth) {
   dz_mcp_reply_t *r = ctx;
   val_t v;
+  if (!strcmp(key, "text") && !r->has_text && s->p < s->end && *s->p == '"') {
+    static const char marker[] = "No action";
+    size_t m = 0;
+    for (const char *q = s->p + 1; q < s->end && *q != '"'; q++) {
+      if (*q == '\\' && q + 1 < s->end) { q++; m = 0; continue; }
+      m = *q == marker[m] ? m + 1 : (*q == marker[0] ? 1 : 0);
+      if (m == sizeof marker - 1) { r->no_action = true; break; }
+    }
+  }
   if (!read_value(s, &v, depth + 1)) return false;
   if (!strcmp(key, "text") && v.t == V_STR && !r->has_text) { copy(r->text, sizeof r->text, &v); r->has_text = true; }
   return true;

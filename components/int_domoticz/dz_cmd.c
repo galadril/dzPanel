@@ -11,8 +11,8 @@ const char *dz_cmd_err_name(dz_cmd_err_t e) {
   return (unsigned)e < 10 ? n[e] : "?";
 }
 const char *dz_outcome_name(dz_outcome_t o) {
-  static const char *const n[] = {"confirmed", "unconfirmed", "failed"};
-  return (unsigned)o < 3 ? n[o] : "?";
+  static const char *const n[] = {"confirmed", "unconfirmed", "failed", "no-action"};
+  return (unsigned)o < 4 ? n[o] : "?";
 }
 
 void dz_cmd_init(dz_cmd_t *c, dz_client_t *client, dz_model_t *model, bool allow_control, dz_cmd_cb cb, void *user) {
@@ -21,6 +21,7 @@ void dz_cmd_init(dz_cmd_t *c, dz_client_t *client, dz_model_t *model, bool allow
   c->model = model;
   c->allow_control = allow_control;
   c->verify_delay_ms = 1500;
+  c->push_mode = DZ_PUSH_MODE_DEFAULT;
   c->cb = cb;
   c->user = user;
   c->next_id = 1;
@@ -166,6 +167,42 @@ static void fmt_setpoint(char *out, size_t cap, float sp) {
   snprintf(out, cap, "%s%ld.%ld", neg ? "-" : "", t / 10, t % 10);
 }
 
+/* ---- PUSH: the ONE place that decides which MCP call fires a push button (swap by dz_cmd_t.push_mode / DZ_PUSH_MODE_DEFAULT) ---- */
+size_t dz_cmd_push_steps(dz_push_mode_t mode) { return mode == DZ_PUSH_OFF_THEN_ON ? 2 : 1; }
+
+static void push_call(dz_push_mode_t mode, int step, const dz_device_t *pre, const char **tool, const char **word) {
+  const char *own = pre->switch_type == 10 ? "Off" : "On"; /* a Push Off button is pushed with Off */
+  const char *opposite = pre->switch_type == 10 ? "On" : "Off";
+  switch (mode) {
+    case DZ_PUSH_TOGGLE: *tool = "toggle_switch_state"; *word = NULL; break;
+    case DZ_PUSH_OFF_THEN_ON: *tool = "set_switch_state"; *word = step == 0 ? opposite : own; break;
+    default: *tool = "set_switch_state"; *word = own; break;
+  }
+}
+
+static size_t wrap_call(char *out, size_t cap, uint32_t rpc_id, const char *tool, const char *args) {
+  int m = snprintf(out, cap, "{\"jsonrpc\":\"2.0\",\"id\":%lu,\"method\":\"tools/call\",\"params\":{\"name\":\"%s\",\"arguments\":%s}}",
+                   (unsigned long)rpc_id, tool, args);
+  return m > 0 && (size_t)m < cap ? (size_t)m : 0;
+}
+
+static bool idx_number(const char *idx, unsigned long *id) {
+  if (!idx || !*idx || strlen(idx) > 9) return false;
+  for (const char *p = idx; *p; p++) if (*p < '0' || *p > '9') return false;
+  *id = strtoul(idx, NULL, 10);
+  return true;
+}
+
+size_t dz_mcp_encode_push(char *out, size_t cap, uint32_t rpc_id, const char *idx, const dz_device_t *pre, dz_push_mode_t mode, int step) {
+  unsigned long id;
+  const char *tool, *word;
+  char args[64];
+  if (!pre || !idx_number(idx, &id)) return 0;
+  push_call(mode, step, pre, &tool, &word);
+  int n = word ? snprintf(args, sizeof args, "{\"idx\":%lu,\"state\":\"%s\"}", id, word) : snprintf(args, sizeof args, "{\"idx\":%lu}", id);
+  return n > 0 && (size_t)n < sizeof args ? wrap_call(out, cap, rpc_id, tool, args) : 0;
+}
+
 /* The MCP tools/call body for a command (JSON-RPC 2.0). Only integers, fixed words and fmt_setpoint are printed, so no JSON
  * escaping is needed (no user text is ever sent). Lock type 20 gets the inverted word, as the legacy path did. Returns the
  * length, or 0 when the command has no MCP tool (MODE), a number does not fit, or the buffer is too small. */
@@ -173,15 +210,15 @@ size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind,
                      int level, float setpoint) {
   const char *tool = NULL, *word = NULL;
   char args[96], num[24];
-  if (!idx || !*idx || strlen(idx) > 9 || !pre) return 0;
-  for (const char *p = idx; *p; p++) if (*p < '0' || *p > '9') return 0;
-  unsigned long id = strtoul(idx, NULL, 10);
+  unsigned long id;
+  if (!pre || !idx_number(idx, &id)) return 0;
+  if (kind == DZ_CMD_PUSH) return dz_mcp_encode_push(out, cap, rpc_id, idx, pre, DZ_PUSH_MODE_DEFAULT, 0);
   bool lock20 = pre->cap == DZ_CAP_LOCK && pre->switch_type == 20;
   int n;
   switch (kind) {
     case DZ_CMD_ON: tool = "set_switch_state"; word = lock20 ? "Off" : "On"; break;
     case DZ_CMD_OFF: tool = "set_switch_state"; word = lock20 ? "On" : "Off"; break;
-    case DZ_CMD_PUSH: tool = "set_switch_state"; word = pre->switch_type == 10 ? "Off" : "On"; break;
+    case DZ_CMD_PUSH: return 0; /* handled above */
     case DZ_CMD_TOGGLE: tool = "toggle_switch_state"; break;
     case DZ_CMD_SET_LEVEL: case DZ_CMD_SELECTOR: tool = "set_dimmer_level"; if (level < 0 || level > 100) return 0; break;
     case DZ_CMD_BLINDS_OPEN: tool = "control_blinds"; word = "Open"; break;
@@ -205,9 +242,7 @@ size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind,
       n = snprintf(args, sizeof args, "{\"idx\":%lu,\"setpoint\":%s}", id, num); break;
   }
   if (n <= 0 || (size_t)n >= sizeof args) return 0;
-  int m = snprintf(out, cap, "{\"jsonrpc\":\"2.0\",\"id\":%lu,\"method\":\"tools/call\",\"params\":{\"name\":\"%s\",\"arguments\":%s}}",
-                   (unsigned long)rpc_id, tool, args);
-  return m > 0 && (size_t)m < cap ? (size_t)m : 0;
+  return wrap_call(out, cap, rpc_id, tool, args);
 }
 
 /* Did the re-read show the intended state? */
@@ -280,6 +315,9 @@ static void finish(dz_cmd_t *c, dz_cmd_slot_t *s, dz_outcome_t o, const dz_devic
   r.outcome = o;
   r.fail = o == DZ_OUT_FAILED ? s->fail : DZ_FAIL_NONE;
   r.level_sent = s->level;
+  r.sent = s->sent_ok;
+  r.uncertain = s->uncertain;
+  r.no_action = s->no_action;
   if (after) { r.have_after = true; r.after = *after; }
   s->state = 0;
   if (c->cb) c->cb(&r, c->user);
@@ -366,8 +404,13 @@ static dz_fail_t http_fail(int status) {
 static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   dz_client_t *cl = c->client;
   int send_level = s->req.kind == DZ_CMD_SET_LEVEL ? level_pct(s->level, s->pre.max_level) : s->level; /* selectors: LevelInt as is */
-  if ((s->req.kind == DZ_CMD_SET_LEVEL && send_level < 0) || !dz_mcp_encode(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->req.kind, s->idx, &s->pre,
-                                        send_level, s->req.setpoint)) {
+  bool push = s->req.kind == DZ_CMD_PUSH;
+  size_t blen = push ? dz_mcp_encode_push(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->idx, &s->pre, c->push_mode, s->push_step)
+                     : (s->req.kind == DZ_CMD_SET_LEVEL && send_level < 0)
+                           ? 0
+                           : dz_mcp_encode(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->req.kind, s->idx, &s->pre,
+                                           send_level, s->req.setpoint);
+  if (!blen) {
     s->fail = DZ_FAIL_BAD_RESPONSE;
     finish(c, s, DZ_OUT_FAILED, NULL);
     return;
@@ -414,8 +457,14 @@ static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
     return;
   } else {
     /* anything else, including "... was already X. No action taken.": the re-read is the truth */
-    s->no_action = strstr(r.reply.text, "No action taken") != NULL;
+    s->no_action = r.reply.no_action; /* the parser scans the whole raw text for "No action": a long device name cannot hide it */
     s->sent_ok = true;
+  }
+  if (push && (size_t)s->push_step + 1 < dz_cmd_push_steps(c->push_mode)) { /* the next call of the sequence, one request per pump */
+    s->push_step++;
+    s->state = 3;
+    s->due_ms = now;
+    return;
   }
   s->state = 2;
   s->due_ms = now + c->verify_delay_ms;
@@ -427,7 +476,10 @@ static void do_verify(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   dz_fail_t f = read_one(c, s, now, &after, &got);
   s->reads++;
   if (got && f == DZ_FAIL_NONE && matches(s, &after)) { finish(c, s, DZ_OUT_CONFIRMED, &after); return; }
-  if (s->reads >= 2) { finish(c, s, DZ_OUT_UNCONFIRMED, got ? &after : NULL); return; }
+  /* a push the server skipped ("No action taken") will not fire later: one read is enough, and it gets its own outcome */
+  bool skipped = s->req.kind == DZ_CMD_PUSH && s->sent_ok && s->no_action;
+  if (skipped && got && f == DZ_FAIL_NONE) { finish(c, s, DZ_OUT_NO_ACTION, &after); return; }
+  if (s->reads >= 2) { finish(c, s, skipped ? DZ_OUT_NO_ACTION : DZ_OUT_UNCONFIRMED, got ? &after : NULL); return; }
   s->due_ms = now + c->verify_delay_ms;
 }
 

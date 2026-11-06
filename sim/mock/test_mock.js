@@ -168,7 +168,11 @@ const check = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); 
   check('mcp: control_blinds Close/Open', /successfully/.test(txt(await call(sid, 'control_blinds', { idx: 3, command: 'Close' }))) && (await dev(3)).Status === 'Closed'
     && /successfully/.test(txt(await call(sid, 'control_blinds', { idx: 3, command: 'Open' }))) && (await dev(3)).Status === 'Open');
   check('mcp: control_blinds bad command -32602', (await call(sid, 'control_blinds', { idx: 3, command: 'Sideways' })).body.error.code === -32602);
-  check('mcp: push via set_switch_state', /successfully/.test(txt(await call(sid, 'set_switch_state', { idx: 5, state: 'On' }))));
+  const lu5 = (await dev(5)).LastUpdate;
+  check('mcp: push button already On -> No action taken, nothing changes', /already On\. No action taken\./.test(txt(await call(sid, 'set_switch_state', { idx: 5, state: 'On' }))) && (await dev(5)).LastUpdate === lu5);
+  await ctl('set?push=force');
+  check('mcp: push=force fires every call', /successfully/.test(txt(await call(sid, 'set_switch_state', { idx: 5, state: 'On' }))));
+  await ctl('set?push=skip');
   check('mcp: lock via set_switch_state (On = Locked)', /successfully/.test(txt(await call(sid, 'set_switch_state', { idx: 6, state: 'Off' }))) && (await dev(6)).Status === 'Unlocked');
   check('mcp: switch_scene numeric id', /successfully/.test(txt(await call(sid, 'switch_scene', { scene_id: 3, command: 'On' }))) && (await get('param=getscenes', V)).body.result.find((x) => x.idx === '3').Status === 'On');
   check('mcp: switch_scene string id -> -32602', (await call(sid, 'switch_scene', { scene_id: '3', command: 'On' })).body.error.code === -32602);

@@ -44,6 +44,7 @@ void ru_fb_on_result(ru_fb_t *f, const dz_cmd_result_t *r, uint32_t now_ms) {
       set(f, RU_FB_UNCONFIRMED, mixed ? "STILL MIXED" : "NOT CONFIRMED", now_ms);
       break;
     }
+    case DZ_OUT_NO_ACTION: set(f, RU_FB_UNCONFIRMED, "ALREADY PRESSED", now_ms); break; /* the server skipped the push */
     default: set(f, RU_FB_FAILED, fail_text(r->fail), now_ms); break;
   }
 }

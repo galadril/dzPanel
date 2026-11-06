@@ -181,6 +181,7 @@ typedef struct {
   bool is_error;        /* result.isError */
   bool has_text;
   char text[96];        /* result.content[0].text */
+  bool no_action;       /* that text contains "No action" ANYWHERE (scanned in the raw string, so a long device name cannot truncate it away) */
 } dz_mcp_reply_t;
 dz_err_t dz_mcp_parse_reply(const char *json, size_t len, dz_mcp_reply_t *out);
 

@@ -261,7 +261,11 @@ static void test_commands(void) {
   CHECK(run(DZ_CMD_SET_LEVEL, "2", 0, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED);
   CHECK(run(DZ_CMD_SELECTOR, "4", 30, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED);
   CHECK(run(DZ_CMD_BLINDS_CLOSE, "3", 0, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED);
-  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false) == DZ_CMD_ACCEPTED && nres == 1);
+  /* push button: the mock (like the real tool, we assume) skips a call whose state already matches: its own outcome */
+  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false) == DZ_CMD_ACCEPTED && nres == 1 && LASTR.outcome == DZ_OUT_NO_ACTION && LASTR.no_action);
+  ctl("set?push=force");
+  CHECK(run(DZ_CMD_PUSH, "5", 0, 0, false) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED);
+  ctl("set?push=skip");
   CHECK(run(DZ_CMD_OFF, "6", 0, 0, false) == DZ_CMDE_NEEDS_CONFIRM);
   CHECK(run(DZ_CMD_OFF, "6", 0, 0, true) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED && !strcmp(LASTR.after.status, "Unlocked"));
   CHECK(run(DZ_CMD_ON, "6", 0, 0, true) == DZ_CMD_ACCEPTED && LASTR.outcome == DZ_OUT_CONFIRMED && !strcmp(LASTR.after.status, "Locked"));

@@ -43,6 +43,11 @@ int main(void) {
   ru_fb_on_result(&f, &r, 20000);
   CHECK(f.st == RU_FB_UNCONFIRMED && !strcmp(ru_fb_text(&f), "STILL MIXED"));
 
+  /* a push the server skipped is not "NOT CONFIRMED" */
+  r = res(DZ_OUT_NO_ACTION, DZ_FAIL_NONE);
+  ru_fb_on_result(&f, &r, 30000);
+  CHECK(f.st == RU_FB_UNCONFIRMED && !strcmp(ru_fb_text(&f), "ALREADY PRESSED") && strlen(ru_fb_text(&f)) <= 16);
+
   /* failures name the reason */
   r = res(DZ_OUT_FAILED, DZ_FAIL_FORBIDDEN);
   ru_fb_on_result(&f, &r, 30000);

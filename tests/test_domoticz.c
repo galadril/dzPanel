@@ -588,6 +588,16 @@ static void test_mcp_reply(void) {
   CHECK(dz_mcp_parse_reply(ie, strlen(ie), &r) == DZ_OK && r.is_error && !strcmp(r.text, "Device not found"));
   const char *er = "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32600,\"message\":\"Missing session\",\"data\":{\"a\":[1,2]}}}";
   CHECK(dz_mcp_parse_reply(er, strlen(er), &r) == DZ_OK && r.has_error && r.code == -32600 && !strcmp(r.message, "Missing session") && !r.has_result);
+  CHECK(!r.no_action);
+  const char *na = "{\"id\":4,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"Switch \\\"Bell\\\" was already On. No action taken.\",\"type\":\"text\"}],\"isError\":false}}";
+  CHECK(dz_mcp_parse_reply(na, strlen(na), &r) == DZ_OK && r.no_action);
+  char longna[600]; /* a 300 character device name: the stored text is truncated, the marker is still found */
+  char nm[301];
+  memset(nm, 'N', 300); nm[300] = 0;
+  snprintf(longna, sizeof longna, "{\"id\":4,\"result\":{\"content\":[{\"text\":\"Switch %s was already On. No action taken.\"}],\"isError\":false}}", nm);
+  CHECK(dz_mcp_parse_reply(longna, strlen(longna), &r) == DZ_OK && r.no_action && r.has_text && strlen(r.text) < 96 && !strstr(r.text, "action"));
+  snprintf(longna, sizeof longna, "{\"id\":4,\"result\":{\"content\":[{\"text\":\"No actio\\\"n No actio\"}],\"isError\":false}}");
+  CHECK(dz_mcp_parse_reply(longna, strlen(longna), &r) == DZ_OK && !r.no_action);
   const char *nid = "{\"id\":null,\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
   CHECK(dz_mcp_parse_reply(nid, strlen(nid), &r) == DZ_OK && !r.has_id && r.code == -32700);
   const char *neither = "{\"id\":1,\"jsonrpc\":\"2.0\"}";

@@ -25,6 +25,8 @@
 //        set_switch_state, toggle_switch_state, set_dimmer_level, control_blinds, switch_scene, set_setpoint_value. Like the
 //        real server it SKIPS the Protected check and never converts Fahrenheit. Needs a Bearer token; viewer-token gets -32002.
 //        Modes (set with mode=): nomcp -> 503, nomcp404 -> 404 on /mcp only; the other modes hit /mcp too.
+//   GET /__mock/set?push=skip|force         push buttons (switch types 9, 10): skip (default) answers 'already On. No action taken.' when the
+//        stored state equals the request (the state stays On); force fires on every call (which MCP call forces a push is unknown)
 //   GET /__mock/set?mcp=expire              forget every MCP session (next call: 'Session not found')
 //   GET /__mock/stats                       {requests, lastAuth: "present|absent", urls:[...]}  (never echoes a token)
 'use strict';
@@ -40,7 +42,7 @@ const pad = (n) => String(n).padStart(2, '0');
 const stamp = (t = Date.now()) => new Date(t).toISOString().replace('T', ' ').slice(0, 19);
 const epoch = (s) => Math.floor(Date.parse(s.replace(' ', 'T') + 'Z') / 1000);
 
-const cfg = { latency: arg('latency', 0), fail: arg('fail', 0), mode: 'none', count: 0 };
+const cfg = { latency: arg('latency', 0), fail: arg('fail', 0), mode: 'none', count: 0, push: 'skip' };
 const stats = { requests: 0, lastAuth: 'absent', urls: [], mcpInits: 0, mcpCalls: [], mcpLastSession: 'absent' };
 const sessions = new Set();
 
@@ -168,13 +170,18 @@ const reset = () => {
   devices.forEach((d) => { d._t = epoch(d.LastUpdate); });
   scenes.forEach((s) => { s._t = epoch(s.LastUpdate); });
   const g = devices.find((d) => d.Type === 'Group'); delete g.SubType;
-  cfg.mode = 'none'; cfg.count = 0; cfg.latency = arg('latency', 0); cfg.fail = arg('fail', 0);
+  cfg.mode = 'none'; cfg.count = 0; cfg.push = 'skip'; cfg.latency = arg('latency', 0); cfg.fail = arg('fail', 0);
   stats.requests = 0; stats.urls = []; stats.mcpInits = 0; stats.mcpCalls = []; stats.mcpLastSession = 'absent'; sessions.clear();
 };
 reset();
 
 const byIdx = (list, i) => list.find((d) => d.idx === String(i));
-const touch = (d) => { d.LastUpdate = stamp(); d._t = Math.floor(Date.now() / 1000); };
+// LastUpdate always moves: two commands within one second still differ (the firmware's push verification compares the stamps)
+const touch = (d) => {
+  let n = stamp();
+  if (n === d.LastUpdate) n = stamp(Date.parse(d.LastUpdate.replace(' ', 'T') + 'Z') + 1000);
+  d.LastUpdate = n; d._t = Math.floor(Date.now() / 1000);
+};
 const clean = ({ _t, ...d }) => (units === 'imperial' ? toImperial(d) : d);
 const sorted = (o) => Array.isArray(o) ? o.map(sorted)
   : o && typeof o === 'object' ? Object.fromEntries(Object.keys(o).sort().map((k) => [k, sorted(o[k])])) : o;
@@ -397,6 +404,10 @@ function mcpTool(name, a, rights) {
       cmd = a.state; word = a.state;
       if ((d.SwitchTypeVal === 0 || d.SwitchTypeVal === 7) && isOnStatus(d) === (cmd === 'On'))
         return textResult(`Switch "${d.Name}" was already ${cmd}. No action taken.`);
+      // Push buttons keep their last state (a Push On button stays On). push=skip (default): the real tool's "already ... No action
+      // taken" skip is assumed to apply to them too, so a second press does nothing; push=force: every call fires.
+      if ((d.SwitchTypeVal === 9 || d.SwitchTypeVal === 10) && cfg.push === 'skip' && d.Data === cmd)
+        return textResult(`Switch "${d.Name}" was already ${cmd}. No action taken.`);
       break;
     case 'toggle_switch_state': cmd = 'Toggle'; word = 'toggled'; break;
     case 'set_dimmer_level':
@@ -463,6 +474,7 @@ http.createServer((req, res) => {
       if (q.has('latency')) cfg.latency = Number(q.get('latency'));
       if (q.has('fail')) cfg.fail = Number(q.get('fail'));
       if (q.has('mode')) cfg.mode = q.get('mode');
+      if (q.has('push') && ['skip', 'force'].includes(q.get('push'))) cfg.push = q.get('push');
       if (q.has('units') && CONFIGS[q.get('units')]) units = q.get('units');
       if (q.has('climate') && q.get('climate') === '1' && !withClimate) {
         withClimate = true;
