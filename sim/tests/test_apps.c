@@ -515,9 +515,10 @@ static void climate_pages(int size) {
   CHECK(init_sim(&s, size));
   appfx_t f;
   ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
-  /* the Temperature page: temperature-tab sensors, 4 rows a page; a tap opens the readings page */
+  /* the Temperature page: temperature-tab sensors, 6 tiles a page; a tap opens the readings page */
   ru_dzapp_show_section(a, RU_SEC_TEMP);
-  CHECK(ru_dzapp_pages(a) == 3 && ru_dzapp_home_rows(a) == 4 && shows(a, "TEMPERATURE") && shows(a, "1/3") && shows(a, "TEMP SENSOR"));
+  CHECK(ru_dzapp_pages(a) == 2 && ru_dzapp_home_rows(a) == 6 && shows(a, "TEMPERATURE") && shows(a, "1/2"));
+  { ru_dzapp_row_info_t r0; CHECK(ru_dzapp_row_info(a, 0, &r0) && !strcmp(r0.idx, "100")); } /* the name is cut with dots to the tile */
   CHECK(ru_dzapp_tap_row(a, 0));
   ru_dzapp_ui_tick(a, f.T);
   CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && shows(a, "21.5" DEGC) && shows(a, "TEMP"));
@@ -835,6 +836,88 @@ static void switch_lights(int size) {
     screen_ok(&s, a, open_idx[i], size);
     CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_LIGHTS);
   }
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
+/* Temperature and Weather tiles with 36-character names and long values: the name area (cut with dots) and the value area
+ * never overlap, both stay inside the tile, nothing is lit outside the circle, and temperature + humidity share one tile. */
+static bool rename_dev(char *buf, size_t *n, size_t cap, const char *old, const char *neu) {
+  char key[96], rep[96];
+  snprintf(key, sizeof key, "\"Name\": \"%s\"", old);
+  snprintf(rep, sizeof rep, "\"Name\": \"%s\"", neu);
+  char *p = strstr(buf, key);
+  if (!p) return false;
+  size_t kl = strlen(key), rl = strlen(rep), tail = *n - (size_t)(p - buf) - kl;
+  if (*n - kl + rl >= cap) return false;
+  memmove(p + rl, p + kl, tail);
+  memcpy(p, rep, rl);
+  *n = *n - kl + rl;
+  buf[*n] = 0;
+  return true;
+}
+
+static int overlap_tiles(lv_obj_t *o, int *tiles) {
+  int bad = 0;
+  if (lv_obj_get_child_count(o) == 4 && lv_obj_check_type(lv_obj_get_child(o, 1), &lv_label_class) &&
+      lv_obj_check_type(lv_obj_get_child(o, 2), &lv_label_class) && lv_obj_check_type(lv_obj_get_child(o, 3), &lv_label_class)) {
+    lv_area_t t, nm, sb, vl;
+    lv_obj_get_coords(o, &t);
+    lv_obj_get_coords(lv_obj_get_child(o, 1), &nm);
+    lv_obj_get_coords(lv_obj_get_child(o, 2), &sb);
+    lv_obj_get_coords(lv_obj_get_child(o, 3), &vl);
+    bool val_shown = !lv_obj_has_flag(lv_obj_get_child(o, 3), LV_OBJ_FLAG_HIDDEN);
+    (*tiles)++;
+    if (nm.x1 < t.x1 || nm.x2 > t.x2 || nm.y1 < t.y1 || nm.y2 > t.y2) bad++;
+    if (sb.x1 < t.x1 || sb.x2 > t.x2 || sb.y2 > t.y2) bad++;
+    if (val_shown) {
+      lv_area_t x;
+      if (vl.x1 < t.x1 || vl.x2 > t.x2 || vl.y1 < t.y1 || vl.y2 > t.y2) bad++;
+      if (_lv_area_intersect(&x, &nm, &vl)) bad++;
+      if (_lv_area_intersect(&x, &sb, &vl)) bad++;
+      if (_lv_area_intersect(&x, &nm, &sb)) bad++;
+    }
+  }
+  for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) bad += overlap_tiles(lv_obj_get_child(o, i), tiles);
+  return bad;
+}
+
+static void climate_tiles_long(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  char path[512];
+  snprintf(path, sizeof path, "%s/mock_climate_metric.json", FIXTURE_DIR);
+  FILE *fp = fopen(path, "rb");
+  CHECK(fp != NULL);
+  if (!fp) { sim_shutdown(&s); return; }
+  static char buf[200000];
+  size_t n = fread(buf, 1, sizeof buf - 1, fp);
+  fclose(fp);
+  buf[n] = 0;
+  CHECK(rename_dev(buf, &n, sizeof buf, "Temp Hum Sensor", "LIVING ROOM WINDOW SENSOR NORTH WALL") &&
+        rename_dev(buf, &n, sizeof buf, "Wind Sensor", "GARDEN ANEMOMETER ON THE ROOF TOP MAST") &&
+        rename_dev(buf, &n, sizeof buf, "Weather Station", "WEATHER STATION BEHIND THE BARN DOOR"));
+  appfx_t f;
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000, true);
+  CHECK(dz_model_apply(&f.model, buf, n, DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
+  static const ru_section_t secs[2] = { RU_SEC_TEMP, RU_SEC_WEATHER };
+  bool saw_both = false, saw_wind = false, saw_dots = false;
+  for (int k = 0; k < 2; k++) {
+    ru_dzapp_show_section(a, secs[k]);
+    int pages = ru_dzapp_pages(a);
+    for (int pg = 0; pg < pages; pg++) {
+      sim_render();
+      int tiles = 0;
+      CHECK(overlap_tiles(ru_dzapp_screen(a), &tiles) == 0);
+      CHECK(tiles > 0 && tiles <= 6);
+      saw_both = saw_both || shows(a, " / ");
+      saw_wind = saw_wind || shows(a, "TEMP / HUM") || shows(a, "WIND");
+      saw_dots = saw_dots || shows(a, "...");
+      screen_ok(&s, a, "climate tiles", size);
+      if (pg + 1 < pages) CHECK(ru_dzapp_swipe(a, RU_DIR_UP, size / 2, size / 2));
+    }
+  }
+  CHECK(saw_both && saw_wind && saw_dots);
   finish(&f, a);
   sim_shutdown(&s);
 }
@@ -1157,9 +1240,9 @@ static void paging(int size) {
   ru_dzapp_show_section(a, RU_SEC_LIGHTS);
   CHECK(ru_dzapp_page(a) == 0);
 
-  /* Temperature rows: 30 sensors, 4 a page, 8 pages; the Utility page has the 20 meters */
+  /* Temperature tiles: 30 sensors, 6 a page, 5 pages; the Utility page has the 20 meters */
   ru_dzapp_show_section(a, RU_SEC_TEMP);
-  CHECK(ru_dzapp_pages(a) == 8 && ru_dzapp_home_rows(a) == 4 && shows(a, "1/8") && shows(a, "TEMP 101"));
+  CHECK(ru_dzapp_pages(a) == 5 && ru_dzapp_home_rows(a) == 6 && shows(a, "1/5") && shows(a, "TEMP 101"));
   screen_ok(&s, a, "temp rows", size);
   ru_dzapp_show_section(a, RU_SEC_UTILITY);
   CHECK(ru_dzapp_pages(a) == 5 && shows(a, "1/5") && shows(a, "METER 131"));
@@ -1283,6 +1366,7 @@ int main(void) {
     back_double_fire(size);
     long_name_pill(size);
     switch_lights(size);
+    climate_tiles_long(size);
   }
   MT_DONE();
 }

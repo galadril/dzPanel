@@ -552,6 +552,57 @@ static ru_dot_state_t dot_of(ru_tile_state_t s) {
   }
 }
 
+/* ---- value tiles of the Temperature and Weather pages: one function per kind, so a richer renderer (icon, big number)
+ * can replace one without touching the others. Each fills the small line (kind) and the value text. */
+typedef void (*climate_tile_fn)(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn);
+
+static void ctile_temp(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) {
+  char t[16], h[16];
+  ru_cl_text(dz_dev_room_temp(d), u, t, sizeof t);
+  const dz_reading_t *hr = dz_dev_reading(d, DZ_RK_HUM);
+  if (hr) { ru_cl_text(hr, u, h, sizeof h); snprintf(val, vn, "%s / %s", t, h); snprintf(sub, sn, "TEMP / HUM"); }
+  else { snprintf(val, vn, "%s", t); snprintf(sub, sn, "TEMP"); }
+}
+
+static void ctile_wind(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) {
+  bool known;
+  ru_cl_summary(d, u, val, vn, &known);
+  if (known && d->dir_str[0] && dz_dev_reading(d, DZ_RK_WIND)) { size_t l = strlen(val); snprintf(val + l, vn - l, " %s", d->dir_str); }
+  snprintf(sub, sn, "WIND");
+}
+
+static void ctile_generic(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn, const char *kind) {
+  bool known;
+  ru_cl_summary(d, u, val, vn, &known);
+  snprintf(sub, sn, "%s", kind);
+}
+static void ctile_rain(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) { ctile_generic(d, u, sub, sn, val, vn, "RAIN"); }
+static void ctile_uv(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) { ctile_generic(d, u, sub, sn, val, vn, "UV"); }
+static void ctile_hum(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) { ctile_generic(d, u, sub, sn, val, vn, "HUMIDITY"); }
+static void ctile_air(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) { ctile_generic(d, u, sub, sn, val, vn, "AIR"); }
+static void ctile_other(const dz_device_t *d, const ru_cl_units_t *u, char *sub, size_t sn, char *val, size_t vn) {
+  if (d->cap == DZ_CAP_WEATHER && d->has_baro && !dz_dev_reading(d, DZ_RK_BARO)) { ru_dzv_baro_text(d, val, vn); snprintf(sub, sn, "BARO"); return; }
+  const dz_reading_t *b = dz_dev_reading(d, DZ_RK_BARO);
+  ctile_generic(d, u, sub, sn, val, vn, b ? "BARO" : cap_label(d->cap));
+}
+
+static void climate_tile(const dz_device_t *d, const dz_units_t *un, char *sub, size_t sn, char *val, size_t vn) {
+  ru_cl_units_t u;
+  ru_cl_units(un, &u);
+  climate_tile_fn f;
+  switch (ru_cl_page_of(d)) {
+    case RU_CLP_TEMP: f = ctile_temp; break;
+    case RU_CLP_WIND: f = ctile_wind; break;
+    case RU_CLP_RAIN: f = ctile_rain; break;
+    case RU_CLP_UV: f = ctile_uv; break;
+    case RU_CLP_HUM: f = ctile_hum; break;
+    case RU_CLP_AIR: f = ctile_air; break;
+    default: f = ctile_other; break;
+  }
+  if (d->n_rd == 0) { bool known; ru_dzv_value_text_u(d, un, val, vn, &known); snprintf(sub, sn, "%s", cap_label(d->cap)); return; } /* hand-made device */
+  f(d, &u, sub, sn, val, vn);
+}
+
 /* The tile content of any entry: an indicator for things with a state, a value for sensors. */
 static void tile_content(const ru_dzapp_t *a, const dz_device_t *d, bool scene, ru_dot_state_t *dot, char *sub, size_t n,
                          char *val, size_t vn) {
@@ -570,13 +621,16 @@ static void tile_content(const ru_dzapp_t *a, const dz_device_t *d, bool scene, 
       *dot = dot_of(ru_dzv_tile_state(d));
       ru_dzv_value_text_u(d, &un, sub, n, &known);
       return;
+    case DZ_CAP_TEMP:
+    case DZ_CAP_WEATHER:
+      *dot = RU_DOT_NONE;
+      climate_tile(d, &un, sub, n, val, vn);
+      return;
     case DZ_CAP_READONLY:
     case DZ_CAP_BLINDS:
     case DZ_CAP_SELECTOR:
     case DZ_CAP_STATUS:
     case DZ_CAP_THERMOSTAT:
-    case DZ_CAP_TEMP:
-    case DZ_CAP_WEATHER:
     case DZ_CAP_ENERGY:
     case DZ_CAP_SENSOR:
     case DZ_CAP_MODE:
@@ -774,7 +828,7 @@ static lv_obj_t *build_home(ru_dzapp_t *a) {
   return s;
 }
 
-/* ---- lights and scenes: tiles; temperature, weather, utility: value rows ---- */
+/* ---- lights, scenes, temperature, weather: tiles; utility: value rows ---- */
 
 static const char *empty_text(ru_section_t sec) {
   switch (sec) {
@@ -1353,9 +1407,9 @@ static void build_and_show(ru_dzapp_t *a) {
     default:
       switch (a->section) {
         case RU_SEC_LIGHTS:
-        case RU_SEC_SCENES: s = build_tiles_section(a, a->section); break;
+        case RU_SEC_SCENES:
         case RU_SEC_TEMP:
-        case RU_SEC_WEATHER:
+        case RU_SEC_WEATHER: s = build_tiles_section(a, a->section); break;
         case RU_SEC_UTILITY: s = build_rows_section(a, a->section); break;
         case RU_SEC_ENERGY: s = build_energy(a); break;
         case RU_SEC_SETTINGS: s = build_settings(a); break;
