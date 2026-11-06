@@ -158,7 +158,12 @@ int main(void) {
   snprintf(c.url, sizeof c.url, "%s", url);
   c.insecure_lan = true;
   snprintf(c.token, sizeof c.token, "viewer-token");
-  CHECK(dz_service_probe(TR, NULL, &c, 3000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4"));
+  CHECK(dz_service_probe(TR, NULL, &c, 3000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4 control MCP ok"));
+  ctl("set?mode=nomcp");
+  CHECK(dz_service_probe(TR, NULL, &c, 3000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4 control MCP unavailable"));
+  ctl("set?mode=nomcp404");
+  CHECK(dz_service_probe(TR, NULL, &c, 3000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4 control MCP unavailable"));
+  ctl("set?mode=none");
   snprintf(c.token, sizeof c.token, "wrong");
   CHECK(dz_service_probe(TR, NULL, &c, 3000, info, sizeof info) == RU_CFG_TEST_TOKEN_REJECTED && info[0] == 0);
   snprintf(c.token, sizeof c.token, "viewer-token");

@@ -129,6 +129,8 @@ typedef struct {
 } dz_mcp_result_t;
 
 uint32_t dz_client_mcp_next_id(dz_client_t *c);
+/* The JSON-RPC initialize body (also used by the connection test). Returns the length, 0 if cap is too small. */
+size_t dz_mcp_init_body(char *out, size_t cap, uint32_t id);
 /* Makes sure a session exists (initialize + notifications/initialized when there is none, it is older than 55 minutes idle, or
  * force). true when a session id is held afterwards; otherwise *res says why (res->stage == INIT). */
 bool dz_client_mcp_open(dz_client_t *c, uint32_t now_ms, bool force, dz_mcp_result_t *res);

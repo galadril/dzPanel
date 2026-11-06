@@ -388,7 +388,27 @@ ru_cfg_test_t dz_service_probe(dz_transport_t *t, void (*set_insecure)(dz_transp
   if (dz_parse_response(buf, r.len, NULL, NULL, &res) != DZ_OK) return RU_CFG_TEST_BAD_RESPONSE;
   out = RU_CFG_TEST_OK;
   dz_version_t v;
-  if (info && info_cap && dz_version_parse(res.version, &v) && v.valid) snprintf(info, info_cap, "%d.%d", v.year, v.minor);
+  char ver[16] = "";
+  if (dz_version_parse(res.version, &v) && v.valid) snprintf(ver, sizeof ver, "%d.%d", v.year, v.minor);
+  /* Control goes through the Domoticz MCP endpoint: say whether it answers an initialize for this token. The session is left
+   * to idle out on the server (the notification is skipped); its id is wiped here. */
+  bool mcp = false;
+  if (t->post) {
+    char body[256], sid[65], auth[sizeof "Authorization: Bearer " + RU_CFG_TOKEN_MAX];
+    const char *ph[3] = {auth, "Accept: application/json, text/event-stream", NULL};
+    size_t bl = dz_mcp_init_body(body, sizeof body, 1);
+    snprintf(url, sizeof url, "%s/mcp", cfg->url);
+    snprintf(auth, sizeof auth, "Authorization: Bearer %s", cfg->token);
+    dz_post_t p = {body, bl, "application/json", "Mcp-Session-Id", sid, sizeof sid};
+    sid[0] = 0;
+    dz_http_result_t pr = {0, 0};
+    dz_net_err_t pe = bl ? t->post(t, url, ph, &p, timeout_ms, buf, sizeof buf, &pr) : DZ_NET_CONNECT;
+    dz_mcp_reply_t mr;
+    mcp = pe == DZ_NET_OK && pr.status == 200 && sid[0] && dz_mcp_parse_reply(buf, pr.len, &mr) == DZ_OK && mr.has_result && !mr.has_error;
+    secure_zero(auth, sizeof auth);
+    secure_zero(sid, sizeof sid);
+  }
+  if (info && info_cap) snprintf(info, info_cap, "%s%scontrol MCP %s", ver, ver[0] ? " " : "", mcp ? "ok" : "unavailable");
   return out;
 }
 

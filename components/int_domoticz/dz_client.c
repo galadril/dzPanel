@@ -162,6 +162,14 @@ dz_net_err_t dz_client_request(dz_client_t *c, const char *query, dz_http_result
 
 uint32_t dz_client_mcp_next_id(dz_client_t *c) { return ++c->mcp_rpc_id; }
 
+size_t dz_mcp_init_body(char *out, size_t cap, uint32_t id) {
+  int n = snprintf(out, cap,
+                   "{\"jsonrpc\":\"2.0\",\"id\":%u,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\","
+                   "\"capabilities\":{},\"clientInfo\":{\"name\":\"dzPanel\",\"version\":\"1\"}}}",
+                   (unsigned)id);
+  return n > 0 && (size_t)n < cap ? (size_t)n : 0;
+}
+
 static bool sid_ok(const char *s) {
   if (!*s) return false;
   for (; *s; s++)
@@ -233,10 +241,7 @@ bool dz_client_mcp_open(dz_client_t *c, uint32_t now_ms, bool force, dz_mcp_resu
   res_clear(res);
   if (!force && c->mcp_sid[0] && (int32_t)(now_ms - c->mcp_last_ms) <= 55 * 60 * 1000) return true;
   dz_client_mcp_reset(c);
-  snprintf(c->mcp_body, sizeof c->mcp_body,
-           "{\"jsonrpc\":\"2.0\",\"id\":%u,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\","
-           "\"capabilities\":{},\"clientInfo\":{\"name\":\"dzPanel\",\"version\":\"1\"}}}",
-           (unsigned)dz_client_mcp_next_id(c));
+  dz_mcp_init_body(c->mcp_body, sizeof c->mcp_body, dz_client_mcp_next_id(c));
   bool ok = mcp_exchange(c, c->mcp_body, false, true, DZ_MCP_STAGE_INIT, res);
   if (!ok || !res->reply.has_result || res->reply.has_error || !sid_ok(c->mcp_sid)) {
     if (ok) res->parse = DZ_ERR_STATUS; /* a reply, but no session came with it */
