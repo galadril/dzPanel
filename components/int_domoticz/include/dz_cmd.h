@@ -19,7 +19,7 @@ typedef enum {
 
 typedef enum {
   DZ_CMD_ON, DZ_CMD_OFF, DZ_CMD_TOGGLE,     /* on/off, dimmers, locks (On = lock, Off = unlock), scenes use SCENE_* */
-  DZ_CMD_SET_LEVEL,                          /* dimmers: level in device units 0..MaxDimLevel, clamped */
+  DZ_CMD_SET_LEVEL,                          /* dimmers: level in device units 0..MaxDimLevel, clamped; sent to the MCP tool as a rounded percentage */
   DZ_CMD_BLINDS_OPEN, DZ_CMD_BLINDS_CLOSE, DZ_CMD_BLINDS_STOP,
   DZ_CMD_SELECTOR,                           /* level = LevelInt (index * 10), must name an existing level */
   DZ_CMD_SCENE_ON, DZ_CMD_SCENE_OFF,         /* scenes and groups (a Scene has no Off) */

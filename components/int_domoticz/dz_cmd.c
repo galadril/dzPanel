@@ -69,6 +69,13 @@ dz_risk_t dz_cmd_risk(const dz_device_t *d, dz_cmd_kind_t kind, const dz_units_t
   return DZ_RISK_SAFE;
 }
 
+/* Device level (0..max) -> the percentage the MCP set_dimmer_level tool takes, rounded, clamped to 0..100. */
+static int level_pct(int level, int max_level) {
+  if (max_level <= 0) return -1;
+  long p = ((long)level * 100 + max_level / 2) / max_level;
+  return p < 0 ? 0 : p > 100 ? 100 : (int)p;
+}
+
 static int selector_count(const dz_device_t *d) {
   if (!d->level_names[0]) return 0;
   int n = 1;
@@ -94,7 +101,7 @@ dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms
   int level = -1;
   float setpoint = req->setpoint;
   if (req->kind == DZ_CMD_SET_LEVEL) {
-    if (d.max_level > 100) return DZ_CMDE_BAD_ARG; /* the MCP level tool takes 0..100 only */
+    if (d.max_level <= 0 || d.max_level > 100) return DZ_CMDE_BAD_ARG; /* the MCP level tool takes a percentage 0..100 */
     level = req->level < 0 ? 0 : req->level > d.max_level ? d.max_level : req->level;
   } else if (req->kind == DZ_CMD_SELECTOR) {
     int cnt = selector_count(&d);
@@ -217,9 +224,15 @@ static bool matches(const dz_cmd_slot_t *s, const dz_device_t *a) {
       bool on = tog ? !dz_status_is_on(p) : s->req.kind == DZ_CMD_ON;
       return on ? dz_status_is_on(a) : !strcmp(a->status, "Off");
     }
-    case DZ_CMD_SET_LEVEL:
+    case DZ_CMD_SET_LEVEL: {
+      /* the tool takes a percentage: compare in that domain, with a tolerance of one device step (the server rounds its own way) */
       if (s->level == 0) return !strcmp(a->status, "Off");
-      return dz_status_is_on(a) && a->has_level && a->level == s->level;
+      if (!dz_status_is_on(a) || !a->has_level) return false;
+      int want = level_pct(s->level, p->max_level), got = level_pct(a->level, a->max_level);
+      if (want < 0 || got < 0) return false;
+      int tol = a->max_level == 100 ? 0 : (100 + a->max_level - 1) / a->max_level;
+      return abs(got - want) <= tol;
+    }
     case DZ_CMD_SELECTOR: return a->has_level && (a->level == s->level || a->level_int == s->level);
     /* Blinds: Domoticz applies inversion (ReverseState / ReversePosition, the old types 6 and 16) on the server and reports the
      * user-facing state, so Open is "Open" or, on percentage blinds that report "Set Level: N %", level 100; Close is "Closed"
@@ -318,6 +331,7 @@ static void do_preflight(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   dz_units_t units;
   dz_model_units(c->model, &units);
   if (!fresh.controllable || !cap_allows(&fresh, s->req.kind, &units)) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
+  if (s->req.kind == DZ_CMD_SET_LEVEL && (fresh.max_level <= 0 || fresh.max_level > 100)) { s->fail = DZ_FAIL_REJECTED; finish(c, s, DZ_OUT_FAILED, &fresh); return; }
   s->pre = fresh;
   s->state = 3;
   s->due_ms = now;
@@ -344,8 +358,9 @@ static dz_fail_t http_fail(int status) {
 
 static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   dz_client_t *cl = c->client;
-  if (!dz_mcp_encode(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->req.kind, s->idx, &s->pre, s->level,
-                     s->req.setpoint)) {
+  int send_level = s->req.kind == DZ_CMD_SET_LEVEL ? level_pct(s->level, s->pre.max_level) : s->level; /* selectors: LevelInt as is */
+  if ((s->req.kind == DZ_CMD_SET_LEVEL && send_level < 0) || !dz_mcp_encode(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->req.kind, s->idx, &s->pre,
+                                        send_level, s->req.setpoint)) {
     s->fail = DZ_FAIL_BAD_RESPONSE;
     finish(c, s, DZ_OUT_FAILED, NULL);
     return;

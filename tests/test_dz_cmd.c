@@ -11,7 +11,7 @@
 typedef struct {
   const char *idx, *type, *subtype, *name;
   int stv, level, maxlvl, protectedf, scene;
-  char status[24], data[24], lu[24], names[40];
+  char status[24], data[24], lu[24], names[48];
   float setpoint;
 } sim_t;
 
@@ -33,6 +33,8 @@ static sim_t S[] = {
   {"15", "Light/Switch", "Switch", "pushoff", 10, 0, 100, 0, 0, "", "Off", "2026-10-31 10:00:00", "", 0},
   {"16", "Light/Switch", "Switch", "dim255", 7, 0, 255, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0},
   {"17", "Thermostat", "Thermostat Mode", "modedev", -1, 0, 100, 0, 0, "", "Heat", "2026-10-31 10:00:00", "", 0},
+  {"18", "Light/Switch", "Switch", "dim32", 7, 0, 32, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0},
+  {"19", "Light/Switch", "Selector Switch", "sel12", 18, 0, 100, 0, 0, "", "Off", "2026-10-31 10:00:00", "MHwxfDJ8M3w0fDV8Nnw3fDh8OXwxMHwxMQ==", 0},
   {"1", "Scene", NULL, "scene", -1, 0, 100, 0, 1, "Off", "Off", "2026-10-31 10:00:00", "", 0},
   {"2", "Group", NULL, "group", -1, 0, 100, 0, 1, "Off", "Off", "2026-10-31 10:00:00", "", 0},
 };
@@ -101,6 +103,7 @@ static bool jstr(const char *body, const char *key, char *out, size_t cap) {
 }
 
 static int applied; /* effective changes made by tools/call */
+static bool srv_round_up; /* the server converts a percentage to its own units rounding up */
 static bool pblind_levels; /* percentage blinds report Set Level: N % instead of Open / Closed */
 static void apply_call(const char *body) {
   char tool[40], idx[16], cmd[32], lvl[16], sp[16];
@@ -113,7 +116,7 @@ static void apply_call(const char *body) {
   if (!strcmp(tool, "set_setpoint_value")) { if (jnum(body, "setpoint", sp, sizeof sp)) { s->setpoint = strtof(sp, NULL); touch(s); } return; }
   if (!strcmp(tool, "set_dimmer_level") && jnum(body, "level", lvl, sizeof lvl)) {
     int n = atoi(lvl);
-    s->level = n;
+    s->level = (s->stv == 7 || s->stv == 5) ? (n * s->maxlvl + (srv_round_up ? 99 : 50)) / 100 : n; /* the tool takes a percentage */
     if (s->stv == 18) { snprintf(s->data, sizeof s->data, "L%d", n); }
     else if (s->stv == 13) snprintf(s->status, sizeof s->status, n >= 100 ? "Open" : n ? "Set Level: %d %%" : "Closed", n);
     else snprintf(s->status, sizeof s->status, n ? "Set Level: %d %%" : "Off", n);
@@ -190,7 +193,7 @@ static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_ht
   read_calls++;
   if (xm == X_VERIFY_FAIL) return DZ_NET_TIMEOUT;
   if (xm == X_PREFLIGHT_404 && read_calls == 1) return fake_body("<html>nope</html>", 404, buf, cap, out);
-  char tmp[8192], rid[16];
+  char tmp[16384], rid[16];
   const char *p = strstr(url, "&rid=");
   if (p) { size_t n = strcspn(p + 5, "&"); snprintf(rid, sizeof rid, "%.*s", (int)n, p + 5); }
   if (strstr(url, "param=getscenes")) render(tmp, sizeof tmp, true, NULL);
@@ -216,6 +219,7 @@ static void reset_sim(void) {
   if (!have) { memcpy(init, S, sizeof S); have = true; }
   memcpy(S, init, sizeof S); /* every test starts from the table above */
   group_mixed = false;
+  srv_round_up = false;
   ticks = 5; /* the first touch must differ from the table's 10:00:00 */
 }
 
@@ -240,7 +244,7 @@ static void setup(bool allow) {
   reset_sim();
   dz_client_cfg_t cfg = {.base_url = "http://h", .token = "TOK-SECRET", .transport = &F.base, .model = &M, .buf = rbuf, .buf_cap = sizeof rbuf};
   CHECK(dz_client_init(&C, &cfg));
-  char tmp[8192];
+  char tmp[16384];
   render(tmp, sizeof tmp, false, NULL);
   CHECK(dz_model_apply(&M, tmp, strlen(tmp), DZ_COMMIT_FULL_DEVICES, 1000, NULL, NULL) == DZ_OK);
   render(tmp, sizeof tmp, true, NULL);
@@ -313,6 +317,36 @@ static void test_levels(void) {
   CHECK(run(DZ_CMD_SELECTOR, "4", 40, 0, false, NULL) == DZ_CMDE_BAD_ARG);   /* only 4 names: 0..30 */
   CHECK(run(DZ_CMD_SELECTOR, "4", -10, 0, false, NULL) == DZ_CMDE_BAD_ARG);
   CHECK(run(DZ_CMD_SELECTOR, "2", 10, 0, false, NULL) == DZ_CMDE_NOT_CONTROLLABLE);
+}
+
+/* B3: dimmers with MaxDimLevel other than 100: the tool takes a percentage, the verify compares in percent */
+static void test_level_percent(void) {
+  setup(true);
+  CHECK(run(DZ_CMD_SET_LEVEL, "11", 7, 0, false, NULL) == DZ_CMD_ACCEPTED);            /* max 15: 7/15 = 46.7 -> 47 % */
+  CHECK(strstr(LASTB, "\"level\":47") && LAST.level_sent == 7 && LAST.outcome == DZ_OUT_CONFIRMED && S[10].level == 7);
+  CHECK(run(DZ_CMD_SET_LEVEL, "11", 15, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"level\":100") && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run(DZ_CMD_SET_LEVEL, "11", 1, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"level\":7}") && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run(DZ_CMD_SET_LEVEL, "11", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"level\":0") && LAST.outcome == DZ_OUT_CONFIRMED);
+  srv_round_up = true; /* one device step of difference is accepted */
+  CHECK(run(DZ_CMD_SET_LEVEL, "11", 7, 0, false, NULL) == DZ_CMD_ACCEPTED && S[10].level == 8 && LAST.outcome == DZ_OUT_CONFIRMED);
+  srv_round_up = false;
+  CHECK(run(DZ_CMD_SET_LEVEL, "18", 16, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"level\":50") && S[17].level == 16 && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run(DZ_CMD_SET_LEVEL, "18", 99, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.level_sent == 32 && strstr(LASTB, "\"level\":100"));
+  CHECK(run(DZ_CMD_SET_LEVEL, "2", 33, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"level\":33") && LAST.outcome == DZ_OUT_CONFIRMED); /* max 100: as is */
+  /* a wrong result is not accepted: the server ignored the call */
+  xm = X_IGNORE;
+  CHECK(run(DZ_CMD_SET_LEVEL, "11", 3, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  xm = X_OK;
+  /* max_level above 100 (or 0) is refused; the pre-flight refuses a device whose range changed meanwhile */
+  CHECK(run(DZ_CMD_SET_LEVEL, "16", 50, 0, false, NULL) == DZ_CMDE_BAD_ARG);
+  dz_cmd_req_t q = {.kind = DZ_CMD_SET_LEVEL, .idx = "11", .level = 5};
+  CHECK(dz_cmd_submit(&K, &q, T, NULL) == DZ_CMD_ACCEPTED);
+  S[10].maxlvl = 255;
+  nres = 0; cmd_calls = 0;
+  CHECK(dz_cmd_pump(&K, T) && nres == 1 && LAST.fail == DZ_FAIL_REJECTED && cmd_calls == 0);
+  /* selectors: LevelInt as is, multiples of 10, nothing above 100 */
+  CHECK(run(DZ_CMD_SELECTOR, "19", 100, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"level\":100"));
+  CHECK(run(DZ_CMD_SELECTOR, "19", 110, 0, false, NULL) == DZ_CMDE_BAD_ARG);
 }
 
 static void test_blinds_push(void) {
@@ -711,7 +745,7 @@ static void test_preflight(void) {
   CHECK(run(DZ_CMD_ON, "1", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_FAILED && LAST.fail == DZ_FAIL_BAD_RESPONSE && cmd_calls == 0);
   /* a scene that is protected */
   setup(true);
-  S[17].protectedf = 1;
+  find("1", true)->protectedf = 1;
   CHECK(run(DZ_CMD_SCENE_ON, "1", 0, 0, true, NULL) == DZ_CMD_ACCEPTED && LAST.fail == DZ_FAIL_PROTECTED && cmd_calls == 0);
 }
 
@@ -725,6 +759,7 @@ int main(void) {
   test_basic_confirm();
   test_timing();
   test_levels();
+  test_level_percent();
   test_blinds_push();
   test_risk();
   test_refusals();
