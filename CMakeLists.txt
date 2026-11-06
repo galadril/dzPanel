@@ -120,15 +120,16 @@ add_test(NAME dz_service_mock COMMAND bash ${CMAKE_SOURCE_DIR}/tests/run_with_mo
 # ===== END fw-net agent =====
 
 # ===== BEGIN Apps agent (ru_apps_core: command feedback + view model, host-tested without LVGL) =====
-add_library(ru_apps_core components/ru_apps/ru_fb.c components/ru_apps/ru_dzview.c components/ru_apps/ru_climate.c)
+add_library(ru_apps_core components/ru_apps/ru_fb.c components/ru_apps/ru_dzview.c components/ru_apps/ru_climate.c components/ru_apps/ru_wx.c)
 target_include_directories(ru_apps_core PUBLIC components/ru_apps/include)
 target_link_libraries(ru_apps_core PUBLIC int_domoticz ru_data ru_core m)
-foreach(t apps_fb apps_view apps_climate)
+foreach(t apps_fb apps_view apps_climate apps_wx)
   add_executable(test_${t} tests/test_${t}.c)
   target_include_directories(test_${t} PRIVATE tests)
   target_link_libraries(test_${t} ru_apps_core)
   add_test(NAME ${t} COMMAND test_${t})
 endforeach()
+target_compile_definitions(test_apps_wx PRIVATE FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures" MANIFEST_PATH="${CMAKE_SOURCE_DIR}/tools/icons/manifest.txt")
 target_compile_definitions(test_apps_climate PRIVATE FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures")
 target_compile_definitions(test_apps_view PRIVATE FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures")
 # ===== END Apps agent =====
