@@ -251,6 +251,33 @@ static void run_swipe(int size, bool square) {
   sim_shutdown(&S);
 }
 
+/* the dial pages (thermostat): a swipe is never taken from the dial ring or the buttons */
+static void run_swipe_dial(int size, bool square) {
+  sim_t S;
+  CHECK(sim_init_ex(&S, size, square));
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_CLIMATE_METRIC, 600000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
+  ru_dzapp_set_display_info(a, "sim", !square);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f.T);
+  int c = size / 2, x, y;
+  ru_dzapp_show_section(a, RU_SEC_UTILITY);
+  ru_dzapp_open(a, "118", false);
+  tick(&f, a, 10);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && ru_dzapp_light(a) == NULL);
+  ring_xy(size, 40.0f, 200, &x, &y);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, x, y) && !strcmp(ru_dzapp_current_idx(a), "118"));
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, c, c + (int)(20.0f * (float)size / 100.0f))); /* the buttons */
+  bool moved = ru_dzapp_swipe(a, RU_DIR_LEFT, c, c - (int)(8.0f * (float)size / 100.0f)) ||
+               ru_dzapp_swipe(a, RU_DIR_RIGHT, c, c - (int)(8.0f * (float)size / 100.0f));
+  CHECK(moved && strcmp(ru_dzapp_current_idx(a), "118") != 0); /* the centre is free */
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+  sim_shutdown(&S);
+}
+
 int main(void) {
   run(466, false);
   run(480, false);
@@ -258,5 +285,7 @@ int main(void) {
   run_swipe(466, false);
   run_swipe(480, false);
   run_swipe(480, true);
+  run_swipe_dial(466, false);
+  run_swipe_dial(480, true);
   MT_DONE();
 }
