@@ -10,7 +10,7 @@
 static const char *SECRET = "SECRET-TOKEN-123";
 static const char *SID = "0123456789abcdef0123456789abcdef";
 
-typedef enum { S_OK, S_EXPIRE_ONCE, S_EXPIRE_ALWAYS, S_MISSING_ONCE, S_TIMEOUT_CALL, S_TIMEOUT_INIT, S_CONNECT_INIT, S_401, S_HTML, S_NOSID, S_ERR_INIT, S_503 } smode_t;
+typedef enum { S_OK, S_EXPIRE_ONCE, S_EXPIRE_ALWAYS, S_MISSING_ONCE, S_TIMEOUT_CALL, S_TIMEOUT_INIT, S_CONNECT_INIT, S_401, S_HTML, S_NOSID, S_ERR_INIT, S_503, S_FOREIGN_ID, S_STALE_ID_ONCE, S_NOID, S_32001_PLAIN, S_32600_PLAIN } smode_t;
 static smode_t sm;
 static int tools_run;     /* calls that reached the tool */
 static int notify_seen;
@@ -33,6 +33,11 @@ static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_ht
     return fake_body("{\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{}}}", 200, buf, cap, out);
   }
   switch (sm) {
+    case S_FOREIGN_ID: tools_run++; fake_force_id = 777; return fake_body(OKR, 200, buf, cap, out);
+    case S_STALE_ID_ONCE: tools_run++; fake_force_id = fake_cur_id - 1; return fake_body(OKR, 200, buf, cap, out);
+    case S_NOID: tools_run++; return fake_body("{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[],\"isError\":false}}", 200, buf, cap, out);
+    case S_32001_PLAIN: tools_run++; return fake_body("{\"id\":9,\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32001,\"message\":\"Request timed out\"}}", 200, buf, cap, out);
+    case S_32600_PLAIN: tools_run++; return fake_body("{\"id\":9,\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}", 200, buf, cap, out);
     case S_EXPIRE_ONCE: case S_EXPIRE_ALWAYS:
       return fake_body("{\"id\":9,\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32001,\"message\":\"Session not found\"}}", 200, buf, cap, out);
     case S_MISSING_ONCE:
@@ -62,6 +67,7 @@ static void setup(void) {
   F.secret = SECRET;
   sm = S_OK;
   F.sid_script = SID;
+  fake_force_id = 0;
   tools_run = notify_seen = 0;
   dz_client_cfg_t cfg = {.base_url = "http://dz.example:8080/", .token = SECRET, .transport = &F.base, .model = &M, .buf = rbuf,
                          .buf_cap = sizeof rbuf};
@@ -168,6 +174,31 @@ static void test_failures(void) {
   /* initialize answered with a JSON-RPC error */
   setup(); sm = S_ERR_INIT;
   CHECK(!dz_client_mcp_call(&C, 1000, BODY, &r) && r.stage == DZ_MCP_STAGE_INIT && r.reply.has_error && r.reply.code == -32603);
+  /* L2: a reply whose id is not the request's (stale, foreign or missing) is no answer: BAD_RESPONSE material, never retried */
+  smode_t bad[] = {S_FOREIGN_ID, S_STALE_ID_ONCE, S_NOID};
+  for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+    setup();
+    CHECK(dz_client_mcp_call(&C, 1000, BODY, &r));
+    sm = bad[i];
+    int p1 = F.posts, run1 = tools_run;
+    CHECK(!dz_client_mcp_call(&C, 2000, BODY, &r) && r.net == DZ_NET_OK && r.http == 200 && r.parse != DZ_OK && !r.reply.has_result);
+    CHECK(r.stage == DZ_MCP_STAGE_CALL && F.posts - p1 == 1 && tools_run == run1 + 1 && !r.reinit); /* one request: no retry */
+    fake_force_id = 0;
+  }
+  /* an id mismatch also fails the initialize reply */
+  setup();
+  fake_force_id = 777;
+  CHECK(!dz_client_mcp_open(&C, 1000, false, &r) && r.stage == DZ_MCP_STAGE_INIT && C.mcp_sid[0] == 0 && F.posts == 1);
+  fake_force_id = 0;
+  /* -32001 / -32600 without session wording are ordinary errors: reported, NOT retried (the tool may have run) */
+  smode_t plain[] = {S_32001_PLAIN, S_32600_PLAIN};
+  for (size_t i = 0; i < 2; i++) {
+    setup();
+    CHECK(dz_client_mcp_call(&C, 1000, BODY, &r));
+    sm = plain[i];
+    int p1 = F.posts;
+    CHECK(dz_client_mcp_call(&C, 2000, BODY, &r) && r.reply.has_error && !r.reinit && !r.session_lost && F.posts - p1 == 1 && F.init_calls == 1);
+  }
   /* a body that does not fit is refused without a request */
   setup();
   char big[400];

@@ -215,8 +215,19 @@ static void res_clear(dz_mcp_result_t *res) {
   res->parse = DZ_ERR_SYNTAX;
 }
 
+/* 'Missing session' / 'Session not found': both codes (-32600 and -32001) must say so. A -32001 without session text is some other
+ * server error that may have happened after the tool ran, so it is NOT retried. */
 static bool is_session_error(const dz_mcp_reply_t *r) {
-  return r->has_error && (r->code == -32001 || (r->code == -32600 && strstr(r->message, "ession")));
+  return r->has_error && (r->code == -32001 || r->code == -32600) && strstr(r->message, "ession");
+}
+
+/* The JSON-RPC id of a request body we built ("jsonrpc":"2.0","id":N,...); false for a notification (no id). */
+static bool request_id(const char *body, unsigned long long *id) {
+  const char *p = strstr(body, "\"id\":");
+  if (!p) return false;
+  char *e;
+  *id = strtoull(p + 5, &e, 10);
+  return e != p + 5;
 }
 
 /* Runs one request and fills res from it. */
@@ -232,7 +243,15 @@ static bool mcp_exchange(dz_client_t *c, const char *body, bool with_sid, bool c
     return false;
   }
   res->parse = dz_mcp_parse_reply(c->cfg.buf, hr.len, &res->reply);
-  return res->parse == DZ_OK;
+  if (res->parse != DZ_OK) return false;
+  /* a stale or foreign reply (proxy, shared connection) must not be taken for the answer to THIS request */
+  unsigned long long want;
+  if (request_id(body, &want) && (!res->reply.has_id || (unsigned long long)res->reply.id != want)) {
+    res->parse = DZ_ERR_SYNTAX;
+    memset(&res->reply, 0, sizeof res->reply);
+    return false;
+  }
+  return true;
 }
 
 bool dz_client_mcp_open(dz_client_t *c, uint32_t now_ms, bool force, dz_mcp_result_t *res) {

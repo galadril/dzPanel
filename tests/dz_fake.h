@@ -31,6 +31,10 @@ struct fake {
   int proto_hdr;             /* a POST carried an MCP-Protocol-Version header (must stay 0) */
 };
 
+/* JSON-RPC echo: a scripted reply that starts with {"id":N, is rewritten to carry the id of the request being answered
+ * (fake_force_id != 0 overrides it: a stale or foreign reply). The client requires the ids to match. */
+static unsigned fake_cur_id, fake_force_id;
+
 static inline dz_net_err_t fake_get(dz_transport_t *t, const char *url, const char *const *headers, uint32_t timeout_ms,
                                     char *buf, size_t cap, dz_http_result_t *out) {
   fake_t *f = (fake_t *)t;
@@ -52,6 +56,7 @@ static inline dz_net_err_t fake_post(dz_transport_t *t, const char *url, const c
   snprintf(f->urls[f->calls % 32], sizeof f->urls[0], "%s", url);
   f->calls++;
   snprintf(f->body, sizeof f->body, "%.*s", (int)p->len, p->body);
+  { const char *ip = strstr(f->body, "\"id\":"); fake_cur_id = ip ? (unsigned)strtoul(ip + 5, NULL, 10) : 0; }
   snprintf(f->bodies[f->posts % 16], sizeof f->bodies[0], "%s", f->body);
   f->posts++;
   f->had_auth = 0;
@@ -90,6 +95,12 @@ static inline const char *fake_last_url(const fake_t *f) { return f->urls[(f->ca
 
 /* copy a body into buf with the too-large rule */
 static inline dz_net_err_t fake_body(const char *body, int status, char *buf, size_t cap, dz_http_result_t *out) {
+  char idb[1100];
+  if (!strncmp(body, "{\"id\":", 6) && strlen(body) < sizeof idb - 16) {
+    const char *rest = body + 6 + strspn(body + 6, "0123456789");
+    snprintf(idb, sizeof idb, "{\"id\":%u%s", fake_force_id ? fake_force_id : fake_cur_id, rest);
+    body = idb;
+  }
   size_t n = strlen(body);
   out->status = status;
   if (n >= cap) { n = cap - 1; memcpy(buf, body, n); buf[n] = 0; out->len = n; return DZ_NET_TOO_LARGE; }

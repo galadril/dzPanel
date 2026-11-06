@@ -42,7 +42,7 @@ static sim_t S[] = {
 
 typedef enum { X_OK, X_IGNORE, X_401, X_403, X_500, X_ERR, X_HTML, X_CONNECT, X_TIMEOUT_APPLIED, X_TIMEOUT_IGNORED, X_VERIFY_FAIL,
                X_ISERROR, X_NOACTION, X_NOMCP503, X_NOMCP404, X_RPCERR, X_EXPIRE_ONCE, X_EXPIRED_NEXT, X_EXPIRE_ALWAYS, X_INIT_TIMEOUT,
-               X_PREFLIGHT_404, X_TLS, X_TLS_APPLIED, X_TOOLARGE, X_TOOLARGE_APPLIED, X_INIT_CONNECT, X_INIT_TLS, X_INIT_TOOLARGE } xmode_t;
+               X_PREFLIGHT_404, X_TLS, X_TLS_APPLIED, X_TOOLARGE, X_TOOLARGE_APPLIED, X_INIT_CONNECT, X_INIT_TLS, X_INIT_TOOLARGE, X_FOREIGN_ID } xmode_t;
 static xmode_t xm;
 static int ticks; /* each effective command bumps the fake LastUpdate */
 static int cmd_calls, read_calls;
@@ -169,6 +169,7 @@ static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_ht
       case X_ISERROR: return fake_body(MCP_OK("Device not found", "true"), 200, buf, cap, out);
       case X_HTML: return fake_body("<html>proxy</html>", 200, buf, cap, out);
       case X_CONNECT: return DZ_NET_CONNECT;
+      case X_FOREIGN_ID: fake_force_id = 4242; { dz_net_err_t e = fake_body(MCP_OK("Switch set successfully.", "false"), 200, buf, cap, out); fake_force_id = 0; return e; }
       case X_TLS: return DZ_NET_TLS;
       case X_TLS_APPLIED: apply_call(f->body); return DZ_NET_TLS;
       case X_TOOLARGE: case X_TOOLARGE_APPLIED:
@@ -706,6 +707,7 @@ static void test_mcp_session_and_mapping(void) {
     {"-32601", X_RPCERR, -32601, DZ_FAIL_NO_MCP}, {"-32002", X_RPCERR, -32002, DZ_FAIL_FORBIDDEN},
     {"-32000", X_RPCERR, -32000, DZ_FAIL_SERVER}, {"-32003", X_RPCERR, -32003, DZ_FAIL_SERVER},
     {"-32004", X_RPCERR, -32004, DZ_FAIL_SERVER}, {"-32603", X_RPCERR, -32603, DZ_FAIL_SERVER},
+    {"foreign reply id", X_FOREIGN_ID, 0, DZ_FAIL_BAD_RESPONSE},
     {"-32602", X_RPCERR, -32602, DZ_FAIL_REJECTED}, {"-32700", X_RPCERR, -32700, DZ_FAIL_BAD_RESPONSE},
     {"-32600", X_RPCERR, -32600, DZ_FAIL_BAD_RESPONSE}, {"-32001", X_RPCERR, -32001, DZ_FAIL_BAD_RESPONSE},
   };
