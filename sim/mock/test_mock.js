@@ -153,7 +153,7 @@ const check = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); 
   check('mcp: MCP-Protocol-Version header -> 400', (await mcpRaw(U, sid, { jsonrpc: '2.0', id: 3, method: 'tools/list' }, { 'MCP-Protocol-Version': '2024-11-05' })).status === 400);
   const l1 = await rpc(U, sid, 'tools/list', {});
   const l2 = await rpc(U, sid, 'tools/list', { cursor: l1.body.result.nextCursor });
-  check('mcp: tools/list has 2 pages', l1.body.result.nextCursor === 'p2' && l1.body.result.tools.length === 3 && l2.body.result.nextCursor === undefined && l2.body.result.tools.length === 7);
+  check('mcp: tools/list has 2 pages', l1.body.result.nextCursor === 'p2' && l1.body.result.tools.length === 3 && l2.body.result.nextCursor === undefined && l2.body.result.tools.length === 9);
   check('mcp: unknown method -32601', (await rpc(U, sid, 'resources/list', {})).body.error.code === -32601);
   check('mcp: unknown tool -32601', (await call(sid, 'nope', {})).body.error.code === -32601);
   const vs = (await init(V)).sid;
@@ -188,6 +188,39 @@ const check = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); 
   check('mcp: setpoint out of range -> Error text', /^Error /.test(txt(await call(sid, 'set_setpoint_value', { idx: 10, setpoint: 99 }))));
   await ctl('set?units=imperial&climate=1');
   check('mcp: setpoint takes no Fahrenheit conversion (68 on a 41..86 device is stored as raw 68 C)', /successfully|^Error /.test(txt(await call(sid, 'set_setpoint_value', { idx: 118, setpoint: 20 }))));
+  // colour lamps
+  await ctl('set?colour=1');
+  const cdev = async (i) => (await get('param=getdevices&rid=' + i, V)).body.result[0];
+  const col = async (i) => JSON.parse((await cdev(i)).Color);
+  check('colour: set present, Color is a JSON string with m t r g b cw ww', (await cdev(200)).SubType === 'RGBWW' && (await col(200)).m === 3 && (await col(200)).g === 128
+    && typeof (await cdev(200)).Color === 'string' && (await col(203)).t === 157 && (await cdev(204)).Status === 'Off' && (await col(202)).m === 1);
+  check('colour: hue 120 -> green, brightness is the Level', /successfully/.test(txt(await call(sid, 'set_color_brightness', { idx: 200, hue: 120, brightness: 40 })))
+    && JSON.stringify(await col(200)) === JSON.stringify({ b: 0, cw: 0, g: 255, m: 3, r: 0, t: 0, ww: 0 }) && (await cdev(200)).Level === 40 && (await cdev(200)).Status === 'Set Level: 40 %');
+  check('colour: hue 0 and 360 are red, 60 yellow, 240 blue', (await call(sid, 'set_color_brightness', { idx: 200, hue: 360, brightness: 40 })) && (await col(200)).r === 255 && (await col(200)).g === 0
+    && (await call(sid, 'set_color_brightness', { idx: 200, hue: 60, brightness: 40 })) && (await col(200)).g === 255 && (await col(200)).r === 255
+    && (await call(sid, 'set_color_brightness', { idx: 200, hue: 240, brightness: 40 })) && (await col(200)).b === 255 && (await col(200)).r === 0);
+  check('colour: hue is clamped to 0..360', (await call(sid, 'set_color_brightness', { idx: 200, hue: 999, brightness: 40 })) && (await col(200)).r === 255 && (await col(200)).b === 0);
+  check('colour: iswhite -> mode 1 and rgb 0', (await call(sid, 'set_color_brightness', { idx: 202, hue: 0, brightness: 90, iswhite: true })) && (await col(202)).m === 1 && (await cdev(202)).Level === 90);
+  check('colour: brightness 0 -> Off, Level 0', (await call(sid, 'set_color_brightness', { idx: 201, hue: 10, brightness: 0 })) && (await cdev(201)).Status === 'Off' && (await cdev(201)).Level === 0);
+  check('colour: hue on a WW lamp -> Error text, nothing changed', /^Error/.test(txt(await call(sid, 'set_color_brightness', { idx: 203, hue: 100, brightness: 50 }))) && (await col(203)).m === 2 && (await cdev(203)).Level === 80);
+  check('colour: hue on a plain dimmer -> Error text', /^Error/.test(txt(await call(sid, 'set_color_brightness', { idx: 2, hue: 100, brightness: 50 }))));
+  check('colour: bad arguments -> -32602', (await call(sid, 'set_color_brightness', { idx: 200, hue: 'x', brightness: 5 })).body.error.code === -32602);
+  const kt = async (k) => { await call(sid, 'set_color_temperature', { idx: 203, kelvin: k }); return col(203); };
+  check('colour: kelvin 2700 / 4600 / 6500 -> t 255 / 128 / 0, mode 2', (await kt(2700)).t === 255 && (await kt(4600)).t === 128 && (await kt(6500)).t === 0 && (await col(203)).m === 2);
+  check('colour: kelvin clamped, level and status kept', (await kt(1000)).t === 255 && (await kt(9000)).t === 0 && (await cdev(203)).Level === 80 && (await cdev(203)).Status === 'Set Level: 80 %');
+  check('colour: temperature on an Off lamp leaves it Off', (await call(sid, 'set_color_temperature', { idx: 204, kelvin: 3000 })) && (await cdev(204)).Status === 'Off' && (await col(204)).t === 235);
+  check('colour: viewer token -> -32002', (await call(sid, 'set_color_temperature', { idx: 203, kelvin: 3000 }, V)).body.error.code === -32002);
+  await ctl('set?hue_drift=6');
+  await call(sid, 'set_color_brightness', { idx: 200, hue: 120, brightness: 40 });
+  check('colour: hue_drift moves the read-back hue', (await col(200)).b > 0 && (await col(200)).g === 255 && (await col(200)).r === 0);
+  await ctl('set?hue_drift=0&stuck=1');
+  await call(sid, 'set_color_brightness', { idx: 200, hue: 240, brightness: 10 });
+  await call(sid, 'set_color_temperature', { idx: 203, kelvin: 2700 });
+  check('colour: stuck answers success and changes nothing', (await cdev(200)).Level !== 10 && (await col(203)).t === 0);
+  await ctl('set?stuck=0');
+  await fetch(`http://127.0.0.1:${PORT}/__mock/touch?idx=200&protected=1`);
+  check('colour: protected lamp still accepts the MCP call (the firmware must refuse)', /successfully/.test(txt(await call(sid, 'set_color_brightness', { idx: 200, hue: 0, brightness: 20 })))
+    && (await cdev(200)).Protected === true);
   await ctl('reset');
   const sid2 = (await init(U)).sid;
   await ctl('set?mcp=expire');

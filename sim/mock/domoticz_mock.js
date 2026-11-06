@@ -27,6 +27,13 @@
 //        Modes (set with mode=): nomcp -> 503, nomcp404 -> 404 on /mcp only; the other modes hit /mcp too.
 //   GET /__mock/set?push=skip|force         push buttons (switch types 9, 10): skip (default) answers 'already On. No action taken.' when the
 //        stored state equals the request (the state stays On); force fires on every call (which MCP call forces a push is unknown)
+//   GET /__mock/set?colour=1                add the synthetic colour lamps (also --colour): idx 200 RGBWW 'Spots' (orange, level 70, On), 201 RGB
+//        'Led Strip' (blue), 202 RGBW 'Accent' (white), 203 WW 'Tunable' (m 2, t 157, On), 204 WW 'Reading Lamp' (Off, level 40), 205 RGBWW
+//        'Ceiling' (Off, level 40, green). MCP set_color_brightness {idx, hue, brightness, iswhite?} and set_color_temperature {idx, kelvin}
+//        follow what the Domoticz source does (read, not seen on a real lamp): hsb2rgb(hue,1,1), mode RGB (White with iswhite), the brightness
+//        becomes the Level (0 = Off), kelvin 2700..6500 -> t = round(100*(6500-K)/3800*2.55), mode 2, Level and Status untouched. A hue on a
+//        WW-only lamp answers 'Error ...'. Test switches: hue_drift=DEG (RGB read back that many degrees off), stuck=1 (colour tools answer
+//        success and change nothing), protected via /__mock/touch.
 //   GET /__mock/set?mcp=expire              forget every MCP session (next call: 'Session not found')
 //   GET /__mock/stats                       {requests, lastAuth: "present|absent", urls:[...]}  (never echoes a token)
 'use strict';
@@ -133,6 +140,49 @@ const makeClimate = () => [
   base(124, 'Zone Controller', 'Heating', 'Zone', { Temp: 19.5, SetPoint: 20.0, Status: 'Auto', Data: '19.5 C, (20.0 C), Auto', HaveSetPoint: true, ...pl(0) }),
   base(125, 'Mode Device', 'General', 'Thermostat Mode', { SwitchTypeVal: 0, Mode: 1, Modes: '0;Off;1;Heat;2;Cool;', Data: 'Heat', TypeImg: 'mode', ...pl(0) }),
 ];
+// Colour lamps (see the header). Color is the JSON STRING Domoticz sends, keys sorted.
+const colorStr = (m, t, r, g, b) => JSON.stringify({ b, cw: 0, g, m, r, t, ww: 0 });
+const lamp = (idx, Name, SubType, color, level, on, extra = {}) => sw(idx, Name, 7, 'Dimmer',
+  { Color: color, DimmerType: 'abs', Level: level, LevelInt: level, Status: on ? (level >= 100 ? 'On' : `Set Level: ${level} %`) : 'Off', Data: on ? 'On' : 'Off', ...extra },
+  'Color Switch', SubType);
+const makeColour = () => [
+  lamp(200, 'Spots', 'RGBWW', colorStr(3, 0, 255, 128, 0), 70, true),
+  lamp(201, 'Led Strip', 'RGB', colorStr(3, 0, 0, 0, 255), 60, true),
+  lamp(202, 'Accent', 'RGBW', colorStr(1, 0, 0, 0, 0), 50, true),
+  lamp(203, 'Tunable', 'WW', colorStr(2, 157, 0, 0, 0), 80, true),
+  lamp(204, 'Reading Lamp', 'WW', colorStr(2, 157, 0, 0, 0), 40, false),
+  lamp(205, 'Ceiling', 'RGBWW', colorStr(3, 0, 0, 255, 0), 40, false),
+];
+let hueDrift = 0, stuck = false;
+// Domoticz hsb2rgb with saturation 1 and value 1
+function hsb2rgb(hue) {
+  const h = (((hue % 360) + 360) % 360) / 60, i = Math.floor(h), f = h - i;
+  const [r, g, b] = [[1, f, 0], [1 - f, 1, 0], [0, 1, f], [0, 1 - f, 1], [f, 0, 1], [1, 0, 1 - f]][i % 6];
+  return [r, g, b].map((x) => Math.round(x * 255));
+}
+function setColour(d, tool, a) {
+  if (d.Type !== 'Color Switch') return `Error: "${d.Name}" is not a colour light.`;
+  if (stuck) return null;
+  const col = JSON.parse(d.Color || '{}');
+  if (tool === 'set_color_temperature') {
+    if (!isNum(a.kelvin)) return false;
+    const K = Math.max(2700, Math.min(6500, a.kelvin)), L = 100 * (6500 - K) / 3800;
+    Object.assign(col, { m: 2, t: Math.round(L * 255 / 100), r: 0, g: 0, b: 0 });
+    d.Color = JSON.stringify(sorted(col)); touch(d);
+    return null;
+  }
+  if (!isNum(a.hue) || !isNum(a.brightness)) return false;
+  const white = a.iswhite === true;
+  if (!white && d.SubType === 'WW') return `Error: "${d.Name}" has no colour.`;
+  const hue = Math.max(0, Math.min(360, a.hue)), br = Math.max(0, Math.min(100, Math.round(a.brightness)));
+  if (white) Object.assign(col, { m: 1, t: 0, r: 0, g: 0, b: 0 });
+  else { const [r, g, b] = hsb2rgb(hue + hueDrift); Object.assign(col, { m: 3, t: 0, r, g, b }); }
+  d.Color = JSON.stringify(sorted(col));
+  d.Level = d.LevelInt = Math.round(br * d.MaxDimLevel / 100);
+  d.Status = br ? levelText(d) : 'Off'; d.Data = br ? 'On' : 'Off';
+  touch(d);
+  return null;
+}
 const F = (c) => Math.round((c * 9 / 5 + 32) * 10) / 10;
 const toImperial = (d) => {
   const o = { ...d };
@@ -155,7 +205,7 @@ const CONFIGS = {
   metric: { TempSign: 'C', TempScale: 1, WindSign: 'm/s', WindScale: 10, CurrencySign: '\u20ac' },
   imperial: { TempSign: 'F', TempScale: 1, WindSign: 'mph', WindScale: 22.369, CurrencySign: '$' },
 };
-let units = 'metric', withClimate = process.argv.includes('--climate');
+let units = 'metric', withClimate = process.argv.includes('--climate'), withColour = process.argv.includes('--colour');
 
 const makeScenes = () => [
   ['1', 'Movie', 'Scene'], ['2', 'Night', 'Scene'], ['3', 'Away', 'Group'], ['4', 'All Off', 'Group'],
@@ -164,9 +214,10 @@ const makeScenes = () => [
 
 let devices, scenes;
 const reset = () => {
-  units = 'metric'; withClimate = process.argv.includes('--climate');
+  units = 'metric'; withClimate = process.argv.includes('--climate'); withColour = process.argv.includes('--colour'); hueDrift = 0; stuck = false;
   devices = makeDevices(); scenes = makeScenes();
   if (withClimate) devices.push(...makeClimate());
+  if (withColour) devices.push(...makeColour());
   devices.forEach((d) => { d._t = epoch(d.LastUpdate); });
   scenes.forEach((s) => { s._t = epoch(s.LastUpdate); });
   const g = devices.find((d) => d.Type === 'Group'); delete g.SubType;
@@ -370,7 +421,8 @@ function handleJson(req, res, u) {
 
 
 // ---------------------------------------------------------------- MCP (POST /mcp)
-const TOOLS = ['set_switch_state', 'toggle_switch_state', 'set_dimmer_level', 'control_blinds', 'switch_scene', 'set_setpoint_value']
+const TOOLS = ['set_switch_state', 'toggle_switch_state', 'set_dimmer_level', 'control_blinds', 'switch_scene', 'set_setpoint_value',
+  'set_color_brightness', 'set_color_temperature']
   .map((name) => ({ name, description: name, inputSchema: { type: 'object' } }));
 const TOOLS_FILLER = Array.from({ length: 4 }, (_, i) => ({ name: 'get_filler_' + i, description: 'x', inputSchema: { type: 'object' } }));
 
@@ -417,6 +469,12 @@ function mcpTool(name, a, rights) {
     case 'control_blinds':
       if (!['Open', 'Close', 'Stop'].includes(a.command)) return rpcErr(-32602, 'Invalid params');
       cmd = a.command; word = a.command; break;
+    case 'set_color_brightness': case 'set_color_temperature': {
+      const e = setColour(d, name, a);
+      if (e === false) return rpcErr(-32602, 'Invalid params');
+      if (e) return textResult(e);
+      return textResult(`Color of "${d.Name}" set successfully.`);
+    }
     default: { // set_setpoint_value: the value goes in as-is (no Fahrenheit conversion), like the real tool
       if (!isNum(a.setpoint)) return rpcErr(-32602, 'Invalid params');
       if (d.SetPoint === undefined || !doSetpoint(d, a.setpoint)) return textResult(`Error setting setpoint of "${d.Name}".`);
@@ -480,6 +538,12 @@ http.createServer((req, res) => {
         withClimate = true;
         const c = makeClimate(); c.forEach((d) => { d._t = epoch(d.LastUpdate); }); devices.push(...c);
       }
+      if (q.get('colour') === '1' && !withColour) {
+        withColour = true;
+        const c = makeColour(); c.forEach((d) => { d._t = epoch(d.LastUpdate); }); devices.push(...c);
+      }
+      if (q.has('hue_drift')) hueDrift = Number(q.get('hue_drift')) || 0;
+      if (q.has('stuck')) stuck = q.get('stuck') === '1';
       if (q.get('mcp') === 'expire') sessions.clear();
       cfg.count = q.has('count') ? Number(q.get('count')) : 0;
     } else if (u.pathname === '/__mock/reset') reset();
