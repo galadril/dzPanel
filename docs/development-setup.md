@@ -54,6 +54,8 @@ The board is chosen at build time with `RU_BOARD` (`tools/build_fw.sh <board>` p
 
 On a normal machine with a writable ESP-IDF install, none of the shadow directory is needed.
 
+**Flashable images:** `tools/make_image.sh <board>` builds with `tools/build_fw.sh`, merges the build's `flash_args` into one image at offset 0 (`esptool merge_bin --flash_mode dio --flash_size 16MB --flash_freq 80m`) and writes **one** loose file, `dist/dzpanel-<board>-latest.bin` (overwritten each time), plus `dist/dzpanel-<board>-latest.bin.sha256` and a refreshed `dist/SHA256SUMS`. It then deletes older loose builds of that board (`dist/dzpanel-<board>-*-merged.bin`, `dist/roundos-<board>-*-merged.bin`) and nothing else: names containing `factory` and the other recovery or reference images are never touched. `--dry-run` lists what the cleanup would delete (nothing is built or written), `--clean` runs only the cleanup, `--skip-build` merges the existing build. `tools/make_image.sh --probe guition-4848s040` does the same for the bring-up probe (`dist/guition-4848s040-probe-latest.bin`). `dist/` is git-ignored. Boards: `amoled-175`, `guition-4848s040`.
+
 Practical notes:
 
 - Managed components (amoled-175: Waveshare BSP, LVGL 9.4.0, CO5300 display, CST9217 touch, TCA9554 expander; guition-4848s040: esp_lvgl_adapter, esp_lcd_st7701, esp_lcd_panel_io_additions, esp_lcd_touch_gt911; exact versions in the per-board lock files) download from the Espressif registry on the first `set-target`. On a slow filesystem (a Windows mount under WSL) this took over 20 minutes. Run it in the background and let it finish.
@@ -80,6 +82,12 @@ I (12345) heap: int free <N> big <N> min <N> | psram free <N> big <N> min <N> | 
 - `W heap: low int free N big N min N after mark <tag>`: internal free fell below 24 KB (sampled every 100 ms), at most once per 60 s; the tag is the most recent mark, so it names the request (or the gap after it) in which the dip happened.
 - Task stack sizes are Kconfig values (`RU_TASK_STACK_*` in components/ru_core/Kconfig, applied by `ru_task_create` by task name); the Guition defaults are smaller than the 10240 default, see the measurements in that file.
 - New `sdkconfig.defaults` values apply only on a FRESH configure: delete `firmware/build-<board>/sdkconfig` (or the whole build dir) to pick up changed defaults. The build-dir stamp already prevents board mix-ups.
+
+## History and implementation notes
+
+- Commit `ac70762` (per-task stacks, one LVGL draw unit, smaller Wi-Fi pools) also contains the page-model restructure by accident (another session's uncommitted edits were swept in): `components/ru_apps/CMakeLists.txt`, `ru_apps.h`, `ru_dzapp.h`/`.c`, `ru_apps_table.c` and `sim/CMakeLists.txt`. History is not rewritten; read that commit as two changes. The old app id `org.dzpanel.devices` is gone, and nothing persists a section number: the only NVS namespace is the secrets/config one, the current section and page live in RAM and start at Home.
+- Screen refresh (`ru_dzapp.c`): the UI tick compares a cheap control signature (model generation, units, connection, view, section, page). On the tile grids and Utility rows a data change updates the existing tiles IN PLACE (setters that get identical input invalidate nothing); only a change of structure (which entries are on the page, names, kinds, page count, available sections) rebuilds the screen, and such a background rebuild happens at most once per 2 s (`REBUILD_MIN_MS`). What the user or the connection changes rebuilds at once, and so do the detail, energy and sub screens (no limit there; they hash the whole device entry). A pure reorder on the server bumps the model generation, so the grids follow it.
+- Guition panel: the RGB panel is created from a short-lived task pinned to core 1 (`lcdinit`, 6 KB stack, deleted afterwards) so that the VSYNC and GDMA interrupts are allocated on the core without Wi-Fi; it hands the result back by task notification. The panel is fed through a bounce buffer of 20 lines (10 if internal RAM is short), two of them in internal DMA RAM; the framebuffer is in PSRAM. The boot log prints the task's stack high-water mark.
 
 ## 5. Flashing
 

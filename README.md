@@ -30,6 +30,7 @@ Firmware (needs ESP-IDF 5.5, see the setup doc):
 ```bash
 tools/build_fw.sh amoled-175           # Waveshare 1.75" AMOLED, build dir firmware/build-amoled-175
 tools/build_fw.sh guition-4848s040     # Guition 4" 480x480 square, build dir firmware/build-guition-4848s040
+tools/make_image.sh guition-4848s040   # build + merge into dist/dzpanel-guition-4848s040-latest.bin (+ .sha256, SHA256SUMS), old loose builds removed
 ```
 
 Full instructions, including the ESP-IDF setup: [`docs/development-setup.md`](docs/development-setup.md).
