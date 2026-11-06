@@ -418,8 +418,8 @@ static void test_mcp_encode(void) {
   const char *head = "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":";
   char want[320];
 #define EXP(args_tool, args) (snprintf(want, sizeof want, "%s\"%s\",\"arguments\":%s}}", head, args_tool, args), want)
-  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "906", &d, -1, 0) > 0 && !strcmp(b, EXP("set_switch_state", "{\"idx\":906,\"state\":\"On\"}")));
-  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_OFF, "906", &d, -1, 0) > 0 && !strcmp(b, EXP("set_switch_state", "{\"idx\":906,\"state\":\"Off\"}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "12", &d, -1, 0) > 0 && !strcmp(b, EXP("set_switch_state", "{\"idx\":12,\"state\":\"On\"}")));
+  CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_OFF, "12", &d, -1, 0) > 0 && !strcmp(b, EXP("set_switch_state", "{\"idx\":12,\"state\":\"Off\"}")));
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_TOGGLE, "1", &d, -1, 0) > 0 && !strcmp(b, EXP("toggle_switch_state", "{\"idx\":1}")));
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SET_LEVEL, "2", &d, 30, 0) > 0 && !strcmp(b, EXP("set_dimmer_level", "{\"idx\":2,\"level\":30}")));
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SELECTOR, "4", &d, 20, 0) > 0 && !strcmp(b, EXP("set_dimmer_level", "{\"idx\":4,\"level\":20}")));

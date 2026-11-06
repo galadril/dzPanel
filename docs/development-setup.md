@@ -95,5 +95,6 @@ I (12345) heap: int free <N> big <N> min <N> | psram free <N> big <N> min <N> | 
 
 ## 6. Secrets
 
-- Host tools read the Domoticz token from `DOMOTICZ_ACCESSTOKEN`. Never write it to a file, a URL or a log.
+- Host tools read the Domoticz token from `DOMOTICZ_ACCESSTOKEN`, or from the variable named by `--token-env NAME`. Never write it to a file, a URL, argv or a log.
+- `tests/dz_live_check` has no default server: `--url URL` is required. Read-only checks: `--tabs`, `--lights`. Anything that writes (`--mcp`, `--push-test`) needs `--idx N` (the one test device) and `--allow-write`, and prints only fixed words, HTTP statuses and numbers. Never write the URL, idx or device names into the repo.
 - Never upload raw Domoticz responses: they contain home coordinates and internal URLs. Fixtures in `tests/fixtures/real_*.json` are scrubbed; scrub new ones the same way.

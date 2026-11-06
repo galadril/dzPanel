@@ -1,11 +1,18 @@
 /* Dev tool, not a unit test. Reads a live Domoticz through the curl transport and compares it with
  * the parser; optionally proves the MCP control path on one test dimmer (--mcp).
  *
- *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check https://host [--mcp | --tabs | --lights]
+ *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check --url https://host [--token-env NAME] [--tabs | --lights]
+ *   DOMOTICZ_ACCESSTOKEN=... ./dz_live_check --url https://host --idx N --allow-write --mcp
+ *
+ * --url URL        required, there is no default server.
+ * --token-env NAME the environment variable that holds the access token (default DOMOTICZ_ACCESSTOKEN). The token is never taken
+ *                  from argv or a file and never printed.
+ * --idx N          the one device the write tests may touch (digits only, at most 9).
+ * --allow-write    without it no write is ever sent; --mcp and --push-test refuse to run.
  *
  * --mcp: the control path through the Domoticz MCP endpoint, via the firmware's own code (dz_cmd: pre-flight read, initialize,
- * tools/call, verify read). Touches ONLY device idx 907 (a test dimmer): On, Off, level 30, then restores the level and state
- * it found. Prints statuses and fixed words only. Use it against a server and token you may switch things on.
+ * tools/call, verify read). Touches ONLY the device given by --idx (a test dimmer): On, Off, level 30, then restores the state
+ * (and the level, when it was known). Prints statuses and fixed words only (no device text or names).
  *
  * --tabs: compares the server's filter=light|temp|weather|utility membership with dz_tabs_of() and prints a diff
  * report (by Type / SubType and direction only; no idx, name or URL credentials).
@@ -13,8 +20,8 @@
  * --lights: aggregate counts of the filter=light set by Type / SubType / SwitchType / dimmer / protected / favourite,
  * with the firmware capability and whether dz_tabs_of puts it on the Lights page (no idx, no names).
  *
- * The token comes from the environment and is never printed. Only counts and capability names are
- * printed: no device names, idx values, coordinates or raw bodies. At least 5 s between requests. */
+ * Only counts and capability names are printed: no device names, idx values, coordinates or raw bodies.
+ * At least 5 s between requests. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -161,14 +168,14 @@ static int lights_report(void) {
   return tot == on ? 0 : 1;
 }
 
-/* ---- --mcp: On, Off, level 30 and a restore on idx 907 only ---- */
-#define MCP_IDX "907"
+/* ---- --mcp: On, Off, level 30 and a restore on the --idx device only ---- */
+static char g_idx[12];
 static bool run_cmd(dz_cmd_kind_t kind, int level, const char *what) {
   ru_sleep_ms(1500);
   done = 0;
   outcome = -1;
   failkind = 0;
-  dz_cmd_req_t q = {.kind = kind, .idx = MCP_IDX, .level = level, .confirmed = true};
+  dz_cmd_req_t q = {.kind = kind, .idx = g_idx, .level = level, .confirmed = true};
   dz_cmd_err_t e = dz_cmd_submit(&K, &q, ru_now_ms(), NULL);
   if (e != DZ_CMD_ACCEPTED) { printf("  %-14s refused: %s\n", what, dz_cmd_err_name(e)); return false; }
   for (int i = 0; !done && i < 200; i++) {
@@ -181,45 +188,94 @@ static bool run_cmd(dz_cmd_kind_t kind, int level, const char *what) {
   return outcome == DZ_OUT_CONFIRMED;
 }
 
-static bool read907(dz_device_t *out) {
+static bool read_dev(dz_device_t *out) {
   dz_http_result_t r;
+  char q[48];
   ru_sleep_ms(1500);
-  if (!req("param=getdevices&rid=" MCP_IDX, &r)) return false;
+  snprintf(q, sizeof q, "param=getdevices&rid=%s", g_idx);
+  if (!req(q, &r)) return false;
   int changed = 0;
   if (dz_model_apply(&M, buf, r.len, DZ_COMMIT_PARTIAL, ru_now_ms(), NULL, &changed) != DZ_OK) return false;
-  return dz_model_get(&M, MCP_IDX, false, out, NULL, NULL, ru_now_ms());
+  return dz_model_get(&M, g_idx, false, out, NULL, NULL, ru_now_ms());
+}
+
+/* a fixed-word classification, never the device's own status text */
+static void state_word(const dz_device_t *d, char *o, size_t cap) {
+  if (!dz_status_is_on(d)) snprintf(o, cap, "off");
+  else if (d->has_level) snprintf(o, cap, "on level %d", d->level);
+  else snprintf(o, cap, "on");
 }
 
 static int mcp_check(void) {
   int rc = 0;
   dz_device_t d0, d1;
-  puts("4. MCP control on one test dimmer (idx 907 only)");
-  if (!read907(&d0)) { puts("  device 907 not readable: refusing"); return 1; }
+  char w0[24], w1[24];
+  puts("4. MCP control on one test dimmer (the --idx device only)");
+  if (!read_dev(&d0)) { puts("  device not readable: refusing"); return 1; }
   bool was_on = dz_status_is_on(&d0);
   int lvl0 = d0.has_level ? d0.level : -1;
-  printf("  start: status '%s' level %d cap %s controllable %d protected %d\n", d0.status, lvl0, dz_cap_name(d0.cap), d0.controllable, d0.is_protected);
+  state_word(&d0, w0, sizeof w0);
+  printf("  start: %s cap %s controllable %d protected %d\n", w0, dz_cap_name(d0.cap), d0.controllable, d0.is_protected);
   if (d0.cap != DZ_CAP_DIMMER || !d0.controllable || d0.is_protected) { puts("  not a controllable dimmer: refusing"); return 1; }
   dz_cmd_init(&K, &C, &M, true, on_res, NULL);
   K.verify_delay_ms = 2500;
   rc |= !run_cmd(DZ_CMD_ON, -1, "set On");
   rc |= !run_cmd(DZ_CMD_OFF, -1, "set Off");
   rc |= !run_cmd(DZ_CMD_SET_LEVEL, 30, "level 30");
-  /* restore: the level it had (when known), then Off if it was Off */
-  if (lvl0 > 0) rc |= !run_cmd(DZ_CMD_SET_LEVEL, lvl0, "restore level");
-  if (!was_on) rc |= !run_cmd(DZ_CMD_OFF, -1, "restore Off");
-  if (!read907(&d1)) { puts("  final read failed"); return 1; }
-  printf("  final: status '%s' level %d (started '%s' level %d)\n", d1.status, d1.has_level ? d1.level : -1, d0.status, lvl0);
-  if (dz_status_is_on(&d1) != was_on) { puts("  WARNING: state differs from the start"); rc = 1; }
+  /* restore: when it was on, the level it had (or plain On when the level was unknown); when it was off, Off */
+  bool level_lost = false;
+  if (was_on) {
+    if (lvl0 > 0) rc |= !run_cmd(DZ_CMD_SET_LEVEL, lvl0, "restore level");
+    else { rc |= !run_cmd(DZ_CMD_ON, -1, "restore On"); level_lost = true; }
+  } else {
+    rc |= !run_cmd(DZ_CMD_OFF, -1, "restore Off");
+  }
+  if (!read_dev(&d1)) { puts("  final read failed: the original state could NOT be verified"); return 1; }
+  state_word(&d1, w1, sizeof w1);
+  printf("  final: %s (started %s)\n", w1, w0);
+  if (dz_status_is_on(&d1) != was_on) { puts("  WARNING: the original on/off state could NOT be restored"); rc = 1; }
+  if (level_lost) puts("  NOTE: the original level was unknown, so the level could not be restored (on/off state only)");
+  else if (was_on && lvl0 > 0 && (!d1.has_level || d1.level != lvl0)) { puts("  WARNING: the original level could NOT be restored"); rc = 1; }
   return rc;
 }
 
+static bool idx_ok(const char *v) {
+  size_t n = strlen(v);
+  if (n == 0 || n > 9) return false;
+  for (size_t i = 0; i < n; i++) if (v[i] < '0' || v[i] > '9') return false;
+  return true;
+}
+
+static void usage(void) {
+  puts("usage: dz_live_check --url URL [--token-env NAME] [--idx N --allow-write --mcp] [--tabs | --lights]");
+}
+
 int main(int argc, char **argv) {
-  const char *url = argc > 1 ? argv[1] : "https://domoticz.hnogames.nl";
-  bool mcp = argc > 2 && !strcmp(argv[2], "--mcp");
-  bool tabs = argc > 2 && !strcmp(argv[2], "--tabs");
-  bool lights = argc > 2 && !strcmp(argv[2], "--lights");
+  const char *url = NULL, *tenv = "DOMOTICZ_ACCESSTOKEN";
+  bool mcp = false, tabs = false, lights = false, allow_write = false;
+  g_idx[0] = 0;
+  for (int i = 1; i < argc; i++) {
+    const char *a = argv[i];
+    if (!strcmp(a, "--url") && i + 1 < argc) url = argv[++i];
+    else if (!strcmp(a, "--token-env") && i + 1 < argc) tenv = argv[++i];
+    else if (!strcmp(a, "--idx") && i + 1 < argc) {
+      const char *v = argv[++i];
+      if (!idx_ok(v)) { puts("--idx must be 1 to 9 digits"); return 2; }
+      snprintf(g_idx, sizeof g_idx, "%s", v);
+    }
+    else if (!strcmp(a, "--allow-write")) allow_write = true;
+    else if (!strcmp(a, "--mcp")) mcp = true;
+    else if (!strcmp(a, "--tabs")) tabs = true;
+    else if (!strcmp(a, "--lights")) lights = true;
+    else { usage(); return 2; }
+  }
+  if (!url) { puts("--url is required"); usage(); return 2; }
+  if (mcp && !allow_write) { puts("--mcp writes to the device: refusing without --allow-write"); return 2; }
+  if (mcp && !g_idx[0]) { puts("--mcp needs --idx N"); return 2; }
   char token[DZ_TOKEN_MAX];
-  if (!dz_client_token_from_env(token, sizeof token)) { puts("DOMOTICZ_ACCESSTOKEN not set"); return 2; }
+  const char *tv = getenv(tenv);
+  if (!tv || !*tv || strlen(tv) >= sizeof token) { puts("token environment variable not set"); return 2; }
+  memcpy(token, tv, strlen(tv) + 1);
   dz_transport_t *tr = dz_transport_curl_create();
   dz_model_cfg_t mc = {.ttl_ms = 600000, .old_update_s = UINT32_MAX};
   dz_model_init(&M, ent, CAP, stg, CAP, &mc);

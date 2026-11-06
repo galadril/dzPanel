@@ -60,14 +60,14 @@ The ENERGY page of dzPanel is not a Domoticz tab: it is the energy devices (thos
 
 **dzPanel sends every command through the Domoticz MCP endpoint (`POST /mcp`). There is no legacy fallback for commands.** Reads (polling `getdevices`, `getscenes`, `getconfig`, `getversion`, the read-after-write verify) stay on `json.htm`, because MCP results are text only.
 
-**Why not `json.htm`:** with a User-rights *access token* (`at:N`), `GET /json.htm?type=command&param=switchlight...` returns **HTTP 403**. `CWebServer::IsIdxForUser` looks the user up in `m_users`, which never contains access-token users (Admin tokens skip the check; `switchscene` has no such check). MCP works with the same token: verified live on 2026.4 (HTTP 200, `isError:false`, state changed, confirmed by re-reading) for `set_switch_state` On and Off and `set_dimmer_level` on a Philips Hue dimmer.
+**Why not `json.htm`:** with a User-rights *access token* (`at:N`), `GET /json.htm?type=command&param=switchlight...` returns **HTTP 403**. `CWebServer::IsIdxForUser` looks the user up in `m_users`, which never contains access-token users (Admin tokens skip the check; `switchscene` has no such check). MCP works with the same token: verified live on 2026.4 (HTTP 200, `isError:false`, state changed, confirmed by re-reading) for `set_switch_state` On and Off and `set_dimmer_level` on a dimmer on a test server.
 
 Handshake and calls (JSON-RPC 2.0 over Streamable HTTP; replies are plain `application/json`, not SSE):
 
 1. `initialize`: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"dzPanel","version":"1"}}}` returns 200 and a response header `Mcp-Session-Id: <32 hex>`.
 2. `notifications/initialized` (no id) returns 202 with an **HTML** body (not JSON, never parsed). The server ignores it, so a failure is not fatal.
 3. Every later call sends `Mcp-Session-Id`. Without it: `Missing session`.
-4. `tools/call`: `{"jsonrpc":"2.0","id":N,"method":"tools/call","params":{"name":"set_switch_state","arguments":{"idx":906,"state":"Off"}}}` returns `{"id":N,"jsonrpc":"2.0","result":{"content":[{"text":"Switch \"Kantoor 1\" set to Off successfully.","type":"text"}],"isError":false}}`.
+4. `tools/call`: `{"jsonrpc":"2.0","id":N,"method":"tools/call","params":{"name":"set_switch_state","arguments":{"idx":12,"state":"Off"}}}` returns `{"id":N,"jsonrpc":"2.0","result":{"content":[{"text":"Switch \"Lamp 1\" set to Off successfully.","type":"text"}],"isError":false}}`.
 
 Headers: `Content-Type: application/json`, `Accept: application/json, text/event-stream`, `Authorization: Bearer <token>`. **Never send `MCP-Protocol-Version`**: an older value than the server's gives HTTP 400.
 
@@ -183,7 +183,7 @@ Read-only calls with a Bearer access token over HTTPS: `getversion`, `getdevices
 
 Still open: WebSocket path and auth, Viewer-token behaviour on `switchlight` (not tested; no control calls were made), and which token rights this instance's token has.
 
-### 7.1 Control test (2026-10-31, user-rights token, group "Kantoor lampen")
+### 7.1 Control test (2026-10-31, user-rights token, a test group of two lamps)
 
 `switchscene&idx=6&switchcmd=On` then `Off`: both returned `200 {"status":"OK","title":"SwitchScene"}` and the two member lamps followed within 3 s. Confirmed by eye and by re-reading `getdevices&rid=` and `getscenes`.
 

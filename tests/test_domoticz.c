@@ -581,9 +581,9 @@ static void test_tabs(void) {
 
 static void test_mcp_reply(void) {
   dz_mcp_reply_t r;
-  const char *ok = "{\"id\":7,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"Switch \\\"Kantoor 1\\\" set to Off successfully.\",\"type\":\"text\"}],\"isError\":false}}";
+  const char *ok = "{\"id\":7,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"Switch \\\"Lamp 1\\\" set to Off successfully.\",\"type\":\"text\"}],\"isError\":false}}";
   CHECK(dz_mcp_parse_reply(ok, strlen(ok), &r) == DZ_OK && r.has_id && r.id == 7 && r.has_result && !r.has_error && !r.is_error && r.has_text);
-  CHECK(!strcmp(r.text, "Switch \"Kantoor 1\" set to Off successfully."));
+  CHECK(!strcmp(r.text, "Switch \"Lamp 1\" set to Off successfully."));
   const char *ie = "{\"id\":8,\"jsonrpc\":\"2.0\",\"result\":{\"isError\":true,\"content\":[{\"type\":\"text\",\"text\":\"Device not found\"},{\"type\":\"text\",\"text\":\"second\"}]}}";
   CHECK(dz_mcp_parse_reply(ie, strlen(ie), &r) == DZ_OK && r.is_error && !strcmp(r.text, "Device not found"));
   const char *er = "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32600,\"message\":\"Missing session\",\"data\":{\"a\":[1,2]}}}";
