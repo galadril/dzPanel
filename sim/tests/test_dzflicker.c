@@ -27,6 +27,9 @@ static void test_setters_idempotent(void) {
   ru_value_tile_set_text(vt, "21.5C", RU_VAL_OK);
   ru_state_tile_set(st, RU_DOT_ON, "ON", RU_VAL_OK);
   ru_state_tile_set_value(st, "5");
+  lv_obj_t *st0 = ru_state_tile_create(scr, 120, 100, "NONE");
+  ru_state_tile_set(st0, RU_DOT_NONE, "", RU_VAL_OK);
+  ru_state_tile_set_value(st0, ""); /* an empty value: still no redraw on repeats */
   ru_ring_gauge_set_display(g, "42", 0.4f, RU_VAL_OK);
   ru_status_rim_set_state(rim, RU_RIM_OK);
   settle();
@@ -34,6 +37,8 @@ static void test_setters_idempotent(void) {
     ru_value_tile_set_text(vt, "21.5C", RU_VAL_OK);
     ru_state_tile_set(st, RU_DOT_ON, "ON", RU_VAL_OK);
     ru_state_tile_set_value(st, "5");
+    ru_state_tile_set(st0, RU_DOT_NONE, "", RU_VAL_OK);
+    ru_state_tile_set_value(st0, "");
     ru_ring_gauge_set_display(g, "42", 0.4f, RU_VAL_OK);
     ru_status_rim_set_state(rim, RU_RIM_OK);
   }
@@ -160,6 +165,16 @@ static void test_visible_change(void) {
   appfx_unload(&f);
 }
 
+/* a FULL read of the given lamps (all favourites), as the poller does */
+static void full3(appfx_t *f, int a, int b, int c) {
+  char doc[1200];
+  snprintf(doc, sizeof doc, "{\"status\":\"OK\",\"result\":[%s", lamp(a, "L", "Off", 1));
+  size_t n = strlen(doc);
+  n += (size_t)snprintf(doc + n, sizeof doc - n, ",%s", lamp(b, "L", "Off", 1));
+  n += (size_t)snprintf(doc + n, sizeof doc - n, ",%s]}", lamp(c, "L", "Off", 1));
+  CHECK(dz_model_apply(&f->model, doc, n, DZ_COMMIT_FULL_DEVICES, f->T, NULL, NULL) == DZ_OK);
+}
+
 /* (3) a structure change may rebuild, and shows the new structure */
 static void test_structure_change(void) {
   appfx_t f;
@@ -174,11 +189,16 @@ static void test_structure_change(void) {
   ru_dzapp_set_conn(a, DZ_CS_OK);
   tick(&f, a, 10);
   CHECK(!tree_has_text(lv_screen_active(), "OFFLINE"));
-  /* a new favourite appears: the page shows it */
-  push(&f, lamp(60, "Fresh", "Off", 1));
+  /* a full read with new favourites first: the SHOWN page gets new content */
+  full3(&f, 61, 62, 63);
   tick(&f, a, 2100);
-  size_t rows = ru_dzapp_home_rows(a);
-  CHECK(rows == 6); /* 9 favourites: 6 on the first page */
+  ru_dzapp_row_info_t ri;
+  CHECK(ru_dzapp_home_rows(a) == 3);
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "61"));
+  push(&f, lamp(64, "Fresh", "Off", 1)); /* a delta arrival joins the tail of the shown page */
+  tick(&f, a, 2100);
+  CHECK(ru_dzapp_home_rows(a) == 4);
+  CHECK(tree_has_text(lv_screen_active(), "FRESH"));
   ru_dzapp_destroy(a);
   appfx_unload(&f);
 }
@@ -220,16 +240,6 @@ static void test_rate_limit(void) {
   CHECK(lv_screen_active() != s1 && tree_has_text(lv_screen_active(), "RENAMED B"));
   ru_dzapp_destroy(a);
   appfx_unload(&f);
-}
-
-/* a FULL read of the given lamps (all favourites), as the poller does */
-static void full3(appfx_t *f, int a, int b, int c) {
-  char doc[1200];
-  snprintf(doc, sizeof doc, "{\"status\":\"OK\",\"result\":[%s", lamp(a, "L", "Off", 1));
-  size_t n = strlen(doc);
-  n += (size_t)snprintf(doc + n, sizeof doc - n, ",%s", lamp(b, "L", "Off", 1));
-  n += (size_t)snprintf(doc + n, sizeof doc - n, ",%s]}", lamp(c, "L", "Off", 1));
-  CHECK(dz_model_apply(&f->model, doc, n, DZ_COMMIT_FULL_DEVICES, f->T, NULL, NULL) == DZ_OK);
 }
 
 /* a reorder on the server (no data change) reaches the page */
@@ -308,6 +318,86 @@ static void test_dots_nongrid(void) {
   appfx_unload(&f);
 }
 
+/* time alone: a state going stale is shown after the 1.5 s stale epoch, in place */
+static void test_stale_flip(void) {
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_MANY, 3000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
+  CHECK(a != NULL);
+  ru_dzapp_set_display_info(a, "sim", false);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f.T);
+  settle();
+  lv_obj_t *scr = lv_screen_active();
+  tick(&f, a, 1000);
+  CHECK(sim_inv_pixels() == 0);
+  tick(&f, a, 1600); /* past the TTL: the favourites are stale */
+  tick(&f, a, 1600);
+  CHECK(lv_screen_active() == scr);
+  CHECK(sim_inv_pixels() > 0); /* the stale look was drawn without a rebuild */
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
+/* getconfig arrives: the temperature texts get their unit */
+static void test_units_change(void) {
+  appfx_t f;
+  ru_dzapp_t *a = start_many(&f);
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  tick(&f, a, 300);
+  CHECK(!tree_has_text(lv_screen_active(), "F"));
+  dz_units_t u;
+  memset(&u, 0, sizeof u);
+  u.have_temp = true;
+  strcpy(u.temp, "F");
+  dz_model_set_units(&f.model, &u);
+  tick(&f, a, 2100);
+  CHECK(tree_has_text(lv_screen_active(), "F"));
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
+/* a device added on another page changes the page count, not the shown page */
+static void test_pages_count(void) {
+  appfx_t f;
+  ru_dzapp_t *a = start_many(&f);
+  ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  tick(&f, a, 300);
+  int p0 = ru_dzapp_pages(a);
+  for (int i = 0; i < 3; i++) push(&f, lamp(200 + i, "Extra", "Off", 0));
+  tick(&f, a, 2100);
+  CHECK(ru_dzapp_pages(a) == p0 + 1);
+  CHECK(ru_dzapp_page(a) == 0);
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
+/* the Utility rows follow a live value */
+static void test_utility_rows(void) {
+  appfx_t f;
+  ru_dzapp_t *a = start_many(&f);
+  ru_dzapp_show_section(a, RU_SEC_UTILITY);
+  tick(&f, a, 300);
+  settle();
+  lv_obj_t *scr = lv_screen_active();
+  CHECK(ru_dzapp_home_rows(a) > 0);
+  CHECK(!tree_has_text(scr, "500"));
+  ru_dzapp_row_info_t ri;
+  CHECK(ru_dzapp_row_info(a, 0, &ri));
+  char js[300];
+  snprintf(js, sizeof js, "{\"idx\":\"%s\",\"Name\":\"Meter %s\",\"Type\":\"General\",\"SubType\":\"kWh\",\"Data\":\"9.9 kWh\",\"Usage\":\"500 Watt\",\"Favorite\":0}", ri.idx, ri.idx);
+  push(&f, js);
+  sim_inv_reset();
+  tick(&f, a, 300);
+  CHECK(lv_screen_active() == scr);
+  CHECK(sim_inv_pixels() > 0);
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.sub, "500 W"));
+  CHECK(tree_has_text(lv_screen_active(), "500"));
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
 int main(void) {
   CHECK(sim_init(&S, 480));
   test_setters_idempotent();
@@ -319,6 +409,10 @@ int main(void) {
   test_order_only();
   test_detail_live();
   test_dots_nongrid();
+  test_stale_flip();
+  test_units_change();
+  test_pages_count();
+  test_utility_rows();
   sim_shutdown(&S);
   MT_DONE();
 }

@@ -1237,6 +1237,7 @@ typedef struct {
   ru_dot_state_t in_st, dot_st;
   ru_val_state_t fresh;
   char valtxt[32];
+  bool val_set; /* set_value ran once (the label has its font and position), also for an empty text */
 } stile_t;
 
 static void stile_clicked(lv_event_t *e) {
@@ -1315,7 +1316,8 @@ void ru_state_tile_set_value(lv_obj_t *o, const char *text) {
   stile_t *s = wd_get(o);
   char vc[sizeof s->valtxt];
   snprintf(vc, sizeof vc, "%s", text);
-  if (!strcmp(vc, s->valtxt) && lv_label_get_text(s->val)[0]) return;
+  if (s->val_set && !strcmp(vc, s->valtxt)) return;
+  s->val_set = true;
   memcpy(s->valtxt, vc, sizeof vc);
   lv_label_set_text(s->val, text);
   /* long values (text sensors) drop to the body font so they fit the tile */
