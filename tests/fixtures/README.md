@@ -12,3 +12,4 @@
   Regenerate with `node tests/tools/regen_climate_fixtures.js` (the mock is the single source).
 - `switch_types.json`: **HAND-WRITTEN.** One device per Domoticz Switches-tab class (every SwitchTypeVal 0-20 on Light/Switch, plus Lighting 1/2, Color Switch,
   Blinds, RFY, Curtain, Chime, Security, Fan, Thermostat 3, Remote & IR, Heating Relay). Used by test_apps_view and the simulator Lights test.
+- `mock_lights.json`: **HAND-WRITTEN.** Colour and white lamps in the shape of a Domoticz `getdevices` (Type `Color Switch`, the `Color` JSON string): RGBWW orange/Off/white mode/protected, RGB, RGBW, WW On and Off, and a plain dimmer. Used by the light detail screens of the simulator and the app tests.

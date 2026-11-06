@@ -110,6 +110,8 @@ bool appfx_load(appfx_t *f, const char *dir, appfx_set_t set, uint32_t ttl_ms) {
       }
       return true;
     }
+    case APPFX_LIGHTS:
+      return apply_file(f, dir, "mock_lights.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL);
     case APPFX_MOCK_NOFAV: {
       g_strip_fav = true;
       bool ok = apply_file(f, dir, "mock_getdevices.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL) &&
@@ -169,6 +171,7 @@ const char *const apps_demo_names[] = {
   "detail_climate_wind", "detail_thermo6", "detail_setpoint_plan", "detail_setpoint_nonow", "detail_radiator", "detail_evohome",
   "detail_mode", "detail_setpoint_f", "detail_setpoint_nounits",
   "confirm_setpoint",
+  "detail_ww", "detail_color", "detail_color_white", "detail_color_off", "detail_color_protected",
   "detail_onoff", "detail_dimmer", "detail_selector", "detail_blinds", "detail_thermo", "detail_lock", "detail_push", "detail_info",
   "confirm_scene", "confirm_group_mixed", "confirm_lock",
   "fb_pending", "fb_confirmed", "fb_unconfirmed", "fb_failed",
@@ -208,6 +211,7 @@ static appfx_set_t set_for(const char *n) {
   if (!strcmp(n, "home_climate") || !strcmp(n, "temperature") || !strcmp(n, "weather") || !strncmp(n, "climate_", 8) || !strcmp(n, "detail_climate_wind") || !strcmp(n, "detail_thermo6") || !strncmp(n, "detail_setpoint", 15) ||
       !strcmp(n, "detail_radiator") || !strcmp(n, "detail_evohome") || !strcmp(n, "detail_mode") || !strcmp(n, "confirm_setpoint"))
     return APPFX_CLIMATE_METRIC;
+  if (!strcmp(n, "detail_ww") || !strncmp(n, "detail_color", 12)) return APPFX_LIGHTS;
   if (!strcmp(n, "home_favs_none")) return APPFX_MOCK_NOFAV;
   if (!strcmp(n, "home_favs_many")) return APPFX_MOCK;
   if (!strcmp(n, "lights_many")) return APPFX_MANY;
@@ -276,6 +280,10 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
       {"detail_radiator", "123"}, {"detail_evohome", "124"}, {"detail_mode", "125"}, {"detail_setpoint_f", "118"},
       {"detail_setpoint_nounits", "118"}};
     for (size_t k = 0; k < sizeof det / sizeof det[0]; k++) if (!strcmp(n, det[k].name)) ru_dzapp_open(a, det[k].idx, false);
+  } else if (!strcmp(n, "detail_ww") || !strncmp(n, "detail_color", 12)) {
+    static const struct { const char *name, *idx; } lt[] = {
+      {"detail_ww", "4"}, {"detail_color", "1"}, {"detail_color_white", "7"}, {"detail_color_off", "6"}, {"detail_color_protected", "8"}};
+    for (size_t k = 0; k < sizeof lt / sizeof lt[0]; k++) if (!strcmp(n, lt[k].name)) ru_dzapp_open(a, lt[k].idx, false);
   } else if (!strcmp(n, "confirm_setpoint")) {
     ru_dzapp_open(a, "118", false);
     sim_render();

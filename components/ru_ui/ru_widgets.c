@@ -1792,15 +1792,15 @@ static void lt_paint(light_t *l) {
   set_text_color(l->hero, lit || pend_bri || pend_col ? t->text : t->text_dim);
   icon_recolor(l->glyph, lit || pend_bri || pend_col ? t->text : ru_dim(t->text_dim, 150));
 
-  /* caption: feedback, then the read-only reason, then the word for what the visible ring edits */
+  /* caption: the read-only reason, then the feedback, then the word for what the visible ring edits */
   const char *cap;
   lv_color_t capc = t->text_dim;
-  if (l->fb != RU_LIGHT_FB_NONE && l->fb_text[0]) {
-    cap = l->fb_text;
-    capc = l->fb == RU_LIGHT_FB_OK ? t->ok : l->fb == RU_LIGHT_FB_WARN ? t->warn : l->fb == RU_LIGHT_FB_ERROR ? t->error : t->text_dim;
-  } else if (l->ro && l->ro_text[0]) {
+  if (l->ro && l->ro_text[0]) {
     cap = l->ro_text;
     capc = t->warn;
+  } else if (l->fb != RU_LIGHT_FB_NONE && l->fb_text[0]) {
+    cap = l->fb_text;
+    capc = l->fb == RU_LIGHT_FB_OK ? t->ok : l->fb == RU_LIGHT_FB_WARN ? t->warn : l->fb == RU_LIGHT_FB_ERROR ? t->error : t->text_dim;
   } else if (!known) {
     cap = "";
   } else if (l->cfg.two_rings && l->carc) {

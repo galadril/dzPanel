@@ -138,7 +138,10 @@ static void all_screens(int size) {
     }
     CHECK(out == 0);               /* nothing outside the circle (rim, tiles, labels) */
     CHECK(in > 300);               /* not blank */
-    CHECK(br < area * 12 / 100);   /* DESIGN.md: at most 12% lit */
+    /* DESIGN.md: at most 12% lit. The colour and white-temperature light pages are a declared exception (25%): a hue wheel and its
+     * glowing brightness ring are lit by definition. They are interactive pages, never an always-on face. */
+    bool light_page = !strcmp(nm, "detail_ww") || !strncmp(nm, "detail_color", 12);
+    CHECK(br < area * (light_page ? 25 : 12) / 100);
     CHECK(!shows(a, TOKEN));       /* the token is never on screen */
     char p[256];
     snprintf(p, sizeof p, "%s/app_%s_%d%s.png", SHOT_DIR, nm, size, sfx());

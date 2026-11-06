@@ -90,6 +90,8 @@ ru_view_t ru_dzapp_view(const ru_dzapp_t *a);
 const char *ru_dzapp_current_idx(const ru_dzapp_t *a);
 const char *ru_dzapp_banner(const ru_dzapp_t *a); /* connection banner text shown on home, "" when fine */
 lv_obj_t *ru_dzapp_screen(const ru_dzapp_t *a);
+/* the ru_light widget of the open light detail page, NULL on every other screen (tests) */
+lv_obj_t *ru_dzapp_light(const ru_dzapp_t *a);
 size_t ru_dzapp_home_rows(const ru_dzapp_t *a); /* tiles / rows of the current section screen (the current page) */
 const char *ru_dzapp_toast(const ru_dzapp_t *a); /* the visible result message, "" when none */
 /* Tap the n-th home row exactly as a finger would. */

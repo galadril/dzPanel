@@ -1970,6 +1970,7 @@ ru_view_t ru_dzapp_view(const ru_dzapp_t *a) { return a->view; }
 const char *ru_dzapp_current_idx(const ru_dzapp_t *a) { return a->cur_idx; }
 const char *ru_dzapp_banner(const ru_dzapp_t *a) { return a->banner; }
 lv_obj_t *ru_dzapp_screen(const ru_dzapp_t *a) { return a->scr; }
+lv_obj_t *ru_dzapp_light(const ru_dzapp_t *a) { return a->light; }
 size_t ru_dzapp_home_rows(const ru_dzapp_t *a) { return a->nrows; }
 const char *ru_dzapp_toast(const ru_dzapp_t *a) { return ru_fb_text(&a->fb); }
 const ru_fb_t *ru_dzapp_feedback(const ru_dzapp_t *a) { return &a->fb; }
