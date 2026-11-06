@@ -1182,6 +1182,8 @@ static void page_model(int size) {
   CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "1") && ru_dzapp_row_info(a, 2, &ri) && !strcmp(ri.idx, "3"));
   CHECK(dz_model_apply(&f.model, o2, strlen(o2), DZ_COMMIT_FULL_DEVICES, f.T + 10, NULL, NULL) == DZ_OK);
   ru_dzapp_ui_tick(a, f.T + 10);
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "1")); /* a background reorder is rate limited (one rebuild per 2 s) */
+  ru_dzapp_ui_tick(a, f.T + 2600);
   CHECK(ru_dzapp_row_info(a, 0, &ri) && !strcmp(ri.idx, "3") && ru_dzapp_row_info(a, 1, &ri) && !strcmp(ri.idx, "1") &&
         ru_dzapp_row_info(a, 2, &ri) && !strcmp(ri.idx, "2"));
   finish(&f, a);

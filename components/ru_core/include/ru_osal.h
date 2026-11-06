@@ -8,6 +8,7 @@ typedef enum { RU_OK = 0, RU_ERR_INVALID, RU_ERR_TIMEOUT, RU_ERR_NOMEM, RU_ERR_F
 #define RU_WAIT_FOREVER UINT32_MAX
 
 uint32_t ru_now_ms(void); /* monotonic */
+uint32_t ru_now_us(void); /* monotonic, wraps every 71 minutes: only for differences (diagnostics) */
 void ru_sleep_ms(uint32_t ms);
 
 typedef struct ru_mutex ru_mutex_t;

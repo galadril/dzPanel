@@ -24,6 +24,7 @@ static TickType_t to_ticks(uint32_t ms) {
 }
 
 uint32_t ru_now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
+uint32_t ru_now_us(void) { return (uint32_t)esp_timer_get_time(); }
 
 void ru_sleep_ms(uint32_t ms) { vTaskDelay(ms == 0 ? 0 : (pdMS_TO_TICKS(ms) ? pdMS_TO_TICKS(ms) : 1)); }
 

@@ -75,6 +75,14 @@ typedef struct {
   lv_color_t a_color;
 } ring_t;
 
+/* LVGL invalidates on every style set, also for an identical value: set only what differs */
+static void set_text_color(lv_obj_t *o, lv_color_t c) {
+  if (!lv_color_eq(lv_obj_get_style_text_color(o, LV_PART_MAIN), c)) lv_obj_set_style_text_color(o, c, 0);
+}
+static void set_text_opa(lv_obj_t *o, lv_opa_t v) {
+  if (lv_obj_get_style_text_opa(o, LV_PART_MAIN) != v) lv_obj_set_style_text_opa(o, v, 0);
+}
+
 /* lv_label_set_text invalidates even for identical text: only set what differs */
 static void set_label(lv_obj_t *l, const char *txt) {
   const char *cur = lv_label_get_text(l);
@@ -185,9 +193,9 @@ static void tile_apply(lv_obj_t *tile, const char *text, ru_val_state_t st) {
   d->state = st;
   set_label(d->value, text);
   lv_color_t c = st == RU_VAL_OK ? d->ok_color : t->stale;
-  lv_obj_set_style_text_color(d->value, c, 0);
-  lv_obj_set_style_text_opa(d->value, st == RU_VAL_OK ? LV_OPA_COVER : (st == RU_VAL_STALE ? LV_OPA_70 : LV_OPA_COVER), 0);
-  lv_obj_set_style_text_color(d->label, st == RU_VAL_OK ? t->text_dim : ru_dim(t->text_dim, 190), 0);
+  set_text_color(d->value, c);
+  set_text_opa(d->value, st == RU_VAL_OK ? LV_OPA_COVER : (st == RU_VAL_STALE ? LV_OPA_70 : LV_OPA_COVER));
+  set_text_color(d->label, st == RU_VAL_OK ? t->text_dim : ru_dim(t->text_dim, 190));
   /* second channel: stale gets a border and a warn dot, unknown gets a border only */
   lv_obj_set_style_border_width(tile, st == RU_VAL_OK ? 0 : 1, 0);
   lv_obj_set_style_border_color(tile, st == RU_VAL_STALE ? ru_dim(t->warn, 150) : ru_dim(t->stale, 140), 0);
@@ -247,7 +255,7 @@ void ru_value_tile_set_color(lv_obj_t *tile, lv_color_t c) {
   tile_t *d = wd_get(tile);
   if (lv_color_eq(d->ok_color, c)) return;
   d->ok_color = c;
-  if (d->state == RU_VAL_OK) lv_obj_set_style_text_color(d->value, c, 0);
+  if (d->state == RU_VAL_OK) set_text_color(d->value, c);
 }
 
 ru_val_state_t ru_value_tile_state(const lv_obj_t *tile) { return ((tile_t *)wd_get(tile))->state; }
@@ -305,7 +313,7 @@ void ru_ring_gauge_set(lv_obj_t *box, const ru_val_t *v, float min, float max, u
   if (st == RU_VAL_UNKNOWN || max <= min) {
     if (gauge_same(g, "--", -1, (int)RU_VAL_UNKNOWN)) return;
     set_label(g->val, "--");
-    lv_obj_set_style_text_color(g->val, t->stale, 0);
+    set_text_color(g->val, t->stale);
     ring_set(&g->ring, 0);
     ring_set_lit(&g->ring, false, g->ring.color, false);
     return;
@@ -316,10 +324,10 @@ void ru_ring_gauge_set(lv_obj_t *box, const ru_val_t *v, float min, float max, u
   set_label(g->val, buf);
   ring_set(&g->ring, (int)lroundf(f * 1000.0f));
   if (st == RU_VAL_STALE) {
-    lv_obj_set_style_text_color(g->val, t->stale, 0);
+    set_text_color(g->val, t->stale);
     ring_set_lit(&g->ring, true, ru_dim(t->stale, 170), false);
   } else {
-    lv_obj_set_style_text_color(g->val, t->text, 0);
+    set_text_color(g->val, t->text);
     ring_set_lit(&g->ring, true, g->ring.color, true);
   }
 }
@@ -330,7 +338,7 @@ void ru_ring_gauge_set_display(lv_obj_t *box, const char *text, float frac, ru_v
   if (st == RU_VAL_UNKNOWN || !text || !text[0]) {
     if (gauge_same(g, "--", -1, (int)RU_VAL_UNKNOWN)) return;
     set_label(g->val, "--");
-    lv_obj_set_style_text_color(g->val, t->stale, 0);
+    set_text_color(g->val, t->stale);
     ring_set(&g->ring, 0);
     ring_set_lit(&g->ring, false, g->ring.color, false);
     return;
@@ -338,17 +346,17 @@ void ru_ring_gauge_set_display(lv_obj_t *box, const char *text, float frac, ru_v
   if (gauge_same(g, text, frac < 0.0f ? -2 : (int)lroundf(clampf(frac, 0.0f, 1.0f) * 1000.0f), (int)st)) return;
   set_label(g->val, text);
   if (frac < 0.0f) { /* a value that cannot be scaled (unit unknown): the text only, an unlit ring */
-    lv_obj_set_style_text_color(g->val, st == RU_VAL_STALE ? t->stale : t->text, 0);
+    set_text_color(g->val, st == RU_VAL_STALE ? t->stale : t->text);
     ring_set(&g->ring, 0);
     ring_set_lit(&g->ring, false, g->ring.color, false);
     return;
   }
   ring_set(&g->ring, (int)lroundf(clampf(frac, 0.0f, 1.0f) * 1000.0f));
   if (st == RU_VAL_STALE) {
-    lv_obj_set_style_text_color(g->val, t->stale, 0);
+    set_text_color(g->val, t->stale);
     ring_set_lit(&g->ring, true, ru_dim(t->stale, 170), false);
   } else {
-    lv_obj_set_style_text_color(g->val, t->text, 0);
+    set_text_color(g->val, t->text);
     ring_set_lit(&g->ring, true, g->ring.color, true);
   }
 }
@@ -1224,8 +1232,9 @@ typedef struct {
   lv_obj_t *dot, *name, *sub, *val;
   ru_dot_state_t st;
   char subtxt[24];
-  bool inited;
-  ru_dot_state_t in_st;
+  bool inited, dot_init;
+  lv_color_t dot_on;
+  ru_dot_state_t in_st, dot_st;
   ru_val_state_t fresh;
   char valtxt[32];
 } stile_t;
@@ -1280,16 +1289,26 @@ void ru_state_tile_set(lv_obj_t *o, ru_dot_state_t st, const char *sub, ru_val_s
   s->in_st = st;
   s->fresh = fresh;
   s->st = st;
+  bool sub_changed = strcmp(subc, s->subtxt) != 0;
   memcpy(s->subtxt, subc, sizeof subc);
-  set_label(s->sub, s->subtxt);
-  lv_obj_align(s->sub, LV_ALIGN_CENTER, 0, lv_obj_get_height(o) * 83 / 100 - lv_obj_get_height(o) / 2);
+  if (sub_changed || !s->dot_init) {
+    set_label(s->sub, s->subtxt);
+    lv_obj_align(s->sub, LV_ALIGN_CENTER, 0, lv_obj_get_height(o) * 83 / 100 - lv_obj_get_height(o) / 2);
+  }
   lv_color_t on = fresh == RU_VAL_STALE ? ru_dim(t->stale, 170) : t->accent;
   if (st != RU_DOT_NONE && (st == RU_DOT_UNKNOWN || fresh == RU_VAL_UNKNOWN)) { st = RU_DOT_UNKNOWN; s->st = st; }
-  ru_state_dot_set(s->dot, st, on);
-  if (st == RU_DOT_NONE) lv_obj_remove_flag(s->val, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(s->val, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_set_style_text_color(s->val, fresh == RU_VAL_STALE ? t->stale : fresh == RU_VAL_UNKNOWN ? t->text_dim : t->text, 0);
-  lv_obj_set_style_text_color(s->name, fresh == RU_VAL_STALE ? t->text_dim : t->text, 0);
-  lv_obj_set_style_text_color(s->sub, st == RU_DOT_MIXED ? t->warn : (fresh == RU_VAL_STALE ? t->stale : t->text_dim), 0);
+  if (!s->dot_init || s->dot_st != st || !lv_color_eq(s->dot_on, on)) {
+    s->dot_init = true;
+    s->dot_st = st;
+    s->dot_on = on;
+    ru_state_dot_set(s->dot, st, on);
+  }
+  bool vis = !lv_obj_has_flag(s->val, LV_OBJ_FLAG_HIDDEN);
+  if (st == RU_DOT_NONE && !vis) lv_obj_remove_flag(s->val, LV_OBJ_FLAG_HIDDEN);
+  if (st != RU_DOT_NONE && vis) lv_obj_add_flag(s->val, LV_OBJ_FLAG_HIDDEN);
+  set_text_color(s->val, fresh == RU_VAL_STALE ? t->stale : fresh == RU_VAL_UNKNOWN ? t->text_dim : t->text);
+  set_text_color(s->name, fresh == RU_VAL_STALE ? t->text_dim : t->text);
+  set_text_color(s->sub, st == RU_DOT_MIXED ? t->warn : (fresh == RU_VAL_STALE ? t->stale : t->text_dim));
 }
 
 void ru_state_tile_set_value(lv_obj_t *o, const char *text) {
@@ -1305,8 +1324,9 @@ void ru_state_tile_set_value(lv_obj_t *o, const char *text) {
   lv_point_t sz;
   lv_text_get_size(&sz, text, f, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   if (sz.x > room) f = ru_font_small(); /* two readings ("19.8°C  45%") on one line */
-  lv_obj_set_style_text_font(s->val, f, 0);
-  lv_obj_set_height(s->val, lv_font_get_line_height(f)); /* one line: LONG_DOT cuts with dots instead of wrapping over the name */
+  if (lv_obj_get_style_text_font(s->val, LV_PART_MAIN) != f) lv_obj_set_style_text_font(s->val, f, 0);
+  if (lv_obj_get_height(s->val) != lv_font_get_line_height(f)) /* one line: LONG_DOT cuts with dots instead of wrapping over the name */
+    lv_obj_set_height(s->val, lv_font_get_line_height(f));
   lv_obj_align(s->val, LV_ALIGN_CENTER, 0, lv_obj_get_height(o) * 28 / 100 - lv_obj_get_height(o) / 2);
 }
 

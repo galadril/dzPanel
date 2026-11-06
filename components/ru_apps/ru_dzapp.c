@@ -19,6 +19,8 @@
 #define MAX_NAMES 12
 #define NAME_LEN 20
 #define INTERACT_MS 2500
+#define STALE_EPOCH_MS 1500 /* stale states are re-evaluated at most this often */
+#define REBUILD_MIN_MS 2000 /* background rebuilds (list changed by the server) at most this often */
 
 typedef struct { dz_cmd_req_t req; char idx[12]; bool scene; } req_msg_t;
 typedef struct {
@@ -28,7 +30,7 @@ typedef struct {
 } res_msg_t;
 typedef struct { struct ru_dzapp *app; char idx[12]; bool scene; int setting; } row_t;
 /* one entry of the index list of a screen: sort key (group, server order) and the dz_model entry index */
-typedef struct { uint32_t key; uint16_t i; } ix_t;
+typedef struct { uint32_t key; uint16_t i; uint8_t st; } ix_t; /* st: ru_val_state_t at collection time */
 
 struct ru_dzapp {
   dz_model_t *model;
@@ -56,7 +58,18 @@ struct ru_dzapp {
   ru_fb_t fb;
   lv_obj_t *scr, *list;
   lv_timer_t *timer;
-  uint64_t sig; /* signature of what is on screen, to skip needless rebuilds */
+  uint64_t sig; /* signature of the STRUCTURE on screen (what a refresh cannot change in place); 0 = rebuild now */
+  uint64_t ctl; /* cheap control signature (controls, model generation, units) at the last evaluation */
+  uint32_t epoch; /* stale epoch (time / STALE_EPOCH_MS) at the last evaluation */
+  uint64_t stale_sig;
+  uint64_t imm; /* view, section, page, connection, feedback at the last build: a change is never rate limited */
+  uint32_t last_build;
+  lv_obj_t *rim; /* status rim of the grid / rows screen, updated in place */
+  bool detail_thermo;
+  uint32_t copies_base;
+#if CONFIG_RU_HEAP_LOG
+  ru_dzapp_stats_t stats;
+#endif
   uint32_t now, interact_until;
   char banner[56];
 
@@ -159,26 +172,36 @@ static int ix_cmp(const void *x, const void *y) {
   return p->i < q->i ? -1 : p->i > q->i; /* equal server order (new by delta, 0xFFFF): model order */
 }
 
-/* The entries of a section in display order, in ONE pass over the model (a->ix, a->ix_n). Returns the count. */
+/* ONE pass over the model under ONE lock, no copies (dz_model_foreach): the entries of a section in a->ix with their
+ * display key and state. */
+typedef struct { ru_dzapp_t *a; ru_section_t s; bool full; } collect_t;
+
+static bool collect_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_t st, uint16_t order, void *ud) {
+  collect_t *c = ud;
+  ru_dzapp_t *a = c->a;
+  if (i >= 0xFFFF || !sec_match(c->s, d, scene)) return true;
+  if (a->ix_n >= a->ix_cap) { c->full = true; return false; }
+  a->ix[a->ix_n].key = c->s == RU_SEC_HOME ? (home_group(d, scene) << 16) | order : order;
+  a->ix[a->ix_n].i = (uint16_t)i;
+  a->ix[a->ix_n].st = (uint8_t)st;
+  a->ix_n++;
+  return true;
+}
+
+/* The entries of a section in display order (a->ix, a->ix_n). Returns the count. */
 static size_t build_ix(ru_dzapp_t *a, ru_section_t s) {
-  size_t total = dz_model_count(a->model);
-  a->ix_n = 0;
-  if (total > a->ix_cap) {
-    ix_t *n = realloc(a->ix, total * sizeof *n);
-    if (!n) return 0;
-    a->ix = n;
-    a->ix_cap = total;
-  }
-  for (size_t i = 0; i < total && i < 0xFFFF; i++) {
-    dz_device_t d;
-    ru_val_t v;
-    ru_val_state_t st;
-    bool scene;
-    if (!dz_model_at(a->model, i, &d, &v, &st, &scene, a->now) || !sec_match(s, &d, scene)) continue;
-    uint32_t order = dz_model_order_at(a->model, i);
-    a->ix[a->ix_n].key = s == RU_SEC_HOME ? (home_group(&d, scene) << 16) | order : order;
-    a->ix[a->ix_n].i = (uint16_t)i;
-    a->ix_n++;
+  for (int tries = 0; tries < 3; tries++) {
+    size_t total = dz_model_count(a->model) + 8 * (size_t)tries;
+    a->ix_n = 0;
+    if (total > a->ix_cap) {
+      ix_t *n = realloc(a->ix, total * sizeof *n);
+      if (!n) return 0;
+      a->ix = n;
+      a->ix_cap = total;
+    }
+    collect_t c = { a, s, false };
+    dz_model_foreach(a->model, a->now, collect_cb, &c);
+    if (!c.full) break; /* the model grew between count and pass: once more with room */
   }
   if (a->ix_n > 1) qsort(a->ix, a->ix_n, sizeof *a->ix, ix_cmp);
   return a->ix_n;
@@ -192,27 +215,22 @@ static bool ix_get(ru_dzapp_t *a, size_t k, dz_device_t *d, ru_val_t *v, ru_val_
   return k < a->ix_n && dz_model_at(a->model, a->ix[k].i, d, v ? v : &vv, st ? st : &ss, scene ? scene : &sc, a->now);
 }
 
-static bool ix_any_stale(ru_dzapp_t *a) {
-  for (size_t k = 0; k < a->ix_n; k++) {
-    dz_device_t d;
-    ru_val_state_t st;
-    if (ix_get(a, k, &d, NULL, &st, NULL) && st == RU_VAL_STALE) return true;
-  }
+static bool ix_any_stale(const ru_dzapp_t *a) {
+  for (size_t k = 0; k < a->ix_n; k++) if (a->ix[k].st == RU_VAL_STALE) return true;
   return false;
 }
 
-/* Which sections have something to show: one pass, one bit each. Home and Settings are always there. */
+/* Which sections have something to show: one pass, no copies, one bit each. Home and Settings are always there. */
+static bool avail_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_t st, uint16_t order, void *ud) {
+  (void)i; (void)st; (void)order;
+  unsigned *m = ud;
+  for (int s = RU_SEC_LIGHTS; s < RU_SEC_SETTINGS; s++) if (sec_match((ru_section_t)s, d, scene)) *m |= 1u << s;
+  return true;
+}
+
 static unsigned avail_mask(ru_dzapp_t *a) {
   unsigned m = (1u << RU_SEC_HOME) | (1u << RU_SEC_SETTINGS);
-  size_t total = dz_model_count(a->model);
-  for (size_t i = 0; i < total; i++) {
-    dz_device_t d;
-    ru_val_t v;
-    ru_val_state_t st;
-    bool scene;
-    if (!dz_model_at(a->model, i, &d, &v, &st, &scene, a->now)) continue;
-    for (int s = RU_SEC_LIGHTS; s < RU_SEC_SETTINGS; s++) if (sec_match((ru_section_t)s, &d, scene)) m |= 1u << s;
-  }
+  dz_model_foreach(a->model, a->now, avail_cb, &m);
   return m;
 }
 
@@ -510,6 +528,7 @@ static lv_obj_t *section_screen(ru_dzapp_t *a, bool any_stale) {
   lv_obj_t *s = ru_screen_new();
   lv_obj_t *rim = ru_status_rim_create(s);
   ru_status_rim_set_state(rim, rim_for(conn(a), any_stale));
+  a->rim = rim;
   a->list = NULL;
   a->nrows = 0;
   a->pages = 1;
@@ -670,6 +689,18 @@ static void cb_row(lv_obj_t *w, void *ud) {
   ru_dzapp_open(a, r->idx, r->scene); /* a scene or group goes to its hold screen, a device to its detail */
 }
 
+/* The content of a state tile from the model entry: the one place that sets it, on creation and on every refresh. The
+ * tile setters compare with what they show and touch nothing that did not change. */
+static void entry_tile_update(ru_dzapp_t *a, lv_obj_t *tile, const dz_device_t *d, bool scene, ru_val_state_t st) {
+  char sub[24], val[24];
+  ru_dot_state_t dot;
+  tile_content(a, d, scene, &dot, sub, sizeof sub, val, sizeof val);
+  /* "activated" feedback on a Scene tile: shown only while its command is CONFIRMED (a Scene keeps no state) */
+  if (d->cap == DZ_CAP_SCENE && a->fb.st == RU_FB_CONFIRMED && a->fb.scene && !strcmp(a->fb.idx, d->idx)) snprintf(sub, sizeof sub, "ACTIVATED");
+  ru_state_tile_set(tile, dot, sub, dot == RU_DOT_NONE && !val[0] ? RU_VAL_UNKNOWN : st);
+  if (dot == RU_DOT_NONE) ru_state_tile_set_value(tile, val);
+}
+
 /* Add one state tile for an entry to `parent` and register it as row n. */
 static lv_obj_t *add_entry_tile(ru_dzapp_t *a, lv_obj_t *parent, int w, int h, const dz_device_t *d, bool scene, ru_val_state_t st) {
   if (a->nrows >= MAX_ROWS) return NULL;
@@ -678,16 +709,11 @@ static lv_obj_t *add_entry_tile(ru_dzapp_t *a, lv_obj_t *parent, int w, int h, c
   r->scene = scene;
   r->setting = -1;
   snprintf(r->idx, sizeof r->idx, "%s", d->idx);
-  char nm[40], sub[24], val[24];
+  char nm[40];
   ru_dzv_upper(nm, sizeof nm, d->name);
   ru_dzv_clamp(nm, sizeof nm, nm, 16);
-  ru_dot_state_t dot;
-  tile_content(a, d, scene, &dot, sub, sizeof sub, val, sizeof val);
-  /* "activated" feedback on a Scene tile: shown only while its command is CONFIRMED (a Scene keeps no state) */
-  if (d->cap == DZ_CAP_SCENE && a->fb.st == RU_FB_CONFIRMED && a->fb.scene && !strcmp(a->fb.idx, d->idx)) snprintf(sub, sizeof sub, "ACTIVATED");
   lv_obj_t *tile = ru_state_tile_create(parent, w, h, nm);
-  ru_state_tile_set(tile, dot, sub, dot == RU_DOT_NONE && !val[0] ? RU_VAL_UNKNOWN : st);
-  if (dot == RU_DOT_NONE) ru_state_tile_set_value(tile, val);
+  entry_tile_update(a, tile, d, scene, st);
   ru_state_tile_on_tap(tile, cb_row, r);
   lv_obj_add_event_cb(tile, cb_press, LV_EVENT_PRESSED, a);
   a->row_tiles[a->nrows++] = tile;
@@ -853,6 +879,16 @@ static lv_obj_t *build_tiles_section(ru_dzapp_t *a, ru_section_t sec) {
   return s;
 }
 
+static void row_tile_update(lv_obj_t *tile, const dz_device_t *d, const dz_units_t *un, ru_val_state_t st) {
+  const ru_theme_t *t = ru_theme();
+  char txt[32];
+  bool known;
+  ru_dzv_value_text_u(d, un, txt, sizeof txt, &known);
+  bool on = (d->cap == DZ_CAP_ONOFF || d->cap == DZ_CAP_DIMMER) && dz_device_state(d) == DZ_STATE_ON;
+  ru_value_tile_set_color(tile, on ? t->accent : t->text);
+  ru_value_tile_set_text(tile, txt, known ? st : RU_VAL_UNKNOWN);
+}
+
 static lv_obj_t *build_rows_section(ru_dzapp_t *a, ru_section_t sec) {
   const ru_theme_t *t = ru_theme();
   dz_conn_state_t cs = conn(a);
@@ -879,15 +915,11 @@ static lv_obj_t *build_rows_section(ru_dzapp_t *a, ru_section_t sec) {
     row_t *r = &a->rows[a->nrows];
     r->app = a; r->scene = false; r->setting = -1;
     snprintf(r->idx, sizeof r->idx, "%s", d.idx);
-    char nm[40], txt[32];
+    char nm[40];
     ru_dzv_upper(nm, sizeof nm, d.name);
     ru_dzv_clamp(nm, sizeof nm, nm, 22);
-    bool known;
-    ru_dzv_value_text_u(&d, &un, txt, sizeof txt, &known);
     lv_obj_t *tile = ru_value_tile_create(list, w, ru_u(rh), nm);
-    bool on = (d.cap == DZ_CAP_ONOFF || d.cap == DZ_CAP_DIMMER) && dz_device_state(&d) == DZ_STATE_ON;
-    ru_value_tile_set_color(tile, on ? t->accent : t->text);
-    ru_value_tile_set_text(tile, txt, known ? st : RU_VAL_UNKNOWN);
+    row_tile_update(tile, &d, &un, st);
     ru_value_tile_on_tap(tile, cb_row, r);
     lv_obj_add_event_cb(tile, cb_press, LV_EVENT_PRESSED, a);
     a->row_tiles[a->nrows++] = tile;
@@ -1215,6 +1247,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
     back_button(a, s, "BACK");
     return s;
   }
+  a->detail_thermo = d.cap == DZ_CAP_THERMOSTAT; /* its screen may show the room's temperature sensor */
   lv_obj_t *rim = ru_status_rim_create(s);
   ru_status_rim_set_state(rim, rim_for(conn(a), st == RU_VAL_STALE));
   char name[40];
@@ -1398,8 +1431,167 @@ static void show(ru_dzapp_t *a, lv_obj_t *scr) {
   if (old && old != scr) lv_obj_delete_async(old);
 }
 
+/* ---- refresh bookkeeping (diagnostics only with CONFIG_RU_HEAP_LOG) ---- */
+#if CONFIG_RU_HEAP_LOG
+#define STAT_T0() uint32_t t0_ = ru_now_us()
+#define STAT_MAX(field) do { uint32_t d_ = ru_now_us() - t0_; if (d_ > a->stats.field) a->stats.field = d_; } while (0)
+#define STAT_INC(field) (a->stats.field++)
+#else
+#define STAT_T0() do { } while (0)
+#define STAT_MAX(field) do { } while (0)
+#define STAT_INC(field) do { } while (0)
+#endif
+
+void ru_dzapp_stats(ru_dzapp_t *a, ru_dzapp_stats_t *out, bool reset) {
+  memset(out, 0, sizeof *out);
+#if CONFIG_RU_HEAP_LOG
+  *out = a->stats;
+  out->copies = dz_model_copies(a->model) - a->copies_base;
+  if (reset) { memset(&a->stats, 0, sizeof a->stats); a->copies_base += out->copies; }
+#else
+  (void)a; (void)reset;
+#endif
+}
+
+/* A screen the refresh can update in place: the tile grids and the utility rows. */
+static bool grid_view(const ru_dzapp_t *a) {
+  if (a->view != RU_VIEW_HOME) return false;
+  switch (a->section) {
+    case RU_SEC_HOME: case RU_SEC_LIGHTS: case RU_SEC_SCENES: case RU_SEC_TEMP: case RU_SEC_WEATHER: case RU_SEC_UTILITY: return true;
+    default: return false;
+  }
+}
+
+/* What the user (or the connection) changed, as opposed to the data: a change here rebuilds at once. */
+static uint64_t imm_sig(const ru_dzapp_t *a) {
+  uint64_t h = 1469598103934665603ULL;
+  int c = (int)conn(a);
+  h = fnv(h, &c, sizeof c);
+  h = fnv(h, &a->view, sizeof a->view);
+  h = fnv(h, &a->section, sizeof a->section);
+  h = fnv(h, &a->energy_sel, sizeof a->energy_sel);
+  h = fnv(h, &a->page, sizeof a->page);
+  h = fnv(h, &a->fb.st, sizeof a->fb.st);
+  h = fnv(h, a->fb.text, strlen(a->fb.text));
+  return h;
+}
+
+/* Cheap and copy-free: when this equals the last evaluation nothing needs a look. Data moves it through the model
+ * generation, time through the stale epoch (states are re-evaluated every STALE_EPOCH_MS, not on every tick). */
+static uint64_t ctl_core(ru_dzapp_t *a) {
+  uint64_t h = imm_sig(a);
+  uint32_t g = dz_model_generation(a->model);
+  h = fnv(h, &g, sizeof g);
+  dz_units_t un;
+  get_units(a, &un);
+  h = fnv(h, &un.have_temp, sizeof un.have_temp);
+  h = fnv(h, un.temp, strlen(un.temp));
+  h = fnv(h, &un.have_wind, sizeof un.have_wind);
+  h = fnv(h, un.wind, strlen(un.wind));
+  return h;
+}
+
+/* The states of the entries of the section as one hash, copy-free: time alone moves a state (fresh -> stale), and only
+ * this tells whether a time-only look changed anything. */
+static uint64_t stale_hash(const ru_dzapp_t *a) {
+  uint64_t h = 1469598103934665603ULL;
+  for (size_t k = 0; k < a->ix_n; k++) h = fnv(h, &a->ix[k].st, sizeof a->ix[k].st);
+  return h;
+}
+static uint64_t stale_sig(ru_dzapp_t *a) { build_ix(a, a->section); return stale_hash(a); }
+
+/* The full-content hash of the entries a non-grid screen shows (detail: its device; energy: the meters; sub screens
+ * and settings: none), in one copy-free pass. */
+typedef struct { const ru_dzapp_t *a; uint64_t h; } fullsig_t;
+
+static bool fullsig_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_t st, uint16_t order, void *ud) {
+  (void)i;
+  fullsig_t *f = ud;
+  const ru_dzapp_t *a = f->a;
+  bool rel;
+  if (a->view == RU_VIEW_DETAIL) rel = (scene == a->cur_scene && !strcmp(d->idx, a->cur_idx)) || (a->detail_thermo && (d->tabs & DZ_TAB_TEMP));
+  else if (a->view == RU_VIEW_SUB) rel = false;
+  else if (a->section == RU_SEC_ENERGY) rel = sec_match(RU_SEC_ENERGY, d, scene);
+  else rel = a->section != RU_SEC_SETTINGS;
+  if (!rel) return true;
+  uint64_t h = f->h;
+  char txt[32];
+  bool known;
+  ru_dzv_value_text(d, txt, sizeof txt, &known);
+  h = fnv(h, d->idx, strlen(d->idx));
+  h = fnv(h, d->name, strlen(d->name));
+  h = fnv(h, txt, strlen(txt));
+  h = fnv(h, d->status, strlen(d->status));
+  h = fnv(h, &st, sizeof st);
+  h = fnv(h, &scene, sizeof scene);
+  h = fnv(h, &d->favorite, sizeof d->favorite);
+  h = fnv(h, &d->tabs, sizeof d->tabs);
+  h = fnv(h, &order, sizeof order);
+  h = fnv(h, &d->level, sizeof d->level);
+  h = fnv(h, &d->level_int, sizeof d->level_int);
+  h = fnv(h, &d->setpoint, sizeof d->setpoint);
+  h = fnv(h, &d->usage_w, sizeof d->usage_w);
+  h = fnv(h, &d->temp, sizeof d->temp);
+  h = fnv(h, &d->n_rd, sizeof d->n_rd);
+  for (int k = 0; k < d->n_rd; k++) { h = fnv(h, &d->rd[k].kind, sizeof d->rd[k].kind); h = fnv(h, &d->rd[k].v, sizeof d->rd[k].v); h = fnv(h, d->rd[k].unit, strlen(d->rd[k].unit)); }
+  h = fnv(h, d->data, strlen(d->data));
+  h = fnv(h, &d->trend, sizeof d->trend);
+  h = fnv(h, &d->battery, sizeof d->battery);
+  h = fnv(h, &d->mode, sizeof d->mode);
+  f->h = h;
+  return true;
+}
+
+/* The STRUCTURE of a grid / rows screen: which entries are on this page, in which order, their kind, the page count,
+ * the sections that exist. Not their values: those are updated in place. Leaves a->ix for the section. */
+static uint64_t struct_sig(ru_dzapp_t *a) {
+  uint64_t h = imm_sig(a);
+  build_ix(a, a->section);
+  int per = a->section == RU_SEC_UTILITY ? PAGE_ROWS : PAGE_TILES;
+  int pages = a->ix_n ? (int)((a->ix_n + (size_t)per - 1) / (size_t)per) : 1;
+  int page = a->page >= pages ? pages - 1 : a->page;
+  if (page < 0) page = 0;
+  unsigned mask = avail_mask(a);
+  h = fnv(h, &a->ix_n, sizeof a->ix_n);
+  h = fnv(h, &page, sizeof page);
+  h = fnv(h, &mask, sizeof mask);
+  size_t first = (size_t)page * (size_t)per;
+  for (size_t k = first; k < a->ix_n && k < first + (size_t)per; k++) {
+    dz_device_t d;
+    bool sc;
+    if (!ix_get(a, k, &d, NULL, NULL, &sc)) continue;
+    h = fnv(h, d.idx, strlen(d.idx));
+    h = fnv(h, d.name, strlen(d.name));
+    h = fnv(h, &d.cap, sizeof d.cap);
+    h = fnv(h, &sc, sizeof sc);
+  }
+  return h;
+}
+
+static uint64_t screen_sig(ru_dzapp_t *a) {
+  STAT_T0();
+  uint64_t h;
+  if (grid_view(a)) h = struct_sig(a);
+  else {
+    fullsig_t f = { a, imm_sig(a) };
+    dz_model_foreach(a->model, a->now, fullsig_cb, &f);
+    if (a->view == RU_VIEW_SUB) { size_t n = dz_model_count(a->model); f.h = fnv(f.h, &n, sizeof n); }
+    dz_units_t un;
+    get_units(a, &un);
+    f.h = fnv(f.h, &un.have_temp, sizeof un.have_temp);
+    f.h = fnv(f.h, un.temp, strlen(un.temp));
+    f.h = fnv(f.h, &un.have_wind, sizeof un.have_wind);
+    f.h = fnv(f.h, un.wind, strlen(un.wind));
+    h = f.h;
+  }
+  STAT_MAX(sig_max_us);
+  return h ? h : 1;
+}
+
 static void build_and_show(ru_dzapp_t *a) {
+  STAT_T0();
   lv_obj_t *s;
+  a->detail_thermo = false;
   switch (a->view) {
     case RU_VIEW_CONFIRM: s = build_confirm(a); break;
     case RU_VIEW_DETAIL: s = build_detail(a); break;
@@ -1418,61 +1610,29 @@ static void build_and_show(ru_dzapp_t *a) {
   }
   show(a, s);
   a->sig = 0;
+  a->ctl = 0;
+  a->imm = imm_sig(a);
+  a->last_build = a->now;
+  STAT_INC(rebuilds);
+  STAT_MAX(build_max_us);
 }
 
-/* What is on screen, reduced to a hash: when it changes, the screen is rebuilt. Covers staleness changing with
- * time as well as new data, and the command feedback. */
-static uint64_t screen_sig(ru_dzapp_t *a) {
-  uint64_t h = 1469598103934665603ULL;
-  int c = (int)conn(a);
-  h = fnv(h, &c, sizeof c);
-  h = fnv(h, &a->view, sizeof a->view);
-  h = fnv(h, &a->section, sizeof a->section);
-  h = fnv(h, &a->energy_sel, sizeof a->energy_sel);
-  h = fnv(h, &a->page, sizeof a->page);
-  h = fnv(h, &a->fb.st, sizeof a->fb.st);
-  h = fnv(h, a->fb.text, strlen(a->fb.text));
-  size_t total = dz_model_count(a->model);
-  h = fnv(h, &total, sizeof total);
-  for (size_t i = 0; i < total; i++) {
+/* The structure is unchanged (same entries, same order, same page): push the new values into the tiles that exist.
+ * The tile setters compare with what they show, so only a tile whose value changed is redrawn. a->ix is current. */
+static void update_in_place(ru_dzapp_t *a) {
+  STAT_INC(inplace);
+  size_t first = (size_t)a->page * (size_t)(a->section == RU_SEC_UTILITY ? PAGE_ROWS : PAGE_TILES);
+  if (a->rim) ru_status_rim_set_state(a->rim, rim_for(conn(a), ix_any_stale(a)));
+  dz_units_t un;
+  get_units(a, &un);
+  for (size_t r = 0; r < a->nrows; r++) {
     dz_device_t d;
-    ru_val_t v;
     ru_val_state_t st;
-    bool scene, known;
-    char txt[32];
-    if (!dz_model_at(a->model, i, &d, &v, &st, &scene, a->now)) continue;
-    ru_dzv_value_text(&d, txt, sizeof txt, &known);
-    h = fnv(h, d.idx, strlen(d.idx));
-    h = fnv(h, d.name, strlen(d.name));
-    h = fnv(h, txt, strlen(txt));
-    h = fnv(h, d.status, strlen(d.status));
-    h = fnv(h, &st, sizeof st);
-    h = fnv(h, &scene, sizeof scene);
-    h = fnv(h, &d.favorite, sizeof d.favorite); /* membership and order of the pages */
-    h = fnv(h, &d.tabs, sizeof d.tabs);
-    { uint16_t o = dz_model_order_at(a->model, i); h = fnv(h, &o, sizeof o); }
-    h = fnv(h, &d.level, sizeof d.level);
-    h = fnv(h, &d.level_int, sizeof d.level_int);
-    h = fnv(h, &d.setpoint, sizeof d.setpoint);
-    h = fnv(h, &d.usage_w, sizeof d.usage_w);
-    h = fnv(h, &d.temp, sizeof d.temp);
-    /* readings, trend, battery, mode, text: anything a climate screen shows */
-    h = fnv(h, &d.n_rd, sizeof d.n_rd);
-    for (int k = 0; k < d.n_rd; k++) { h = fnv(h, &d.rd[k].kind, sizeof d.rd[k].kind); h = fnv(h, &d.rd[k].v, sizeof d.rd[k].v); h = fnv(h, d.rd[k].unit, strlen(d.rd[k].unit)); }
-    h = fnv(h, d.data, strlen(d.data));
-    h = fnv(h, &d.trend, sizeof d.trend);
-    h = fnv(h, &d.battery, sizeof d.battery);
-    h = fnv(h, &d.mode, sizeof d.mode);
+    bool sc;
+    if (!ix_get(a, first + r, &d, NULL, &st, &sc)) continue;
+    if (a->section == RU_SEC_UTILITY) row_tile_update(a->row_tiles[r], &d, &un, st);
+    else entry_tile_update(a, a->row_tiles[r], &d, sc, st);
   }
-  {
-    dz_units_t un;
-    get_units(a, &un);
-    h = fnv(h, &un.have_temp, sizeof un.have_temp);
-    h = fnv(h, un.temp, strlen(un.temp));
-    h = fnv(h, &un.have_wind, sizeof un.have_wind);
-    h = fnv(h, un.wind, strlen(un.wind));
-  }
-  return h;
 }
 
 /* ------------------------------------------------------------------ public UI API */
@@ -1554,12 +1714,27 @@ void ru_dzapp_ui_tick(ru_dzapp_t *a, uint32_t now_ms) {
   ru_fb_tick(&a->fb, now_ms);
   if (a->view == RU_VIEW_CONFIRM) return; /* a hold is in progress: never rebuild under the finger */
   if (now_ms < a->interact_until) return; /* nor while a slider is being dragged */
+  uint64_t core = ctl_core(a);
+  uint32_t epoch = now_ms / STALE_EPOCH_MS;
+  if (a->sig && core == a->ctl && epoch == a->epoch) return; /* no new data, same stale epoch, same controls */
+  bool time_only = a->sig && core == a->ctl;
+  a->ctl = core;
+  a->epoch = epoch;
+  if (time_only && grid_view(a) && stale_sig(a) == a->stale_sig) return; /* only the clock moved and no state with it */
+  STAT_INC(evals);
   uint64_t sig = screen_sig(a);
-  if (sig == a->sig) return;
-  int scroll = a->list ? (int)lv_obj_get_scroll_y(a->list) : 0;
+  if (grid_view(a)) a->stale_sig = stale_hash(a);
+  if (a->sig && sig == a->sig) { /* same structure: new values go into the existing tiles */
+    if (grid_view(a)) update_in_place(a);
+    return;
+  }
+  /* a change the user or the connection made rebuilds at once; a background change at most once per REBUILD_MIN_MS */
+  bool urgent = !a->sig || imm_sig(a) != a->imm;
+  if (!urgent && now_ms - a->last_build < REBUILD_MIN_MS) { a->ctl = 0; return; } /* looked at again on the next tick */
+  int sx = a->list ? (int)lv_obj_get_scroll_x(a->list) : 0, sy = a->list ? (int)lv_obj_get_scroll_y(a->list) : 0;
   build_and_show(a);
   a->sig = sig;
-  if (a->list && scroll > 0) lv_obj_scroll_to_y(a->list, scroll, LV_ANIM_OFF);
+  if (a->list && (sx > 0 || sy > 0)) lv_obj_scroll_to(a->list, sx, sy, LV_ANIM_OFF);
 }
 
 static void timer_cb(lv_timer_t *t) {

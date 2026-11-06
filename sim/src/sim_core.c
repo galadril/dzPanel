@@ -1,5 +1,6 @@
 #include "sim_core.h"
 #include "ru_theme.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,13 +27,26 @@ static uint32_t tick_cb(void) {
 
 static long g_inv_px, g_inv_n, g_inv_full;
 static int g_size_px;
+static uint8_t *g_cover; /* pixels already invalidated since the last render: LVGL redraws the union, so only new pixels count */
 static void inv_cb(lv_event_t *e) {
   const lv_area_t *a = lv_event_get_param(e);
-  if (!a) return;
-  long w = lv_area_get_width(a), h = lv_area_get_height(a);
-  g_inv_px += w * h;
+  if (!a || !g_cover) return;
+  int x1 = a->x1 < 0 ? 0 : a->x1, y1 = a->y1 < 0 ? 0 : a->y1;
+  int x2 = a->x2 >= g_size_px ? g_size_px - 1 : a->x2, y2 = a->y2 >= g_size_px ? g_size_px - 1 : a->y2;
+  long fresh = 0;
+  for (int y = y1; y <= y2; y++)
+    for (int x = x1; x <= x2; x++) {
+      uint8_t *c = &g_cover[(size_t)y * (size_t)g_size_px + (size_t)x];
+      if (!*c) { *c = 1; fresh++; }
+    }
+  if (!fresh) return;
+  g_inv_px += fresh;
   g_inv_n++;
-  if (w >= g_size_px && h >= g_size_px) g_inv_full++;
+  if (x2 - x1 + 1 >= g_size_px && y2 - y1 + 1 >= g_size_px) g_inv_full++;
+}
+static void refr_start_cb(lv_event_t *e) {
+  (void)e;
+  if (g_cover) memset(g_cover, 0, (size_t)g_size_px * (size_t)g_size_px);
 }
 void sim_inv_reset(void) { g_inv_px = g_inv_n = g_inv_full = 0; }
 long sim_inv_pixels(void) { return g_inv_px; }
@@ -83,8 +97,11 @@ bool sim_init_ex(sim_t *s, int size, bool square) {
   lv_display_set_buffers(g_disp, g_buf, NULL, (uint32_t)size * (uint32_t)size * 4u, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(g_disp, flush_cb);
   g_size_px = size;
+  free(g_cover);
+  g_cover = calloc((size_t)size * (size_t)size, 1);
   sim_inv_reset();
   lv_display_add_event_cb(g_disp, inv_cb, LV_EVENT_INVALIDATE_AREA, NULL);
+  lv_display_add_event_cb(g_disp, refr_start_cb, LV_EVENT_REFR_START, NULL);
   g_indev = lv_indev_create();
   lv_indev_set_type(g_indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(g_indev, indev_cb);
@@ -96,6 +113,8 @@ void sim_shutdown(sim_t *s) {
   lv_deinit();
   free(g_buf);
   g_buf = NULL;
+  free(g_cover);
+  g_cover = NULL;
   g_disp = NULL;
   g_indev = NULL;
   free(s->fb);

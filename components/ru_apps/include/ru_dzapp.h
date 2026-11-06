@@ -69,6 +69,12 @@ void ru_dzapp_net_stop(ru_dzapp_t *a);
 void ru_dzapp_start(ru_dzapp_t *a);
 /* Refresh what changed. The timer calls this; tests call it directly with a virtual clock. */
 void ru_dzapp_ui_tick(ru_dzapp_t *a, uint32_t now_ms);
+
+/* Refresh counters for the `disp` diagnostics line (collected only when CONFIG_RU_HEAP_LOG is on, otherwise zeros):
+ * screen rebuilds, in-place updates, signature evaluations, longest build / signature in microseconds, and dz_device_t
+ * copies taken from the model. Counts and maxima since the last call that asked for a reset. */
+typedef struct { uint32_t rebuilds, inplace, evals, build_max_us, sig_max_us, copies; } ru_dzapp_stats_t;
+void ru_dzapp_stats(ru_dzapp_t *a, ru_dzapp_stats_t *out, bool reset);
 /* Navigation, also used by the gesture layer later. */
 void ru_dzapp_open(ru_dzapp_t *a, const char *idx, bool is_scene);
 void ru_dzapp_home(ru_dzapp_t *a);

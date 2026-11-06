@@ -12,6 +12,12 @@ uint32_t ru_now_ms(void) {
   return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
 }
 
+uint32_t ru_now_us(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint32_t)(ts.tv_sec * 1000000u + ts.tv_nsec / 1000u);
+}
+
 void ru_sleep_ms(uint32_t ms) {
   struct timespec ts = {.tv_sec = ms / 1000, .tv_nsec = (long)(ms % 1000) * 1000000L};
   nanosleep(&ts, NULL);
