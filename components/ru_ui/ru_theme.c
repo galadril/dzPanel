@@ -48,6 +48,8 @@ const lv_font_t *ru_font_title(void) { return g_geom.diameter >= 400 ? &lv_font_
 const lv_font_t *ru_font_body(void) { return &lv_font_montserrat_16; }
 const lv_font_t *ru_font_small(void) { return &lv_font_montserrat_12; }
 const lv_font_t *ru_font_icon_s(void) { return &ru_icons_24; }
+const lv_font_t *ru_font_caption(void) { return &lv_font_montserrat_14; }
+const lv_font_t *ru_font_big(void) { return &lv_font_montserrat_32; }
 
 lv_obj_t *ru_cont_new(lv_obj_t *parent, int x, int y, int w, int h) {
   lv_obj_t *o = lv_obj_create(parent);

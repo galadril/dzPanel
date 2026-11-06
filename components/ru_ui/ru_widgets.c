@@ -1339,3 +1339,207 @@ void ru_state_tile_on_tap(lv_obj_t *o, ru_tap_cb_t cb, void *ud) {
   s->cb = cb;
   s->ud = ud;
 }
+
+/* ---------------------------------------------------------------- weather tile */
+
+typedef struct {
+  ru_tap_cb_t cb;
+  void *ud;
+  lv_obj_t *part[6]; /* name, icon, value, unit, second, dot */
+  bool inited;
+  char name[40], icon[8], value[16], unit[24], second[32];
+  lv_color_t icon_color, second_color;
+  ru_val_state_t state;
+  const lv_font_t *vfont;
+  int pos[5][4]; /* x, y, w, h of the five labels as last placed */
+  bool placed;
+} wtile_t;
+
+static lv_style_t st_wx_tile, st_wx_pressed, st_wx_stale, st_wx_name, st_wx_icon, st_wx_unit, st_wx_second;
+static bool st_wx_ready;
+
+static void wx_styles(void) {
+  if (st_wx_ready) return;
+  st_wx_ready = true;
+  const ru_theme_t *t = ru_theme();
+  lv_style_init(&st_wx_tile);
+  lv_style_set_bg_color(&st_wx_tile, t->surface);
+  lv_style_set_bg_opa(&st_wx_tile, LV_OPA_COVER);
+  lv_style_init(&st_wx_pressed);
+  lv_style_set_bg_color(&st_wx_pressed, lv_color_hex(0x23272E));
+  lv_style_init(&st_wx_stale);
+  lv_style_set_border_width(&st_wx_stale, 1);
+  lv_style_set_border_color(&st_wx_stale, t->stale);
+  lv_style_set_border_opa(&st_wx_stale, LV_OPA_COVER);
+  lv_style_init(&st_wx_name);
+  lv_style_set_text_font(&st_wx_name, ru_font_caption());
+  lv_style_set_text_color(&st_wx_name, t->text_dim);
+  lv_style_set_text_align(&st_wx_name, LV_TEXT_ALIGN_CENTER);
+  lv_style_init(&st_wx_icon);
+  lv_style_set_text_font(&st_wx_icon, ru_font_icon_s());
+  lv_style_init(&st_wx_unit);
+  lv_style_set_text_font(&st_wx_unit, ru_font_body());
+  lv_style_set_text_color(&st_wx_unit, t->text_dim);
+  lv_style_init(&st_wx_second);
+  lv_style_set_text_font(&st_wx_second, ru_font_caption());
+  lv_style_set_text_align(&st_wx_second, LV_TEXT_ALIGN_CENTER);
+}
+
+static lv_obj_t *wx_label(lv_obj_t *parent, lv_style_t *st) {
+  lv_obj_t *l = lv_label_create(parent);
+  lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_style(l, st, 0);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  lv_label_set_text_static(l, "");
+  return l;
+}
+
+static int text_w(const char *s, const lv_font_t *f) {
+  if (!s[0]) return 0;
+  lv_point_t sz;
+  lv_text_get_size(&sz, s, f, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return sz.x + 1;
+}
+
+/* Place label i at (x, y) with size (w, h) unless it is already there: a style set invalidates even for the same value. */
+static void wx_place(wtile_t *s, int i, int x, int y, int w, int h) {
+  int *p = s->pos[i];
+  lv_obj_t *l = s->part[i];
+  if (s->placed && p[0] == x && p[1] == y && p[2] == w && p[3] == h) return;
+  p[0] = x; p[1] = y; p[2] = w; p[3] = h;
+  lv_obj_set_pos(l, x, y);
+  lv_obj_set_size(l, w, h);
+}
+
+static void wx_layout(lv_obj_t *o, wtile_t *s) {
+  int w = lv_obj_get_width(o), h = lv_obj_get_height(o);
+  int pad = ru_u(1.2f), gap = ru_u(0.8f), room = w - 2 * pad;
+  const lv_font_t *cap = ru_font_caption(), *body = ru_font_body(), *icf = ru_font_icon_s();
+  int cl = lv_font_get_line_height(cap);
+  int name_y = h * 8 / 100, sec_y = h - h * 8 / 100 - cl;
+  int rc = (name_y + cl + sec_y) / 2; /* centre line of the value row */
+  /* the name: one line across the tile */
+  wx_place(s, 0, ru_u(1.5f), name_y, w - 2 * ru_u(1.5f), cl);
+  /* the value row: icon, value, unit as one centred group; the value font drops until it fits, last the icon goes */
+  const lv_font_t *fonts[3] = { ru_font_big(), ru_font_title(), body };
+  int uw = text_w(s->unit, body), icw = s->icon[0] ? lv_font_get_line_height(icf) : 0;
+  const lv_font_t *vf = body;
+  int vw = 0;
+  bool icon = icw > 0;
+  for (int k = 0; k < 4; k++) {
+    vf = fonts[k < 3 ? k : 2];
+    if (k == 3) icon = false; /* even the small font does not fit beside the icon */
+    vw = text_w(s->value, vf);
+    int total = (icon ? icw + gap : 0) + vw + uw;
+    if (total <= room || k == 3) break;
+  }
+  int total = (icon ? icw + gap : 0) + vw + uw;
+  if (total > room) { /* still too wide: the value is cut with dots, the unit keeps its room */
+    vw = room - uw - (icon ? icw + gap : 0);
+    if (vw < 0) vw = 0;
+    total = room;
+  }
+  s->vfont = vf;
+  if (lv_obj_get_style_text_font(s->part[2], LV_PART_MAIN) != vf) lv_obj_set_style_text_font(s->part[2], vf, 0);
+  int vl = lv_font_get_line_height(vf);
+  int x = (w - total) / 2;
+  if (icon) { wx_place(s, 1, x, rc - icw / 2, icw, icw); x += icw + gap; lv_obj_remove_flag(s->part[1], LV_OBJ_FLAG_HIDDEN); }
+  else { wx_place(s, 1, x, rc - icw / 2, 0, 0); lv_obj_add_flag(s->part[1], LV_OBJ_FLAG_HIDDEN); }
+  int vy = rc - vl / 2;
+  wx_place(s, 2, x, vy, vw, vl);
+  /* the unit sits on the baseline of the value */
+  int ul = lv_font_get_line_height(body);
+  int uy = vy + (vl - vf->base_line) - (ul - body->base_line);
+  wx_place(s, 3, x + vw, uy, uw, ul);
+  int sw = text_w(s->second, cap);
+  if (sw > w - 2 * ru_u(2.5f)) sw = w - 2 * ru_u(2.5f); /* the stale dot owns the corner */
+  wx_place(s, 4, (w - sw) / 2, sec_y, sw, cl);
+  s->placed = true;
+}
+
+static void wtile_clicked(lv_event_t *e) {
+  lv_obj_t *o = lv_event_get_target(e);
+  wtile_t *s = wd_get(o);
+  if (s->cb) s->cb(o, s->ud);
+}
+
+lv_obj_t *ru_wx_tile_create(lv_obj_t *parent, int w, int h) {
+  const ru_theme_t *t = ru_theme();
+  wx_styles();
+  lv_obj_t *o = lv_obj_create(parent);
+  lv_obj_remove_style_all(o);
+  lv_obj_set_size(o, w, h);
+  lv_obj_add_style(o, &st_wx_tile, 0);
+  lv_obj_add_style(o, &st_wx_pressed, LV_STATE_PRESSED);
+  lv_obj_add_style(o, &st_wx_stale, LV_STATE_USER_1);
+  lv_obj_set_style_radius(o, h * 3 / 10, 0);
+  lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(o, LV_OBJ_FLAG_EVENT_BUBBLE);
+  wtile_t *s = wd_attach(o, sizeof(wtile_t));
+  s->part[0] = wx_label(o, &st_wx_name);
+  s->part[1] = wx_label(o, &st_wx_icon);
+  lv_label_set_long_mode(s->part[1], LV_LABEL_LONG_CLIP);
+  s->part[2] = wx_label(o, &st_wx_unit); /* the value label: unit style gives font and colour, both are set per tile state below */
+  lv_obj_set_style_text_color(s->part[2], t->text, 0);
+  s->part[3] = wx_label(o, &st_wx_unit);
+  s->part[4] = wx_label(o, &st_wx_second);
+  int dd = ru_u(1.1f); /* 6 px at the usual size */
+  lv_obj_t *dot = lv_obj_create(o);
+  lv_obj_remove_style_all(dot);
+  lv_obj_set_size(dot, dd, dd);
+  lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(dot, t->warn, 0);
+  lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_pos(dot, w - ru_u(2.2f) - dd, h - ru_u(2.2f) - dd);
+  lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
+  s->part[5] = dot;
+  s->icon_color = t->text;
+  s->second_color = t->text_dim;
+  lv_obj_add_event_cb(o, wtile_clicked, LV_EVENT_CLICKED, NULL);
+  return o;
+}
+
+void ru_wx_tile_set(lv_obj_t *o, const ru_wxtile_data_t *d) {
+  wtile_t *s = wd_get(o);
+  const ru_theme_t *t = ru_theme();
+  char name[sizeof s->name], icon[sizeof s->icon], value[sizeof s->value], unit[sizeof s->unit], second[sizeof s->second];
+  snprintf(name, sizeof name, "%s", d->name ? d->name : "");
+  snprintf(icon, sizeof icon, "%s", d->icon ? d->icon : "");
+  snprintf(value, sizeof value, "%s", d->value ? d->value : "");
+  snprintf(unit, sizeof unit, "%s", d->unit ? d->unit : "");
+  snprintf(second, sizeof second, "%s", d->second ? d->second : "");
+  bool first = !s->inited;
+  s->inited = true;
+  if (first || strcmp(name, s->name)) { memcpy(s->name, name, sizeof name); lv_label_set_text(s->part[0], name); }
+  bool relayout = first;
+  if (first || strcmp(icon, s->icon)) { memcpy(s->icon, icon, sizeof icon); lv_label_set_text(s->part[1], icon); relayout = true; }
+  if (first || strcmp(value, s->value)) { memcpy(s->value, value, sizeof value); lv_label_set_text(s->part[2], value); relayout = true; }
+  if (first || strcmp(unit, s->unit)) { memcpy(s->unit, unit, sizeof unit); lv_label_set_text(s->part[3], unit); relayout = true; }
+  if (first || strcmp(second, s->second)) { memcpy(s->second, second, sizeof second); lv_label_set_text(s->part[4], second); relayout = true; }
+  if (relayout) wx_layout(o, s);
+  bool grey = d->state != RU_VAL_OK;
+  s->state = d->state;
+  set_text_color(s->part[1], grey ? t->stale : d->icon_color);
+  set_text_color(s->part[2], d->state == RU_VAL_STALE ? t->stale : d->state == RU_VAL_UNKNOWN ? t->text_dim : t->text);
+  set_text_color(s->part[3], t->text_dim);
+  set_text_color(s->part[4], grey ? t->stale : d->second_color);
+  bool dot = lv_obj_has_flag(s->part[5], LV_OBJ_FLAG_HIDDEN);
+  if (grey && dot) lv_obj_remove_flag(s->part[5], LV_OBJ_FLAG_HIDDEN);
+  if (!grey && !dot) lv_obj_add_flag(s->part[5], LV_OBJ_FLAG_HIDDEN);
+  bool bord = lv_obj_has_state(o, LV_STATE_USER_1);
+  if (grey && !bord) lv_obj_add_state(o, LV_STATE_USER_1);
+  if (!grey && bord) lv_obj_remove_state(o, LV_STATE_USER_1);
+}
+
+void ru_wx_tile_on_tap(lv_obj_t *o, ru_tap_cb_t cb, void *ud) {
+  wtile_t *s = wd_get(o);
+  s->cb = cb;
+  s->ud = ud;
+}
+
+lv_obj_t *ru_wx_tile_part(const lv_obj_t *o, int which) {
+  wtile_t *s = wd_get(o);
+  return which >= 0 && which < 6 ? s->part[which] : NULL;
+}

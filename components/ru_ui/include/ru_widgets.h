@@ -105,3 +105,24 @@ const char *ru_state_tile_sub(const lv_obj_t *tile);
 /* The big text shown instead of the indicator when the state is RU_DOT_NONE (sensor values). */
 void ru_state_tile_set_value(lv_obj_t *tile, const char *text);
 void ru_state_tile_on_tap(lv_obj_t *tile, ru_tap_cb_t cb, void *ud);
+
+/* ---- weather tile (Temperature and Weather pages): the device name on top, then the icon and the big value side by side,
+ * centred, with the unit (and a trend chevron) in one small label after the value, and an optional small line below.
+ * 7 objects, shared styles. The icon (and only the icon, plus the small line when the caller tints it) carries the band colour; the
+ * value stays white. A stale or unknown tile greys value and icon, shows a warn dot in the bottom right corner and a 1 px
+ * border: colour is never the only signal. The setter compares every field and touches only what changed. ---- */
+typedef struct {
+  const char *name;        /* the device name, one line, cut with dots */
+  const char *icon;        /* UTF-8 of one icon-font glyph (ru_icons.h), "" for none */
+  lv_color_t icon_color;   /* band colour of the icon; the theme text colour when there is no band */
+  const char *value;       /* "21.5" */
+  const char *unit;        /* "\xC2\xB0C", " hPa", may end with a trend chevron; "" for none */
+  const char *second;      /* the small line, "" for none */
+  lv_color_t second_color; /* theme dim colour unless the caller tints it (the UV word) */
+  ru_val_state_t state;    /* OK, STALE, UNKNOWN */
+} ru_wxtile_data_t;
+lv_obj_t *ru_wx_tile_create(lv_obj_t *parent, int w, int h);
+void ru_wx_tile_set(lv_obj_t *tile, const ru_wxtile_data_t *d);
+void ru_wx_tile_on_tap(lv_obj_t *tile, ru_tap_cb_t cb, void *ud);
+/* The label objects of a tile, for tests and layout checks: 0 name, 1 icon, 2 value, 3 unit, 4 second line, 5 stale dot. */
+lv_obj_t *ru_wx_tile_part(const lv_obj_t *tile, int which);
