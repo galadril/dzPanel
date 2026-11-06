@@ -1462,7 +1462,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       name_back(a, s, name, 40);
       int pos, total;
       if (detail_pos(a, &pos, &total, NULL, NULL) && total > 1) {
-        char nm[16];
+        char nm[28];
         snprintf(nm, sizeof nm, "%d/%d", pos + 1, total);
         label_u(s, nm, ru_font_small(), ru_dim(t->text_dim, 170), 0, 33.4f);
       }
