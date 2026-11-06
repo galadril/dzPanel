@@ -5,12 +5,13 @@
 
 #include "dz_client.h"
 #include "dz_fake.h"
+#include "dz_service.h"
 #include "mini_test.h"
 
 static const char *SECRET = "SECRET-TOKEN-123";
 static const char *SID = "0123456789abcdef0123456789abcdef";
 
-typedef enum { S_OK, S_EXPIRE_ONCE, S_EXPIRE_ALWAYS, S_MISSING_ONCE, S_TIMEOUT_CALL, S_TIMEOUT_INIT, S_CONNECT_INIT, S_401, S_HTML, S_NOSID, S_ERR_INIT, S_503, S_FOREIGN_ID, S_STALE_ID_ONCE, S_NOID, S_32001_PLAIN, S_32600_PLAIN } smode_t;
+typedef enum { S_OK, S_EXPIRE_ONCE, S_EXPIRE_ALWAYS, S_MISSING_ONCE, S_TIMEOUT_CALL, S_TIMEOUT_INIT, S_CONNECT_INIT, S_401, S_HTML, S_NOSID, S_ERR_INIT, S_503, S_FOREIGN_ID, S_STALE_ID_ONCE, S_NOID, S_32001_PLAIN, S_32600_PLAIN, S_PROBE_BIG, S_PROBE_BIG_NOSID, S_PROBE_TIMEOUT } smode_t;
 static smode_t sm;
 static int tools_run;     /* calls that reached the tool */
 static int notify_seen;
@@ -18,7 +19,16 @@ static int notify_seen;
 #define OKR "{\"id\":9,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"Switch \\\"x\\\" set to On successfully.\",\"type\":\"text\"}],\"isError\":false}}"
 
 static dz_net_err_t srv(fake_t *f, const char *url, char *buf, size_t cap, dz_http_result_t *out) {
-  (void)url;
+  if (strstr(url, "getversion")) return fake_body("{\"status\":\"OK\",\"title\":\"getversion\",\"version\":\"2026.4 (build 1)\"}", 200, buf, cap, out);
+  if (sm == S_PROBE_BIG || sm == S_PROBE_BIG_NOSID) { /* an initialize answer larger than the probe's 1 KB buffer */
+    static char big[3000];
+    snprintf(big, sizeof big, "{\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"protocolVersion\":\"2025-06-18\",\"instructions\":\"");
+    size_t n = strlen(big);
+    memset(big + n, 'x', 2000);
+    snprintf(big + n + 2000, sizeof big - n - 2000, "\"}}");
+    return fake_body(big, 200, buf, cap, out);
+  }
+  if (sm == S_PROBE_TIMEOUT) return DZ_NET_TIMEOUT;
   bool init = strstr(f->body, "\"initialize\"") != NULL;
   bool notif = strstr(f->body, "notifications/initialized") != NULL;
   if (notif) { notify_seen++; return fake_body("<html><body>Accepted</body></html>", 202, buf, cap, out); }
@@ -220,6 +230,29 @@ static void test_failures(void) {
   no_leaks();
 }
 
+/* the connection test: an initialize reply that does not fit its buffer is still a working endpoint */
+static void test_probe(void) {
+  ru_cfg_t c;
+  char info[48];
+  memset(&c, 0, sizeof c);
+  snprintf(c.url, sizeof c.url, "http://dz.example:8080");
+  c.insecure_lan = true;
+  snprintf(c.token, sizeof c.token, "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlcyI6WzBdfQ.c2lnbmF0dXJl");
+  setup();
+  CHECK(dz_service_probe(&F.base, NULL, &c, 1000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4 control MCP ok"));
+  setup(); sm = S_PROBE_BIG;
+  CHECK(dz_service_probe(&F.base, NULL, &c, 1000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4 control MCP ok"));
+  setup(); sm = S_PROBE_BIG; F.sid_script = "";
+  CHECK(dz_service_probe(&F.base, NULL, &c, 1000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4 control MCP unavailable"));
+  setup(); sm = S_PROBE_BIG;
+  char longsid[100];
+  memset(longsid, 'a', 99); longsid[99] = 0;
+  F.sid_script = longsid;
+  CHECK(dz_service_probe(&F.base, NULL, &c, 1000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4 control MCP unavailable"));
+  setup(); sm = S_PROBE_TIMEOUT;
+  CHECK(dz_service_probe(&F.base, NULL, &c, 1000, info, sizeof info) == RU_CFG_TEST_OK && !strcmp(info, "2026.4 control MCP unavailable"));
+}
+
 static void test_wipes(void) {
   dz_mcp_result_t r;
   setup();
@@ -248,6 +281,7 @@ int main(void) {
   test_idle_retire();
   test_recovery();
   test_failures();
+  test_probe();
   test_wipes();
   if (M.mu) dz_model_deinit(&M);
   MT_DONE();

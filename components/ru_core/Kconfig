@@ -35,8 +35,10 @@ menu "dzPanel task stacks"
     config RU_TASK_STACK_CONSOLE
         int "Stack bytes of the ru_console task"
         range 3072 32768
-        default 10240
+        default 12288
         help
-            Measured use about 6.5 KB (min free 3688 of 10240): keep 10240.
+            Measured use about 6.5 KB (min free 3688 of 10240) before the connection test existed on this task. The console
+            line "test" runs dz_service_probe here (about 2.5 KB frame, and a TLS handshake needs far more): 12288 keeps the margin
+            above 1.5 KB.
 
 endmenu

@@ -394,7 +394,7 @@ ru_cfg_test_t dz_service_probe(dz_transport_t *t, void (*set_insecure)(dz_transp
    * to idle out on the server (the notification is skipped); its id is wiped here. */
   bool mcp = false;
   if (t->post) {
-    char body[256], sid[65];
+    char body[256], sid[DZ_SID_MAX + 16]; /* room to see an overlong id instead of truncating it into a valid-looking one */
     const char *ph[3] = {hdr, "Accept: application/json, text/event-stream", NULL}; /* hdr still holds the Authorization header */
     size_t bl = dz_mcp_init_body(body, sizeof body, 1);
     snprintf(url, sizeof url, "%s/mcp", cfg->url);
@@ -403,7 +403,15 @@ ru_cfg_test_t dz_service_probe(dz_transport_t *t, void (*set_insecure)(dz_transp
     dz_http_result_t pr = {0, 0};
     dz_net_err_t pe = bl ? t->post(t, url, ph, &p, timeout_ms, buf, sizeof buf, &pr) : DZ_NET_CONNECT;
     dz_mcp_reply_t mr;
-    mcp = pe == DZ_NET_OK && pr.status == 200 && sid[0] && dz_mcp_parse_reply(buf, pr.len, &mr) == DZ_OK && mr.has_result && !mr.has_error;
+    bool sid_good = sid[0] && strlen(sid) <= DZ_SID_MAX && strspn(sid, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.") == strlen(sid);
+    if (pe == DZ_NET_OK) {
+      mcp = pr.status == 200 && sid_good && dz_mcp_parse_reply(buf, pr.len, &mr) == DZ_OK && mr.has_result && !mr.has_error &&
+            mr.has_id && mr.id == 1;
+    } else {
+      /* An initialize reply larger than this 1 KB buffer arrives truncated (TOO_LARGE): the status and the session header are still
+       * valid, so it is a working MCP endpoint. Only a real failure (timeout, connect, TLS, other status) says "unavailable". */
+      mcp = pe == DZ_NET_TOO_LARGE && pr.status == 200 && sid_good;
+    }
     secure_zero(sid, sizeof sid);
   }
   secure_zero(hdr, sizeof hdr);
