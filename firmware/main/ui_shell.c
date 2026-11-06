@@ -37,6 +37,58 @@ static struct {
   lv_obj_t *setup_scr;
 } U;
 
+/* ---------- display diagnostics (RU_HEAP_LOG): what a refresh costs the panel ---------- */
+#if CONFIG_RU_HEAP_LOG
+#include "esp_timer.h"
+
+static struct {
+  volatile uint32_t inv_n, inv_px, inv_full, render_n, render_max_us;
+  volatile int64_t render_t0;
+} D;
+
+static void disp_event_cb(lv_event_t *e) {
+  switch (lv_event_get_code(e)) {
+    case LV_EVENT_INVALIDATE_AREA: {
+      const lv_area_t *a = lv_event_get_param(e);
+      if (!a) break;
+      uint32_t w = (uint32_t)lv_area_get_width(a), h = (uint32_t)lv_area_get_height(a);
+      D.inv_n++;
+      D.inv_px += w * h;
+      if (w >= (uint32_t)ru_board()->diameter && h >= (uint32_t)ru_board()->diameter) D.inv_full++;
+      break;
+    }
+    case LV_EVENT_RENDER_START: D.render_t0 = esp_timer_get_time(); break;
+    case LV_EVENT_RENDER_READY: {
+      uint32_t us = (uint32_t)(esp_timer_get_time() - D.render_t0);
+      D.render_n++;
+      if (us > D.render_max_us) D.render_max_us = us;
+      break;
+    }
+    default: break;
+  }
+}
+
+static void disp_diag_start(void) {
+  lv_display_t *d = lv_display_get_default();
+  if (!d) return;
+  lv_display_add_event_cb(d, disp_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
+  lv_display_add_event_cb(d, disp_event_cb, LV_EVENT_RENDER_START, NULL);
+  lv_display_add_event_cb(d, disp_event_cb, LV_EVENT_RENDER_READY, NULL);
+}
+
+void ui_shell_log_disp(void) {
+  ru_dzapp_stats_t st = {0};
+  if (U.app) ru_dzapp_stats(U.app, &st, true);
+  uint32_t n = D.inv_n, px = D.inv_px, full = D.inv_full, rn = D.render_n, rmax = D.render_max_us;
+  D.inv_n = D.inv_px = D.inv_full = D.render_n = D.render_max_us = 0;
+  ESP_LOGI("disp", "inv_n %u inv_px %u inv_full %u render_n %u render_max_us %u | rebuilds %u inplace %u evals %u build_max_us %u sig_max_us %u model_copies %u",
+           (unsigned)n, (unsigned)px, (unsigned)full, (unsigned)rn, (unsigned)rmax, (unsigned)st.rebuilds, (unsigned)st.inplace,
+           (unsigned)st.evals, (unsigned)st.build_max_us, (unsigned)st.sig_max_us, (unsigned)st.copies);
+}
+#else
+static inline void disp_diag_start(void) {}
+#endif
+
 /* ---------- screens without Domoticz ---------- */
 
 static lv_obj_t *label(lv_obj_t *s, const char *t, const lv_font_t *f, lv_color_t c, float dy_units) {
@@ -225,6 +277,7 @@ static void splash_begin(void) {
 void ui_shell_start(dz_service_t *svc, bool safe_mode, unsigned failed_boots) {
   const ru_board_t *b = ru_board();
   ru_theme_init(b->diameter);
+  disp_diag_start();
   splash_begin();
   U.safe = safe_mode;
   U.svc = svc;

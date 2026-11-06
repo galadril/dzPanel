@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "ui_shell.h"
 
 /* Diagnostics only. Logs numbers and fixed task names: no configuration value, SSID or credential is ever formatted here. */
 
@@ -108,6 +109,7 @@ static void heap_task(void *arg) {
       (void)w;
     }
     ESP_LOGI(TAG, "%s", g_line);
+    ui_shell_log_disp(); /* the `disp` line next to the heap line */
     next += period;
     while ((int32_t)(next - xTaskGetTickCount()) > 0) { /* sample often so a short burst below 24 KB is still caught */
       check_low();

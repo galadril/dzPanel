@@ -12,6 +12,13 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lv_adapter.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "esp_intr_alloc.h"
+#include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "ru_board_guition";
 
@@ -72,7 +79,7 @@ int ru_port_brightness_get(void) { return g_brightness; }
 /* Startup failures are terminal: ru_port_start returns NULL and the caller never retries, so ru_port_start does not tear down
  * the adapter or backlight; panel_new and touch_new do release their own handles. */
 /* Panel: 3-wire SPI IO -> esp_lcd_st7701 (vendor init table) -> RGB panel. */
-static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel) {
+static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel, size_t bounce_px) {
   const esp_lcd_panel_io_3wire_spi_config_t io_cfg = ST7701_PANEL_IO_3WIRE_SPI_CONFIG(
       ((spi_line_config_t){
           .cs_io_type = IO_TYPE_GPIO,
@@ -117,7 +124,7 @@ static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel) {
       .data_width = 16,
       .bits_per_pixel = 16,
       .num_fbs = nfb,
-      .bounce_buffer_size_px = RU_GUITION_BOUNCE_PX,
+      .bounce_buffer_size_px = bounce_px,
       .hsync_gpio_num = RU_GUITION_PIN_HSYNC,
       .vsync_gpio_num = RU_GUITION_PIN_VSYNC,
       .de_gpio_num = RU_GUITION_PIN_DE,
@@ -157,6 +164,69 @@ static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel) {
   }
   *out_panel = panel;
   return ESP_OK;
+}
+
+/* Bounce buffer: RU_GUITION_BOUNCE_PX (20 lines) when internal RAM allows it, else the 10 lines of the earlier builds. A
+ * failed attempt releases everything it took (panel_new and the driver clean up), so the retry starts clean. */
+static esp_err_t panel_new_bounce(esp_lcd_panel_handle_t *out_panel) {
+  size_t px = RU_GUITION_BOUNCE_PX;
+  esp_err_t e = panel_new(out_panel, px);
+  if (e == ESP_ERR_NO_MEM && px > RU_GUITION_HRES * 10) {
+    ESP_LOGW(TAG, "bounce buffer of %d lines: out of memory, retrying with 10 lines", (int)(px / RU_GUITION_HRES));
+    px = RU_GUITION_HRES * 10;
+    e = panel_new(out_panel, px);
+  }
+  if (e == ESP_OK) {
+    ESP_LOGI(TAG, "lcd bounce buffer %u px = %u lines (x2 internal DMA), frame buffer in PSRAM, LVGL draw units %d, int free %u",
+             (unsigned)px, (unsigned)(px / RU_GUITION_HRES), (int)LV_DRAW_SW_DRAW_UNIT_CNT,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  }
+  return e;
+}
+
+/* The two LCD interrupts (VSYNC / LCD_CAM and the GDMA EOF that refills the bounce buffer) are allocated with
+ * esp_intr_alloc_intrstatus() on the CORE THAT CALLS esp_lcd_new_rgb_panel (esp_hw_support/intr_alloc.c: cpu =
+ * esp_cpu_get_core_id(), no affinity flag is passed; the GDMA channel is created inside the same call). app_main and
+ * ru_hal_init run on core 0, where Wi-Fi lives and its interrupts and tasks compete with the refill. So the panel is
+ * created from a short-lived task pinned to core 1, which is deleted afterwards (the interrupts stay where they were
+ * allocated). One-core builds just call it directly. */
+typedef struct {
+  esp_lcd_panel_handle_t *out;
+  esp_err_t err;
+  int core;
+  SemaphoreHandle_t done;
+} panel_job_t;
+
+static void panel_task(void *arg) {
+  panel_job_t *j = arg;
+  j->core = (int)xPortGetCoreID();
+  j->err = panel_new_bounce(j->out);
+  xSemaphoreGive(j->done);
+  vTaskDelete(NULL);
+}
+
+static esp_err_t panel_new_on_core1(esp_lcd_panel_handle_t *out_panel) {
+#if CONFIG_FREERTOS_UNICORE
+  return panel_new_bounce(out_panel);
+#else
+  panel_job_t job = {.out = out_panel, .err = ESP_FAIL, .core = -1, .done = xSemaphoreCreateBinary()};
+  if (!job.done) return panel_new_bounce(out_panel);
+  TaskHandle_t th = NULL;
+  /* 4 KB internal stack: only panel_new runs in it (3-wire SPI init table + esp_lcd_new_rgb_panel) */
+  if (xTaskCreatePinnedToCore(panel_task, "lcdinit", 4096, &job, 5, &th, 1) != pdPASS) {
+    ESP_LOGW(TAG, "lcdinit task failed: creating the panel on core %d", (int)xPortGetCoreID());
+    vSemaphoreDelete(job.done);
+    return panel_new_bounce(out_panel);
+  }
+  xSemaphoreTake(job.done, portMAX_DELAY);
+  vSemaphoreDelete(job.done);
+  ESP_LOGI(TAG, "lcd interrupts (VSYNC + GDMA) allocated on core %d (app_main core %d), panel %s", job.core, (int)xPortGetCoreID(),
+           job.err == ESP_OK ? "ok" : esp_err_to_name(job.err));
+#if CONFIG_RU_HEAP_LOG
+  esp_intr_dump(stdout); /* per core list of allocated interrupts: the evidence for the line above */
+#endif
+  return job.err;
+#endif
 }
 
 /* Touch: GT911 without INT/RST; try 0x5D then 0x14. A failure here leaves the display usable. */
@@ -230,7 +300,7 @@ lv_display_t *ru_port_start(lv_indev_t **indev) {
   if ((e = backlight_init()) != ESP_OK) return start_failed("backlight_init", e);
 
   esp_lcd_panel_handle_t panel = NULL;
-  if ((e = panel_new(&panel)) != ESP_OK) return start_failed("panel_new", e);
+  if ((e = panel_new_on_core1(&panel)) != ESP_OK) return start_failed("panel_new", e);
 
   /* Bring-up: one frame buffer in PSRAM, no tear avoidance. */
   esp_lv_adapter_display_config_t dcfg = ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(panel, NULL, RU_GUITION_HRES, RU_GUITION_VRES,

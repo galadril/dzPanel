@@ -86,6 +86,9 @@
 #define RU_GUITION_VSYNC_IDLE_LOW 0
 #define RU_GUITION_DE_IDLE_HIGH 0
 #define RU_GUITION_PCLK_IDLE_HIGH 0
-/* Bounce buffer: 10 lines of 480 px (two of them are allocated in internal DMA RAM). Must divide h_res*v_res; the driver
- * refills it from the PSRAM frame buffer, which keeps the pixel clock fed while the octal PSRAM is busy (XIP-from-PSRAM). */
-#define RU_GUITION_BOUNCE_PX (RU_GUITION_HRES * 10)
+/* Bounce buffer: 20 lines of 480 px (two of them are allocated in internal DMA RAM, 2 x 19.2 KB; the 10-line buffers of the
+ * earlier builds were 2 x 9.6 KB, so +19.2 KB internal). Must divide h_res*v_res; the driver refills it from the PSRAM frame
+ * buffer, which keeps the pixel clock fed while the octal PSRAM is busy (XIP-from-PSRAM). A longer buffer gives the refill ISR
+ * twice the time before the panel runs dry (a late refill shifts the picture for a frame). The board falls back to 10 lines
+ * when internal RAM cannot take 20 (panel_new_bounce logs which one was used). */
+#define RU_GUITION_BOUNCE_PX (RU_GUITION_HRES * 20)

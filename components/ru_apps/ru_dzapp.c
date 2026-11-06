@@ -1,5 +1,9 @@
 #include "ru_dzapp.h"
 
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h" /* CONFIG_RU_HEAP_LOG: refresh counters (device builds only) */
+#endif
+
 #include <ctype.h>
 #include <math.h>
 #include <stdatomic.h>
