@@ -230,7 +230,7 @@ The shell lives on LVGL's top layer, above any app, so apps never see it.
                          ▲
  [Favourites] ◂▸ [Lights] ◂▸ [Scenes] ◂▸ [Temperature] ◂▸ [Weather] ◂▸ [Utility] ◂▸ [Energy] ◂▸ [Settings]
                                                    swipe left / right (no wrap); empty pages hidden
-                  swipe up / down: the pages of a list ("2/4"), 3x2 tiles or 4 rows a page
+                  swipe up / down: the pages of a list ("2/4"), 3x2 tiles a page (Lights, Scenes, Temperature, Weather, Favourites) or 4 rows (Utility)
                          ▼
                    [ Launcher ]            swipe up from bottom edge
 
