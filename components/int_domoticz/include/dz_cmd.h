@@ -25,6 +25,9 @@ typedef enum {
   DZ_CMD_SCENE_ON, DZ_CMD_SCENE_OFF,         /* scenes and groups (a Scene has no Off) */
   DZ_CMD_SETPOINT,                           /* setpoint in the server's own unit (TempSign or vunit), clamped to min..max */
   DZ_CMD_PUSH,                               /* push buttons */
+  DZ_CMD_COLOR_HUE,                          /* colour lights: hue 0..359 (full saturation: Domoticz hsb2rgb(h, 1, 1)), level = brightness 1..100 (0 refused) */
+  DZ_CMD_COLOR_WHITE,                        /* RGBW lights: the lamp's own white (hue 0, iswhite), level = brightness 1..100 */
+  DZ_CMD_COLOR_TEMP,                         /* tunable white: level = warmth 0..100 (0 coolest 6500 K, 100 warmest 2700 K) */
   DZ_CMD_MODE                                /* thermostat / fan mode: level = a Mode index from Modes. VIEW ONLY: the Domoticz MCP
                                                 endpoint has no tool for it, so dz_cmd_supported is false and submit refuses */
 } dz_cmd_kind_t;
@@ -34,8 +37,16 @@ typedef struct {
   const char *idx;     /* device idx, or scene idx for SCENE_*: separate namespaces */
   int level;
   float setpoint;
+  int16_t hue;         /* DZ_CMD_COLOR_HUE: 0..359 */
   bool confirmed;      /* the caller obtained the confirmation required by dz_cmd_risk */
 } dz_cmd_req_t;
+
+/* What a colour or temperature command does for a lamp that is OFF. Domoticz may or may not switch it on (unverified on a real
+ * lamp): 0 = send the colour / temperature command only and let the verify read decide; 1 = the UI also sends On afterwards.
+ * ONE constant so a live test can flip it. */
+#ifndef DZ_COLOR_WHEN_OFF_SENDS_ON
+#define DZ_COLOR_WHEN_OFF_SENDS_ON 0
+#endif
 
 typedef enum {
   DZ_CMD_ACCEPTED = 0,
@@ -154,3 +165,8 @@ size_t dz_mcp_encode_push(char *out, size_t cap, uint32_t rpc_id, const char *id
 size_t dz_cmd_push_steps(dz_push_mode_t mode); /* calls in a push sequence */
 size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind, const char *idx, const dz_device_t *pre,
                      int level, float setpoint);
+/* Same, with the hue of DZ_CMD_COLOR_HUE (0..359). */
+size_t dz_mcp_encode_hue(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind, const char *idx, const dz_device_t *pre,
+                         int level, int hue, float setpoint);
+/* The commands of the same family replace a queued one for the same device (see dz_cmd_submit): level (SET_LEVEL) or colour (HUE, WHITE, TEMP). */
+bool dz_cmd_is_colour(dz_cmd_kind_t k);

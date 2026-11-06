@@ -4,6 +4,7 @@
 
 #include "dz_client.h"
 #include "dz_cmd.h"
+#include "dz_color.h"
 #include "dz_fake.h"
 #include "mini_test.h"
 
@@ -13,30 +14,36 @@ typedef struct {
   int stv, level, maxlvl, protectedf, scene;
   char status[24], data[24], lu[24], names[48];
   float setpoint;
+  int cm, ct, cr, cg, cb; /* Color Switch: the Color JSON (m, t, r, g, b) */
 } sim_t;
 
 static sim_t S[] = {
-  {"1", "Light/Switch", "Switch", "lamp", 0, 0, 100, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0},
-  {"2", "Light/Switch", "Switch", "dim", 7, 29, 100, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0},
-  {"3", "Light/Switch", "Switch", "blind", 3, 0, 100, 0, 0, "Open", "Open", "2026-10-31 10:00:00", "", 0},
-  {"4", "Light/Switch", "Selector Switch", "fan", 18, 10, 100, 0, 0, "", "Low", "2026-10-31 10:00:00", "T2ZmfExvd3xNZWR8SGlnaA==", 0},
-  {"5", "Light/Switch", "Switch", "push", 9, 0, 100, 0, 0, "", "On", "2026-10-31 10:00:00", "", 0},
-  {"6", "Light/Switch", "Switch", "lock", 19, 0, 100, 0, 0, "Locked", "Locked", "2026-10-31 10:00:00", "", 0},
-  {"7", "Light/Switch", "Switch", "protected", 0, 0, 100, 1, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0},
-  {"8", "Light/Switch", "Switch", "lock2", 20, 0, 100, 0, 0, "Unlocked", "Unlocked", "2026-10-31 10:00:00", "", 0},
-  {"9", "Setpoint", "SetPoint", "therm", -1, 0, 100, 0, 0, "", "20.0", "2026-10-31 10:00:00", "", 20.0f},
-  {"10", "Temp", "x", "temp", -1, 0, 100, 0, 0, "", "20.0 C", "2026-10-31 10:00:00", "", 0},
-  {"11", "Light/Switch", "Switch", "dim15", 7, 0, 15, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0},
-  {"12", "Light/Switch", "Switch", "iblind6", 6, 0, 100, 0, 0, "Open", "Open", "2026-10-31 10:00:00", "", 0},
-  {"13", "Light/Switch", "Switch", "iblind16", 16, 0, 100, 0, 0, "Open", "Open", "2026-10-31 10:00:00", "", 0},
-  {"14", "Light/Switch", "Switch", "pblind", 13, 30, 100, 0, 0, "Set Level: 30 %", "Set Level: 30 %", "2026-10-31 10:00:00", "", 0},
-  {"15", "Light/Switch", "Switch", "pushoff", 10, 0, 100, 0, 0, "", "Off", "2026-10-31 10:00:00", "", 0},
-  {"16", "Light/Switch", "Switch", "dim255", 7, 0, 255, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0},
-  {"17", "Thermostat", "Thermostat Mode", "modedev", -1, 0, 100, 0, 0, "", "Heat", "2026-10-31 10:00:00", "", 0},
-  {"18", "Light/Switch", "Switch", "dim32", 7, 0, 32, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0},
-  {"19", "Light/Switch", "Selector Switch", "sel12", 18, 0, 100, 0, 0, "", "Off", "2026-10-31 10:00:00", "MHwxfDJ8M3w0fDV8Nnw3fDh8OXwxMHwxMQ==", 0},
-  {"1", "Scene", NULL, "scene", -1, 0, 100, 0, 1, "Off", "Off", "2026-10-31 10:00:00", "", 0},
-  {"2", "Group", NULL, "group", -1, 0, 100, 0, 1, "Off", "Off", "2026-10-31 10:00:00", "", 0},
+  {"1", "Light/Switch", "Switch", "lamp", 0, 0, 100, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"2", "Light/Switch", "Switch", "dim", 7, 29, 100, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"3", "Light/Switch", "Switch", "blind", 3, 0, 100, 0, 0, "Open", "Open", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"4", "Light/Switch", "Selector Switch", "fan", 18, 10, 100, 0, 0, "", "Low", "2026-10-31 10:00:00", "T2ZmfExvd3xNZWR8SGlnaA==", 0, 0, 0, 0, 0, 0},
+  {"5", "Light/Switch", "Switch", "push", 9, 0, 100, 0, 0, "", "On", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"6", "Light/Switch", "Switch", "lock", 19, 0, 100, 0, 0, "Locked", "Locked", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"7", "Light/Switch", "Switch", "protected", 0, 0, 100, 1, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"8", "Light/Switch", "Switch", "lock2", 20, 0, 100, 0, 0, "Unlocked", "Unlocked", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"9", "Setpoint", "SetPoint", "therm", -1, 0, 100, 0, 0, "", "20.0", "2026-10-31 10:00:00", "", 20.0f, 0, 0, 0, 0, 0},
+  {"10", "Temp", "x", "temp", -1, 0, 100, 0, 0, "", "20.0 C", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"11", "Light/Switch", "Switch", "dim15", 7, 0, 15, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"12", "Light/Switch", "Switch", "iblind6", 6, 0, 100, 0, 0, "Open", "Open", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"13", "Light/Switch", "Switch", "iblind16", 16, 0, 100, 0, 0, "Open", "Open", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"14", "Light/Switch", "Switch", "pblind", 13, 30, 100, 0, 0, "Set Level: 30 %", "Set Level: 30 %", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"15", "Light/Switch", "Switch", "pushoff", 10, 0, 100, 0, 0, "", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"16", "Light/Switch", "Switch", "dim255", 7, 0, 255, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"17", "Thermostat", "Thermostat Mode", "modedev", -1, 0, 100, 0, 0, "", "Heat", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"18", "Light/Switch", "Switch", "dim32", 7, 0, 32, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"19", "Light/Switch", "Selector Switch", "sel12", 18, 0, 100, 0, 0, "", "Off", "2026-10-31 10:00:00", "MHwxfDJ8M3w0fDV8Nnw3fDh8OXwxMHwxMQ==", 0, 0, 0, 0, 0, 0},
+  {"20", "Color Switch", "RGBWW", "spots", 7, 70, 100, 0, 0, "Set Level: 70 %", "Set Level: 70 %", "2026-10-31 10:00:00", "", 0, 3, 0, 255, 128, 0},
+  {"21", "Color Switch", "WW", "tunable", 7, 40, 100, 0, 0, "Off", "Off", "2026-10-31 10:00:00", "", 0, 2, 157, 0, 0, 0},
+  {"22", "Color Switch", "RGBW", "rgbw", 7, 50, 100, 0, 0, "Set Level: 50 %", "Set Level: 50 %", "2026-10-31 10:00:00", "", 0, 1, 0, 0, 0, 0},
+  {"23", "Color Switch", "RGB", "strip", 7, 60, 100, 0, 0, "Set Level: 60 %", "Set Level: 60 %", "2026-10-31 10:00:00", "", 0, 3, 0, 0, 0, 255},
+  {"24", "Color Switch", "RGBWW", "prot", 7, 60, 100, 1, 0, "Set Level: 60 %", "Set Level: 60 %", "2026-10-31 10:00:00", "", 0, 3, 0, 0, 0, 255},
+  {"1", "Scene", NULL, "scene", -1, 0, 100, 0, 1, "Off", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
+  {"2", "Group", NULL, "group", -1, 0, 100, 0, 1, "Off", "Off", "2026-10-31 10:00:00", "", 0, 0, 0, 0, 0, 0},
 };
 #define NS (sizeof S / sizeof S[0])
 
@@ -60,6 +67,9 @@ static void render(char *out, size_t cap, bool scenes, const char *rid) {
     first = 0;
     if (s->subtype) n += (size_t)snprintf(out + n, cap - n, ",\"SubType\":\"%s\"", s->subtype);
     if (s->stv >= 0) n += (size_t)snprintf(out + n, cap - n, ",\"SwitchTypeVal\":%d,\"Level\":%d,\"LevelInt\":%d,\"MaxDimLevel\":%d", s->stv, s->level, s->level, s->maxlvl);
+    if (!strcmp(s->type, "Color Switch"))
+      n += (size_t)snprintf(out + n, cap - n, ",\"Color\":\"{\\\"m\\\":%d,\\\"t\\\":%d,\\\"r\\\":%d,\\\"g\\\":%d,\\\"b\\\":%d,\\\"cw\\\":0,\\\"ww\\\":0}\"",
+                            s->cm, s->ct, s->cr, s->cg, s->cb);
     if (s->names[0]) n += (size_t)snprintf(out + n, cap - n, ",\"LevelNames\":\"%s\"", s->names);
     if (!strcmp(s->type, "Setpoint")) n += (size_t)snprintf(out + n, cap - n, ",\"SetPoint\":\"%.1f\",\"min\":-20,\"max\":60,\"step\":0.5", (double)s->setpoint);
     if (!strcmp(s->name, "modedev")) n += (size_t)snprintf(out + n, cap - n, ",\"Modes\":\"0;Off;1;Heat;\",\"Mode\":1");
@@ -106,6 +116,7 @@ static int applied; /* effective changes made by tools/call */
 static bool push_skip; /* a push button that stays On makes the server skip the call, like set_switch_state does for a matching state */
 static bool srv_round_up; /* the server converts a percentage to its own units rounding up */
 static bool pblind_levels; /* percentage blinds report Set Level: N % instead of Open / Closed */
+static int hue_drift; /* degrees added to the hue the lamp reports back (the bridge's XY conversion) */
 static void apply_call(const char *body) {
   char tool[40], idx[16], cmd[32], lvl[16], sp[16];
   if (!jstr(body, "name", tool, sizeof tool)) return;
@@ -115,6 +126,28 @@ static void apply_call(const char *body) {
   if (!s) return;
   applied++;
   if (!strcmp(tool, "set_setpoint_value")) { if (jnum(body, "setpoint", sp, sizeof sp)) { s->setpoint = strtof(sp, NULL); touch(s); } return; }
+  if (!strcmp(tool, "set_color_brightness") && jnum(body, "brightness", lvl, sizeof lvl) && jnum(body, "hue", sp, sizeof sp)) {
+    /* what Domoticz does: hsb2rgb(hue, 1, 1), mode RGB (or White), the brightness becomes the Level */
+    int n = atoi(lvl);
+    s->level = n;
+    if (strstr(body, "\"iswhite\":true")) { s->cm = 1; s->cr = s->cg = s->cb = 0; }
+    else {
+      uint8_t r, g, b;
+      dz_hsb2rgb((float)atoi(sp) + (float)hue_drift, &r, &g, &b);
+      s->cm = 3; s->cr = r; s->cg = g; s->cb = b;
+    }
+    snprintf(s->status, sizeof s->status, "Set Level: %d %%", n);
+    touch(s);
+    return;
+  }
+  if (!strcmp(tool, "set_color_temperature") && jnum(body, "kelvin", sp, sizeof sp)) {
+    int k = atoi(sp);
+    k = k < 2700 ? 2700 : k > 6500 ? 6500 : k;
+    float L = 100.0f * (float)(6500 - k) / 3800.0f;
+    s->cm = 2; s->ct = (int)lroundf(L * 255.0f / 100.0f); s->cr = s->cg = s->cb = 0;
+    touch(s);
+    return;
+  }
   if (!strcmp(tool, "set_dimmer_level") && jnum(body, "level", lvl, sizeof lvl)) {
     int n = atoi(lvl);
     s->level = (s->stv == 7 || s->stv == 5) ? (n * s->maxlvl + (srv_round_up ? 99 : 50)) / 100 : n; /* the tool takes a percentage */
@@ -241,6 +274,7 @@ static void reset_sim(void) {
   if (!have) { memcpy(init, S, sizeof S); have = true; }
   memcpy(S, init, sizeof S); /* every test starts from the table above */
   group_mixed = false;
+  hue_drift = 0;
   srv_round_up = false;
   push_skip = false;
   ticks = 5; /* the first touch must differ from the table's 10:00:00 */
@@ -370,6 +404,111 @@ static void test_level_percent(void) {
   /* selectors: LevelInt as is, multiples of 10, nothing above 100 */
   CHECK(run(DZ_CMD_SELECTOR, "19", 100, 0, false, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"level\":100"));
   CHECK(run(DZ_CMD_SELECTOR, "19", 110, 0, false, NULL) == DZ_CMDE_BAD_ARG);
+}
+
+/* Colour lights: RGBWW 20 (orange, 70 %), WW 21 (t 157, Off, level 40), RGBW 22 (white, 50 %), RGB 23 (blue), protected 24 */
+static dz_cmd_err_t run_hue(dz_cmd_kind_t kind, const char *idx, int level, int hue, uint32_t *id) {
+  dz_cmd_req_t q = {.kind = kind, .idx = idx, .level = level, .hue = (int16_t)hue};
+  dz_cmd_err_t e = dz_cmd_submit(&K, &q, T, id);
+  for (int i = 0; e == DZ_CMD_ACCEPTED && i < 20 && dz_cmd_pending(&K); i++) {
+    uint32_t w = dz_cmd_ms_until_due(&K, T);
+    if (w == UINT32_MAX) break;
+    T += w;
+    dz_cmd_pump(&K, T);
+  }
+  return e;
+}
+
+static void test_colour(void) {
+  setup(true);
+  /* capability matrix */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 120, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(strstr(LASTB, "\"name\":\"set_color_brightness\"") && strstr(LASTB, "\"arguments\":{\"idx\":20,\"hue\":120,\"brightness\":70}"));
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "23", 60, 240, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "21", 40, 120, NULL) == DZ_CMDE_NOT_CONTROLLABLE);   /* WW has no hue */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "2", 40, 120, NULL) == DZ_CMDE_NOT_CONTROLLABLE);    /* plain dimmer */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "1", 40, 120, NULL) == DZ_CMDE_NOT_CONTROLLABLE);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "23", 50, 0, NULL) == DZ_CMDE_NOT_CONTROLLABLE);    /* RGB only */
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "22", 50, 0, NULL) == DZ_CMDE_NOT_CONTROLLABLE);    /* RGBW: white, no temperature */
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "2", 50, 0, NULL) == DZ_CMDE_NOT_CONTROLLABLE);
+  CHECK(run_hue(DZ_CMD_COLOR_WHITE, "21", 50, 0, NULL) == DZ_CMDE_NOT_CONTROLLABLE);
+  CHECK(run_hue(DZ_CMD_COLOR_WHITE, "23", 50, 0, NULL) == DZ_CMDE_NOT_CONTROLLABLE);
+  CHECK(dz_cmd_supported(&(dz_device_t){.cap = DZ_CAP_DIMMER, .col_caps = DZ_COLCAP_RGB}, DZ_CMD_COLOR_HUE, NULL));
+  CHECK(!dz_cmd_supported(&(dz_device_t){.cap = DZ_CAP_ONOFF, .col_caps = 7}, DZ_CMD_COLOR_HUE, NULL));
+  /* arguments: brightness 0 and negative hue refused, hue clamped, brightness clamped */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 0, 120, NULL) == DZ_CMDE_BAD_ARG);
+  CHECK(run_hue(DZ_CMD_COLOR_WHITE, "22", 0, 0, NULL) == DZ_CMDE_BAD_ARG);
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 50, -1, NULL) == DZ_CMDE_BAD_ARG);
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 500, 400, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"hue\":359,\"brightness\":100"));
+  CHECK(LAST.outcome == DZ_OUT_CONFIRMED);
+  /* white */
+  CHECK(run_hue(DZ_CMD_COLOR_WHITE, "22", 80, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(strstr(LASTB, "\"arguments\":{\"idx\":22,\"hue\":0,\"brightness\":80,\"iswhite\":true}"));
+  /* temperature: warmth 50 -> 4600 K -> t 128; the WW lamp was Off and stays Off: not required to be On */
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "21", 50, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(strstr(LASTB, "\"name\":\"set_color_temperature\"") && strstr(LASTB, "\"arguments\":{\"idx\":21,\"kelvin\":4600}"));
+  CHECK(find("21", false)->ct == 128 && find("21", false)->level == 40);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 100, 0, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"kelvin\":2700") && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 0, 0, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"kelvin\":6500") && LAST.outcome == DZ_OUT_CONFIRMED && find("20", false)->ct == 0);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 900, 0, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"kelvin\":2700"));
+  /* hue drift through the bridge: within 8 degrees confirmed, beyond not */
+  hue_drift = 6;
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 200, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  hue_drift = -6;
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 3, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED); /* across 0 */
+  hue_drift = 12;
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 200, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  hue_drift = 0;
+  /* stuck: the server ignores the call */
+  xm = X_IGNORE;
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 33, 10, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "21", 10, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  xm = X_OK;
+  /* protected, stale, read-only configuration */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "24", 50, 10, NULL) == DZ_CMDE_PROTECTED);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "24", 50, 0, NULL) == DZ_CMDE_PROTECTED);
+  uint32_t t_save = T;
+  T += 700000;
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 50, 10, NULL) == DZ_CMDE_STALE);
+  T = t_save;
+  setup(false);
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 50, 10, NULL) == DZ_CMDE_CONTROL_DISABLED);
+  /* risk class: SAFE like the dimmer, LOCKED when protected */
+  setup(true);
+  dz_device_t d; ru_val_t v; ru_val_state_t st;
+  CHECK(dz_model_get(&M, "20", false, &d, &v, &st, T) && dz_cmd_risk(&d, DZ_CMD_COLOR_HUE, NULL) == DZ_RISK_SAFE &&
+        dz_cmd_risk(&d, DZ_CMD_COLOR_TEMP, NULL) == DZ_RISK_SAFE && dz_cmd_risk(&d, DZ_CMD_COLOR_WHITE, NULL) == DZ_RISK_SAFE);
+  CHECK(dz_model_get(&M, "24", false, &d, &v, &st, T) && dz_cmd_risk(&d, DZ_CMD_COLOR_HUE, NULL) == DZ_RISK_LOCKED);
+  /* brightness and on/off keep their kinds on a colour lamp */
+  CHECK(run(DZ_CMD_SET_LEVEL, "20", 30, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && strstr(LASTB, "set_dimmer_level"));
+  CHECK(run(DZ_CMD_OFF, "20", 0, 0, false, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+}
+
+/* Merging: a colour command for the same lamp that has not been sent yet is replaced; a level command is a different family */
+static void test_colour_merge(void) {
+  setup(true);
+  uint32_t a = 0, b = 0, c = 0, e = 0;
+  dz_cmd_req_t h1 = {.kind = DZ_CMD_COLOR_HUE, .idx = "20", .level = 70, .hue = 30};
+  dz_cmd_req_t h2 = {.kind = DZ_CMD_COLOR_HUE, .idx = "20", .level = 70, .hue = 200};
+  dz_cmd_req_t lv = {.kind = DZ_CMD_SET_LEVEL, .idx = "20", .level = 20};
+  dz_cmd_req_t lv2 = {.kind = DZ_CMD_SET_LEVEL, .idx = "20", .level = 25};
+  CHECK(dz_cmd_submit(&K, &h1, T, &a) == DZ_CMD_ACCEPTED && dz_cmd_pending(&K) == 1);
+  CHECK(dz_cmd_submit(&K, &h2, T, &b) == DZ_CMD_ACCEPTED && dz_cmd_pending(&K) == 1 && b != a);
+  CHECK(dz_cmd_submit(&K, &lv, T, &c) == DZ_CMD_ACCEPTED && dz_cmd_pending(&K) == 2);      /* other family: own slot */
+  CHECK(dz_cmd_submit(&K, &lv2, T, &e) == DZ_CMD_ACCEPTED && dz_cmd_pending(&K) == 2 && e != c);
+  dz_cmd_req_t other = {.kind = DZ_CMD_COLOR_HUE, .idx = "23", .level = 70, .hue = 10};
+  CHECK(dz_cmd_submit(&K, &other, T, NULL) == DZ_CMD_ACCEPTED && dz_cmd_pending(&K) == 3); /* other lamp: own slot */
+  for (int i = 0; i < 60 && dz_cmd_pending(&K); i++) {
+    uint32_t w = dz_cmd_ms_until_due(&K, T);
+    if (w == UINT32_MAX) break;
+    T += w;
+    dz_cmd_pump(&K, T);
+  }
+  CHECK(nres == 3 && cmd_calls == 3);
+  bool saw_a = false, saw_b = false, saw_c = false, saw_e = false;
+  for (int i = 0; i < nres; i++) { saw_a |= R[i].id == a; saw_b |= R[i].id == b; saw_c |= R[i].id == c; saw_e |= R[i].id == e; }
+  CHECK(!saw_a && saw_b && !saw_c && saw_e); /* the replaced ids never report */
+  CHECK(find("20", false)->cm == 3);
 }
 
 static void test_blinds_push(void) {
@@ -858,6 +997,8 @@ int main(void) {
   test_basic_confirm();
   test_timing();
   test_levels();
+  test_colour();
+  test_colour_merge();
   test_level_percent();
   test_blinds_push();
   test_push();

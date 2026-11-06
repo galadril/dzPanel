@@ -1,5 +1,7 @@
 #include "dz_cmd.h"
 
+#include "dz_color.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +43,9 @@ static bool cap_allows(const dz_device_t *d, dz_cmd_kind_t k, const dz_units_t *
     case DZ_CMD_ON: case DZ_CMD_OFF: case DZ_CMD_TOGGLE:
       return d->cap == DZ_CAP_ONOFF || d->cap == DZ_CAP_DIMMER || d->cap == DZ_CAP_LOCK;
     case DZ_CMD_SET_LEVEL: return d->cap == DZ_CAP_DIMMER;
+    case DZ_CMD_COLOR_HUE: return d->cap == DZ_CAP_DIMMER && (d->col_caps & DZ_COLCAP_RGB);
+    case DZ_CMD_COLOR_WHITE: return d->cap == DZ_CAP_DIMMER && (d->col_caps & DZ_COLCAP_W);
+    case DZ_CMD_COLOR_TEMP: return d->cap == DZ_CAP_DIMMER && (d->col_caps & DZ_COLCAP_CT);
     case DZ_CMD_BLINDS_OPEN: case DZ_CMD_BLINDS_CLOSE: case DZ_CMD_BLINDS_STOP: return d->cap == DZ_CAP_BLINDS;
     case DZ_CMD_SELECTOR: return d->cap == DZ_CAP_SELECTOR;
     case DZ_CMD_SCENE_ON: return dz_cap_is_scene_ns(d->cap);   /* a scene is pushed; a group is switched on */
@@ -51,6 +56,8 @@ static bool cap_allows(const dz_device_t *d, dz_cmd_kind_t k, const dz_units_t *
   }
   return false;
 }
+
+bool dz_cmd_is_colour(dz_cmd_kind_t k) { return k == DZ_CMD_COLOR_HUE || k == DZ_CMD_COLOR_WHITE || k == DZ_CMD_COLOR_TEMP; }
 
 bool dz_cmd_supported(const dz_device_t *d, dz_cmd_kind_t kind, const dz_units_t *u) { return d && cap_allows(d, kind, u); }
 
@@ -104,6 +111,11 @@ dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms
   if (req->kind == DZ_CMD_SET_LEVEL) {
     if (d.max_level <= 0 || d.max_level > 100) return DZ_CMDE_BAD_ARG; /* the MCP level tool takes a percentage 0..100 */
     level = req->level < 0 ? 0 : req->level > d.max_level ? d.max_level : req->level;
+  } else if (req->kind == DZ_CMD_COLOR_HUE || req->kind == DZ_CMD_COLOR_WHITE) {
+    if (req->level < 1) return DZ_CMDE_BAD_ARG; /* brightness 0 would send Off through the colour tool */
+    level = req->level > 100 ? 100 : req->level;
+  } else if (req->kind == DZ_CMD_COLOR_TEMP) {
+    level = req->level < 0 ? 0 : req->level > 100 ? 100 : req->level;
   } else if (req->kind == DZ_CMD_SELECTOR) {
     int cnt = selector_count(&d);
     if (req->level < 0 || req->level % 10 != 0 || (cnt ? req->level / 10 >= cnt : req->level > d.max_level))
@@ -123,6 +135,28 @@ dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms
   if (dz_cmd_risk(&d, req->kind, &units) == DZ_RISK_CONFIRM && !req->confirmed) return DZ_CMDE_NEEDS_CONFIRM;
   if (st != RU_VAL_OK) return DZ_CMDE_STALE;
 
+  if (req->kind == DZ_CMD_COLOR_HUE && req->hue < 0) return DZ_CMDE_BAD_ARG;
+  int16_t hue = req->hue > 359 ? 359 : req->hue;
+  /* Merge: a command of the same family for the same device that is still waiting to be sent is replaced (a drag released twice in a
+   * row sends the last value only). It gets a new id: the older id is never reported. */
+  bool lvl_fam = req->kind == DZ_CMD_SET_LEVEL;
+  if (lvl_fam || dz_cmd_is_colour(req->kind)) {
+    for (size_t i = 0; i < DZ_CMD_QUEUE; i++) {
+      dz_cmd_slot_t *s = &c->q[i];
+      if ((s->state != 1 && s->state != 3) || strcmp(s->idx, req->idx) != 0) continue;
+      if ((s->req.kind == DZ_CMD_SET_LEVEL) != lvl_fam || (!lvl_fam && !dz_cmd_is_colour(s->req.kind))) continue;
+      s->id = c->next_id++;
+      s->req = *req;
+      s->req.idx = NULL;
+      s->req.hue = hue;
+      s->level = level;
+      s->pre = d;
+      s->state = 1;
+      s->due_ms = now_ms;
+      if (id) *id = s->id;
+      return DZ_CMD_ACCEPTED;
+    }
+  }
   for (size_t i = 0; i < DZ_CMD_QUEUE; i++) {
     dz_cmd_slot_t *s = &c->q[i];
     if (s->state) continue;
@@ -130,6 +164,7 @@ dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms
     s->id = c->next_id++;
     s->req = *req;
     s->req.setpoint = setpoint; /* clamped to the device's range */
+    s->req.hue = hue;
     s->req.idx = NULL;
     snprintf(s->idx, sizeof s->idx, "%s", req->idx);
     s->level = level;
@@ -208,6 +243,11 @@ size_t dz_mcp_encode_push(char *out, size_t cap, uint32_t rpc_id, const char *id
  * length, or 0 when the command has no MCP tool (MODE), a number does not fit, or the buffer is too small. */
 size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind, const char *idx, const dz_device_t *pre,
                      int level, float setpoint) {
+  return dz_mcp_encode_hue(out, cap, rpc_id, kind, idx, pre, level, 0, setpoint);
+}
+
+size_t dz_mcp_encode_hue(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind, const char *idx, const dz_device_t *pre,
+                         int level, int hue, float setpoint) {
   const char *tool = NULL, *word = NULL;
   char args[96], num[24];
   unsigned long id;
@@ -227,6 +267,8 @@ size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind,
     case DZ_CMD_SCENE_ON: tool = "switch_scene"; word = "On"; break;
     case DZ_CMD_SCENE_OFF: tool = "switch_scene"; word = "Off"; break;
     case DZ_CMD_SETPOINT: tool = "set_setpoint_value"; break;
+    case DZ_CMD_COLOR_HUE: case DZ_CMD_COLOR_WHITE: tool = "set_color_brightness"; if (level < 1 || level > 100 || hue < 0 || hue > 360) return 0; break;
+    case DZ_CMD_COLOR_TEMP: tool = "set_color_temperature"; if (level < 0 || level > 100) return 0; break;
     case DZ_CMD_MODE: return 0;
   }
   switch (kind) {
@@ -237,6 +279,10 @@ size_t dz_mcp_encode(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t kind,
       n = snprintf(args, sizeof args, "{\"idx\":%lu,\"command\":\"%s\"}", id, word); break;
     case DZ_CMD_SCENE_ON: case DZ_CMD_SCENE_OFF: /* scene_id is a JSON NUMBER, never a string */
       n = snprintf(args, sizeof args, "{\"scene_id\":%lu,\"command\":\"%s\"}", id, word); break;
+    case DZ_CMD_COLOR_HUE: n = snprintf(args, sizeof args, "{\"idx\":%lu,\"hue\":%d,\"brightness\":%d}", id, hue, level); break;
+    case DZ_CMD_COLOR_WHITE:
+      n = snprintf(args, sizeof args, "{\"idx\":%lu,\"hue\":0,\"brightness\":%d,\"iswhite\":true}", id, level); break;
+    case DZ_CMD_COLOR_TEMP: n = snprintf(args, sizeof args, "{\"idx\":%lu,\"kelvin\":%d}", id, dz_warmth_to_kelvin(level)); break;
     default: /* SETPOINT */
       fmt_setpoint(num, sizeof num, setpoint);
       n = snprintf(args, sizeof args, "{\"idx\":%lu,\"setpoint\":%s}", id, num); break;
@@ -268,6 +314,18 @@ static bool matches(const dz_cmd_slot_t *s, const dz_device_t *a) {
       int tol = a->max_level == 100 ? 0 : (100 + a->max_level - 1) / a->max_level;
       return abs(got - want) <= tol;
     }
+    case DZ_CMD_COLOR_HUE: case DZ_CMD_COLOR_WHITE: {
+      /* the hue comes back through the bridge's XY conversion and may drift: compare the angle, not the RGB. Brightness is the device
+       * Level as a percentage. Whether the lamp is On is not required (a lamp that was Off: see DZ_COLOR_WHEN_OFF_SENDS_ON). */
+      if (!a->has_color || !a->has_level) return false;
+      int got = level_pct(a->level, a->max_level);
+      if (got < 0 || abs(got - s->level) > 1) return false;
+      if (s->req.kind == DZ_CMD_COLOR_WHITE) return a->col_m == 1;
+      float h, sat;
+      return a->col_m == 3 && dz_rgb_to_hue(a->col_r, a->col_g, a->col_b, &h, &sat) && sat >= 0.8f &&
+             dz_hue_dist(h, (float)s->req.hue) <= 8.0f;
+    }
+    case DZ_CMD_COLOR_TEMP: return a->has_color && a->col_m == 2 && abs((int)a->col_t - dz_warmth_to_t(s->level)) <= 3;
     case DZ_CMD_SELECTOR: return a->has_level && (a->level == s->level || a->level_int == s->level);
     /* Blinds: Domoticz applies inversion (ReverseState / ReversePosition, the old types 6 and 16) on the server and reports the
      * user-facing state. Confirmed on the WORDS only: "Open" / "Closed". A level-only status ("Set Level: N %") is NOT accepted:
@@ -408,8 +466,8 @@ static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   size_t blen = push ? dz_mcp_encode_push(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->idx, &s->pre, c->push_mode, s->push_step)
                      : (s->req.kind == DZ_CMD_SET_LEVEL && send_level < 0)
                            ? 0
-                           : dz_mcp_encode(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->req.kind, s->idx, &s->pre,
-                                           send_level, s->req.setpoint);
+                           : dz_mcp_encode_hue(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->req.kind, s->idx, &s->pre,
+                                               send_level, s->req.hue, s->req.setpoint);
   if (!blen) {
     s->fail = DZ_FAIL_BAD_RESPONSE;
     finish(c, s, DZ_OUT_FAILED, NULL);
