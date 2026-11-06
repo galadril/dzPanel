@@ -310,8 +310,8 @@ static void honesty(int size) {
   CHECK(ru_dzapp_tap_row(a, 0));
   ru_dzapp_ui_tick(a, f.T);
   CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && SPY.n == 0 && shows(a, "DATA IS STALE"));
-  ru_dzapp_show_section(a, RU_SEC_HOME); /* home says the data is old; the connection banner stays empty (the link is fine) */
-  CHECK(shows(a, "STALE DATA") && !strcmp(ru_dzapp_banner(a), ""));
+  ru_dzapp_show_section(a, RU_SEC_HOME); /* old data is told by the rim dot only: no subtitle, the connection banner stays empty */
+  CHECK(!shows(a, "STALE DATA") && !strcmp(ru_dzapp_banner(a), ""));
   finish(&f, a);
 
   /* unknown values are "--", never 0: a temperature with no reading, a power meter with none */

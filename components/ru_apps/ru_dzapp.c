@@ -759,12 +759,7 @@ static lv_obj_t *build_home(ru_dzapp_t *a) {
   bool any_stale = ix_any_stale(a);
   lv_obj_t *s = section_screen(a, any_stale);
   title(s, "FAVOURITES");
-  snprintf(a->banner, sizeof a->banner, "%s", banner_for(cs));
-  /* a->banner stays the CONNECTION text (empty when fine); stale data gets its own line */
-  const char *top = a->banner[0] ? a->banner : any_stale ? "STALE DATA" : "";
-  if (top[0]) {
-    label_u(s, top, ru_font_small(), cs == DZ_CS_CONNECTING ? t->text_dim : (cs == DZ_CS_OK || cs == DZ_CS_OFFLINE) ? t->warn : t->error, 0, -34);
-  }
+  conn_banner(a, s, cs, -34); /* the connection problem line; stale data shows on the rim dot only */
   grid_page(a, s);
   if (a->nrows == 0) {
     if (cs == DZ_CS_OK) {
