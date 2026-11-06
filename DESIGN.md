@@ -339,6 +339,8 @@ A round AMOLED in a dark room is a ring of light floating in black. Halo leans i
 
 Boot splash, Wi-Fi setup (phone provisioning first), four home faces, Domoticz overview and detail, **Energy ring** (solar, grid and battery segments around a home-load hero), notification stack, settings and first-run. Wireframes, state patterns (loading, stale, error, offline, empty) and the design-review checklist are in [`docs/research/ux.md`](docs/research/ux.md) (section 10.4a is the Domoticz page model as built). The contrast ratios, chord widths and throughput figures there have **not been checked with tools or on hardware**.
 
+The Temperature and Weather pages show NSPanel-style tiles: device name on top, a Lucide icon coloured by a stepped band (the value text stays white), the big value with unit and trend, one small line. Each device is judged by its own readings only; no outdoor-device concept, no forecast service. Bands, icon rules and the icon font are in [`docs/research/ux.md`](docs/research/ux.md) section 11 (licences in `docs/third-party/`).
+
 ---
 
 ## 9. Memory and rendering

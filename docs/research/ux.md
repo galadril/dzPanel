@@ -654,3 +654,33 @@ Glanceability
 - Do both boards expose a user button usable as home/power menu?
 - Final choice of font set vs flash budget (ship Inter + Space Grotesk subset first).
 - LVGL version (v8 vs v9) affects image formats (A8/A4) and bezier anim API names above; verify when ADR-002 is written.
+
+## 11. Weather tiles (Temperature and Weather pages, NSPanel style)
+
+Domoticz data only: no forecast service, no new network client. Every device is judged by ITS OWN readings; there is no "outdoor device" and nothing is combined across devices. Code: `components/ru_apps/ru_wx.c` (pure C: bands, icon choice, tile text), widget `ru_wx_tile_*` in `components/ru_ui/ru_widgets.c`, wiring in `ru_dzapp.c` (`wx_content`, `wx_tile_update`).
+
+### 11.1 Anatomy (centred, 3 x 2 grid, tile 25u x 21u)
+```
+ +-----------------------+
+ |      Device name      |  Montserrat 14, dim, one line, LONG_DOT (name label has its final width from creation)
+ |    [icon] 21.5 C^     |  icon 24 px (Lucide font), value Montserrat 32 (24, then 16 when icon+value+unit do not fit,
+ |        45%            |  last the icon goes), unit + trend chevron in one dim 16 label on the value baseline
+ +-----------------------+  small line: Montserrat 14 dim ("45%", "NW  G 6.1", "FORECAST"); the UV word in its band colour
+```
+6 child objects per tile (name, icon, value, unit, small line, 6 px stale dot in the bottom right corner), shared `lv_style_t`s, labels clip and never rewrite their text, geometry is a pure function of the strings, every setter compares before touching (a repeat call invalidates nothing; `sim/tests/test_wxtile.c`, `test_dzflicker.c`). Stale or unknown: icon and value grey, warn dot, 1 px border (two channels; colour is never the only signal). The icon alone carries the band colour; the value text stays white.
+
+### 11.2 Colour bands (stepped; every colour is at least 3:1 on the tile surface #0E1013, tested)
+| Reading | Bands |
+|---|---|
+| temperature, deg C (F converted; unknown unit: no colour) | <=0 #A8D8FF, <10 #4DB3FF, <18 #3DE0C5, <24 #3DDC84, <30 #FFC247, <35 #FF8A3D, else #FF5A5F |
+| humidity | HumidityStatus first (Dry amber, Comfortable/Normal green, Wet blue), else <30 amber, >70 blue, else green |
+| UV (WHO) | <3 green, <6 #FFC247, <8 #FF8A3D, <11 #FF5A5F, else #8C7CFF |
+| wind, converted to m/s from the unit Domoticz gave (unknown unit: no colour) | <1.5 dim, <5.5 #4DB3FF, <10.8 #3DE0C5, <17.2 #FFC247, else #FF5A5F; the Beaufort word (`ru_wx_beaufort_word`) is the small line when there is no gust or direction |
+| rain RATE (assumed mm/h: Domoticz gives no unit; none is printed) | 0 dim, >0 #4DB3FF, >=2.5 #4D7CFF, >=10 #8C7CFF |
+| barometer | text colour; the icon follows ForecastStr |
+
+### 11.3 Icon per device kind (from the device's own readings)
+temperature / humidity: thermometer (small line: humidity %); humidity only: droplet; rain gauge: cloud (rate 0 or no rate, dim), drizzle (rate > 0), rain (rate >= 7.6 mm/h); UV: sun-dim below 3, sun from 3 (small line: the WHO word in the band colour); wind: an arrow that points where the wind blows TO (the reading is the bearing it comes FROM), the wind icon when there is no bearing (small line: compass word and `G gust`); barometer: gauge, or sun / cloud-sun / cloud / cloud-rain / cloud-snow / cloud-lightning mapped from the device's own ForecastStr with the small line `FORECAST` (a pressure heuristic, not an observation); air quality: cloud-fog; anything else: no icon.
+
+### 11.4 Icon font and its licence
+25 Lucide icons (ISC; the arrows and the moon derive from Feather, MIT), private-use codepoints from U+E000 (`tools/icons/manifest.txt`, macros in `components/ru_ui/include/ru_icons.h`), one 24 px 4 bpp uncompressed LVGL font `ru_icons_24` (7.2 KB of const bitmap, flash only), accessor `ru_font_icon_s()`. Lucide has no filled variants; the set is outlined (Phosphor Fill, MIT, would be the filled alternative). `lv_font_conv` needs the npm registry, which the build host cannot reach, so `python3 -I tools/icons/gen_icons.py --size 24` (standard library only) strokes the SVGs itself (`tools/icons/lucide/`, Lucide 1.70.0). The generated C is committed, so builds need neither Python nor node. Licence text and sources: `docs/third-party/`.
