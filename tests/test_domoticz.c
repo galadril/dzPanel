@@ -107,6 +107,54 @@ static void test_fixture(void) {
   free(js);
 }
 
+static const dz_device_t *find_sub(const bag_t *b, const char *type, const char *sub);
+/* Colour lights: the Color JSON string and the capabilities from the SubType. */
+static void test_color(void) {
+  static bag_t b;
+  dz_result_t r;
+  char js[512];
+  /* real capture: a WW lamp (Color m 2, t 157) and an RGBWW lamp */
+  size_t len;
+  char *f = slurp("real_getdevices.json", &len);
+  b.n = 0;
+  CHECK(dz_parse_response(f, len, collect, &b, &r) == DZ_OK);
+  const dz_device_t *d = find_sub(&b, "Color Switch", "WW");
+  CHECK(d && d->has_color && d->col_m == 2 && d->col_t == 157 && d->col_cw == 98 && d->col_ww == 157 && d->col_caps == DZ_COLCAP_CT);
+  CHECK(d && d->cap == DZ_CAP_DIMMER && d->level == 1);
+  d = find_sub(&b, "Color Switch", "RGBWW");
+  CHECK(d && d->col_caps == (DZ_COLCAP_RGB | DZ_COLCAP_W | DZ_COLCAP_CT) && d->cap == DZ_CAP_DIMMER);
+  free(f);
+
+  static const struct { const char *sub; uint8_t caps; } SUB[] = {
+    { "RGB", 1 }, { "RGBW", 3 }, { "RGBWZ", 3 }, { "RGBWW", 7 }, { "RGBWWZ", 7 }, { "WW", 4 }, { "White", 0 }, { "Whatever", 0 } };
+  for (size_t i = 0; i < sizeof SUB / sizeof SUB[0]; i++) {
+    snprintf(js, sizeof js, "{\"result\":[{\"idx\":\"5\",\"Type\":\"Color Switch\",\"SubType\":\"%s\",\"SwitchTypeVal\":7,"
+             "\"Color\":\"{\\\"m\\\":3,\\\"t\\\":0,\\\"r\\\":255,\\\"g\\\":128,\\\"b\\\":0,\\\"cw\\\":0,\\\"ww\\\":0}\"}],\"status\":\"OK\"}", SUB[i].sub);
+    CHECK(parse_str(js, &b, &r) == DZ_OK && b.n == 1);
+    CHECK(b.d[0].col_caps == SUB[i].caps && b.d[0].cap == DZ_CAP_DIMMER);
+    CHECK(b.d[0].has_color && b.d[0].col_m == 3 && b.d[0].col_r == 255 && b.d[0].col_g == 128 && b.d[0].col_b == 0);
+  }
+  /* escaped, unescaped order, spaces, out of range, negative, fractions */
+  const char *good = "{\"result\":[{\"idx\":\"5\",\"Color\":\"{ \\\"ww\\\" : 300, \\\"b\\\":-4,\\\"m\\\": 4 ,\\\"g\\\":12.7,\\\"cw\\\":9999999999,\\\"x\\\":\\\"y\\\"}\","
+                     "\"Type\":\"Color Switch\",\"SubType\":\"RGBW\"}],\"status\":\"OK\"}";
+  CHECK(parse_str(good, &b, &r) == DZ_OK && b.n == 1);
+  d = &b.d[0];
+  CHECK(d->has_color && d->col_m == 4 && d->col_ww == 255 && d->col_b == 0 && d->col_g == 12 && d->col_cw == 255 && d->col_r == 0);
+  /* empty, malformed, no m, wrong type, array: no colour */
+  static const char *BAD[] = { "", "{", "garbage", "{\\\"r\\\":5}", "[{\\\"m\\\":3}]", "{\\\"m\\\":}", "{\\\"m\\\":\\\"3\\\"}", "{\\\"m" };
+  for (size_t i = 0; i < sizeof BAD / sizeof BAD[0]; i++) {
+    snprintf(js, sizeof js, "{\"result\":[{\"idx\":\"5\",\"Type\":\"Color Switch\",\"SubType\":\"RGB\",\"Color\":\"%s\"}],\"status\":\"OK\"}", BAD[i]);
+    CHECK(parse_str(js, &b, &r) == DZ_OK && b.n == 1);
+    CHECK(!b.d[0].has_color && b.d[0].col_m == 0 && b.d[0].col_r == 0);
+  }
+  /* a non-colour device never gets colour, even with an m key */
+  CHECK(parse_str("{\"result\":[{\"idx\":\"5\",\"Type\":\"Light/Switch\",\"SubType\":\"RGBW\",\"Color\":\"{\\\"m\\\":3}\"}],\"status\":\"OK\"}", &b, &r) == DZ_OK);
+  CHECK(!b.d[0].has_color && b.d[0].col_caps == 0);
+  /* Color before Type (order does not matter) and sensor colour bands do not matter */
+  CHECK(parse_str("{\"result\":[{\"idx\":\"5\",\"Type\":\"Temp\",\"Color\":\"[{\\\"from\\\":0,\\\"to\\\":25,\\\"color\\\":\\\"#66bb6a\\\"}]\"}],\"status\":\"OK\"}", &b, &r) == DZ_OK);
+  CHECK(!b.d[0].has_color);
+}
+
 static void test_errors(void) {
   static bag_t b;
   dz_result_t r;
@@ -624,6 +672,7 @@ int main(void) {
   test_real_capture();
   test_energy_and_ranges();
   test_scene_and_group();
+  test_color();
   test_errors();
   test_robustness();
   test_climate_families(CLIMATE_FILES[0], false);

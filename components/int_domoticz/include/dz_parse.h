@@ -133,7 +133,17 @@ typedef struct {
   int n_modes;
   short mode_val[DZ_MAX_MODES]; /* the index each name sets */
   char mode_names[96];   /* names, '|' separated, in mode_val order */
+
+  /* ---- colour lights (Type "Color Switch"); the JSON string in "Color": {"m":3,"t":0,"r":255,"g":0,"b":0,"cw":0,"ww":0} ---- */
+  bool has_color;        /* "m" was present in a Color Switch's Color string */
+  uint8_t col_m;         /* 0 none, 1 white, 2 colour temperature, 3 RGB, 4 custom RGB + WW/CW */
+  uint8_t col_t, col_r, col_g, col_b, col_cw, col_ww; /* clamped 0..255 */
+  uint8_t col_caps;      /* DZ_COLCAP_* from the SubType; 0 = plain dimmer (also "White") */
 } dz_device_t;
+
+#define DZ_COLCAP_RGB 1u /* can show any hue */
+#define DZ_COLCAP_W 2u   /* has a white channel (a plain "set white") */
+#define DZ_COLCAP_CT 4u  /* can set a colour temperature */
 
 /* first reading of a kind, or NULL */
 const dz_reading_t *dz_dev_reading(const dz_device_t *d, dz_rk_t kind);

@@ -482,6 +482,45 @@ static dz_cap_t classify(const dz_device_t *d) {
   return DZ_CAP_READONLY;
 }
 
+/* Domoticz "Color": a JSON object kept as a string, {"m":3,"t":0,"r":255,...}. Tiny key scanner: only m t r g b cw ww,
+ * numbers clamped 0..255, anything else (arrays of colour bands on sensors, bad text) is ignored. has_color needs "m". */
+static void color_scan(dz_device_t *d, const char *s) {
+  while (*s == ' ') s++;
+  if (*s != '{') return;
+  bool has_m = false;
+  uint8_t m = 0, t = 0, r = 0, g = 0, b = 0, cw = 0, ww = 0;
+  while (*s) {
+    if (*s != '"') { s++; continue; }
+    const char *k = ++s;
+    while (*s && *s != '"') s++;
+    if (!*s) break;
+    size_t kl = (size_t)(s - k);
+    s++;
+    while (*s == ' ') s++;
+    if (*s != ':') continue;
+    s++;
+    while (*s == ' ') s++;
+    if (*s != '-' && (*s < '0' || *s > '9')) continue;
+    bool neg = *s == '-';
+    if (neg) s++;
+    long n = 0;
+    while (*s >= '0' && *s <= '9') { if (n < 100000) n = n * 10 + (*s - '0'); s++; }
+    if (*s == '.') { s++; while (*s >= '0' && *s <= '9') s++; }
+    if (neg) n = 0;
+    uint8_t v = (uint8_t)(n > 255 ? 255 : n);
+    if (kl == 1 && *k == 'm') { m = v; has_m = true; }
+    else if (kl == 1 && *k == 't') t = v;
+    else if (kl == 1 && *k == 'r') r = v;
+    else if (kl == 1 && *k == 'g') g = v;
+    else if (kl == 1 && *k == 'b') b = v;
+    else if (kl == 2 && k[0] == 'c' && k[1] == 'w') cw = v;
+    else if (kl == 2 && k[0] == 'w' && k[1] == 'w') ww = v;
+  }
+  if (!has_m) return;
+  d->has_color = true;
+  d->col_m = m; d->col_t = t; d->col_r = r; d->col_g = g; d->col_b = b; d->col_cw = cw; d->col_ww = ww;
+}
+
 static void assign(dz_device_t *d, const char *k, const val_t *v) {
   float f;
   int i;
@@ -528,6 +567,7 @@ static void assign(dz_device_t *d, const char *k, const val_t *v) {
   else if (!strcmp(k, "UsageDeliv")) { if (parse_watts(v->s, &f)) { d->usage_deliv_w = f; d->has_usage_deliv = true; } }
   else if (!strcmp(k, "CounterToday")) { if (parse_qty(v->s, &f, d->today_unit, sizeof d->today_unit)) { d->today = f; d->has_today = true; } }
   else if (!strcmp(k, "SetPoint")) { if (to_float(v->s, &f)) { d->setpoint = f; d->has_setpoint = true; } }
+  else if (!strcmp(k, "Color")) { if (v->t == V_STR) color_scan(d, v->s); }
   else if (!strcmp(k, "Level")) { if (to_int(v->s, &i)) { d->level = i; d->has_level = true; } }
   else if (!strcmp(k, "LevelInt")) { if (to_int(v->s, &i)) d->level_int = i; }
   else if (!strcmp(k, "MaxDimLevel")) { if (to_int(v->s, &i) && i > 0) d->max_level = i; }
@@ -626,6 +666,17 @@ static void finish(dz_device_t *d) {
   }
   d->has_mode = (d->range_bits & 24u) == 24u;
   d->cap = classify(d);
+  /* Colour: only a Color Switch has a lamp colour; the SubType says which controls the lamp has (White = plain dimmer). */
+  if (strcmp(d->type, "Color Switch") != 0) {
+    d->has_color = false;
+    d->col_m = d->col_t = d->col_r = d->col_g = d->col_b = d->col_cw = d->col_ww = 0;
+  } else {
+    const char *st = d->subtype;
+    if (!strcmp(st, "RGB") || !strcmp(st, "RGBZ")) d->col_caps = DZ_COLCAP_RGB;
+    else if (!strcmp(st, "RGBW") || !strcmp(st, "RGBWZ")) d->col_caps = DZ_COLCAP_RGB | DZ_COLCAP_W;
+    else if (!strcmp(st, "RGBWW") || !strcmp(st, "RGBWWZ")) d->col_caps = DZ_COLCAP_RGB | DZ_COLCAP_W | DZ_COLCAP_CT;
+    else if (!strcmp(st, "WW")) d->col_caps = DZ_COLCAP_CT;
+  }
   /* Energy fields as readings */
   if (d->has_usage) add_rd(d, DZ_RK_POWER, d->usage_w, "W");
   if (d->has_today) {
