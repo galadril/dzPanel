@@ -1397,8 +1397,8 @@ static void cb_light(lv_obj_t *w, ru_light_cmd_t c, int v, bool fin, void *ud) {
     case RU_LIGHT_CMD_TEMP: submit_or_confirm(a, a->cur_idx, false, DZ_CMD_COLOR_TEMP, v, 0, NULL, false); break;
     case RU_LIGHT_CMD_WHITE: submit_or_confirm(a, a->cur_idx, false, DZ_CMD_COLOR_WHITE, light_brightness(&d), 0, NULL, false); break;
   }
-  /* whether a colour or temperature command switches an Off lamp on is unverified: DZ_COLOR_WHEN_OFF_SENDS_ON decides (default: no) */
-  if (DZ_COLOR_WHEN_OFF_SENDS_ON && off && (c == RU_LIGHT_CMD_HUE || c == RU_LIGHT_CMD_TEMP || c == RU_LIGHT_CMD_WHITE))
+  /* verified on a Hue bridge: the server switches an Off lamp on by itself (DZ_COLOR_SWITCHES_ON_LAMP); otherwise follow with an On */
+  if (!DZ_COLOR_SWITCHES_ON_LAMP && off && (c == RU_LIGHT_CMD_HUE || c == RU_LIGHT_CMD_TEMP || c == RU_LIGHT_CMD_WHITE))
     submit_or_confirm(a, a->cur_idx, false, DZ_CMD_ON, 0, 0, NULL, false);
   light_refresh(a);
 }

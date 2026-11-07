@@ -41,11 +41,13 @@ typedef struct {
   bool confirmed;      /* the caller obtained the confirmation required by dz_cmd_risk */
 } dz_cmd_req_t;
 
-/* What a colour or temperature command does for a lamp that is OFF. Domoticz may or may not switch it on (unverified on a real
- * lamp): 0 = send the colour / temperature command only and let the verify read decide; 1 = the UI also sends On afterwards.
- * ONE constant so a live test can flip it. */
-#ifndef DZ_COLOR_WHEN_OFF_SENDS_ON
-#define DZ_COLOR_WHEN_OFF_SENDS_ON 0
+/* What a colour or temperature command does for a lamp that is OFF. VERIFIED on a Philips Hue bridge behind Domoticz 2026.4
+ * (build 18605), three lamps: set_color_brightness and set_color_temperature on an Off lamp switch it ON at its stored level.
+ * 1 = the server switches the lamp on: the UI sends nothing extra and the verify read requires the lamp to be On (an Off lamp that
+ * stays Off is UNCONFIRMED). 0 = (other bridges) the UI follows the colour command with an On and the lamp is not required to be On.
+ * ONE constant so it can be flipped. A stored level of 0 or unknown makes the UI send brightness 100. */
+#ifndef DZ_COLOR_SWITCHES_ON_LAMP
+#define DZ_COLOR_SWITCHES_ON_LAMP 1
 #endif
 
 typedef enum {

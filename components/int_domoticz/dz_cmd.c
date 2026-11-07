@@ -333,6 +333,14 @@ size_t dz_mcp_encode_hue(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t k
   return wrap_call(out, cap, rpc_id, tool, args);
 }
 
+/* Verification tolerances measured on a Hue bridge behind Domoticz 2026.4. Hue: a requested 0 (red) read back as r254 g67 b0 =
+ * about 15.8 degrees (the bridge's gamut conversion through XY); 120 and 240 came back exactly; so 20 degrees. The saturation
+ * check stays but is tolerant. Temperature: 4600 K (t 128) and 6500 K (t 0) were exact; 2700 K (t 255) read back t 221 on a lamp
+ * with a warmer limit, so t must be within 40 of 255 (about 16 percent). A hue off by more than the tolerance stays UNCONFIRMED. */
+#define DZ_HUE_TOL_DEG 20.0f
+#define DZ_HUE_MIN_SAT 0.7f
+#define DZ_TEMP_TOL_T 40
+
 /* Did the re-read show the intended state? */
 static bool matches(const dz_cmd_slot_t *s, const dz_device_t *a) {
   const dz_device_t *p = &s->pre;
@@ -357,17 +365,37 @@ static bool matches(const dz_cmd_slot_t *s, const dz_device_t *a) {
       return abs(got - want) <= tol;
     }
     case DZ_CMD_COLOR_HUE: case DZ_CMD_COLOR_WHITE: {
-      /* the hue comes back through the bridge's XY conversion and may drift: compare the angle, not the RGB. Brightness is the device
-       * Level as a percentage. Whether the lamp is On is not required (a lamp that was Off: see DZ_COLOR_WHEN_OFF_SENDS_ON). */
+      /* the hue comes back through the bridge's XY conversion and may drift (DZ_HUE_TOL_DEG): compare the angle, not the RGB.
+       * Brightness is the device Level as a percentage. The lamp must be On when the server switches a colour-commanded lamp on. */
       if (!a->has_color || !a->has_level) return false;
+      if (DZ_COLOR_SWITCHES_ON_LAMP && !dz_status_is_on(a)) return false;
       int got = level_pct(a->level, a->max_level);
       if (got < 0 || abs(got - s->level) > 1) return false;
       if (s->req.kind == DZ_CMD_COLOR_WHITE) return a->col_m == 1;
       float h, sat;
-      return a->col_m == 3 && dz_rgb_to_hue(a->col_r, a->col_g, a->col_b, &h, &sat) && sat >= 0.8f &&
-             dz_hue_dist(h, (float)s->req.hue) <= 8.0f;
+      return a->col_m == 3 && dz_rgb_to_hue(a->col_r, a->col_g, a->col_b, &h, &sat) && sat >= DZ_HUE_MIN_SAT &&
+             dz_hue_dist(h, (float)s->req.hue) <= DZ_HUE_TOL_DEG;
     }
-    case DZ_CMD_COLOR_TEMP: return a->has_color && a->col_m == 2 && abs((int)a->col_t - dz_warmth_to_t(s->level)) <= 3;
+    case DZ_CMD_COLOR_TEMP: {
+      if (!a->has_color || a->col_m != 2) return false;
+      if (DZ_COLOR_SWITCHES_ON_LAMP && !dz_status_is_on(a)) return false;
+      /* the level is preserved (the server only changes the colour); one percent of rounding plus one for the bridge */
+      if (p->has_level && p->level > 0) {
+        if (!a->has_level) return false;
+        int lp = level_pct(p->level, p->max_level), la = level_pct(a->level, a->max_level);
+        if (lp < 0 || la < 0 || abs(lp - la) > 2) return false;
+      }
+      int want = dz_warmth_to_t(s->level), t = (int)a->col_t;
+      if (abs(t - want) <= DZ_TEMP_TOL_T) return true;
+      /* a lamp whose range is narrower than the one asked for stops short of the end: confirm a request for the warmest or
+       * coolest end when t moved towards it by at least half of the requested change and sits in that outer quarter */
+      if (p->has_color && p->col_m == 2 && (want == 255 || want == 0)) {
+        int moved = want == 255 ? t - (int)p->col_t : (int)p->col_t - t, need = abs(want - (int)p->col_t);
+        bool outer = want == 255 ? t >= 192 : t <= 63;
+        return outer && need > 0 && 2 * moved >= need;
+      }
+      return false;
+    }
     case DZ_CMD_SELECTOR: return a->has_level && (a->level == s->level || a->level_int == s->level);
     /* Blinds: Domoticz applies inversion (ReverseState / ReversePosition, the old types 6 and 16) on the server and reports the
      * user-facing state. Confirmed on the WORDS only: "Open" / "Closed". A level-only status ("Set Level: N %") is NOT accepted:

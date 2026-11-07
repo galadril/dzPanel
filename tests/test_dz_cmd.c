@@ -116,7 +116,9 @@ static int applied; /* effective changes made by tools/call */
 static bool push_skip; /* a push button that stays On makes the server skip the call, like set_switch_state does for a matching state */
 static bool srv_round_up; /* the server converts a percentage to its own units rounding up */
 static bool pblind_levels; /* percentage blinds report Set Level: N % instead of Open / Closed */
-static int hue_drift; /* degrees added to the hue the lamp reports back (the bridge's XY conversion) */
+static float hue_drift; /* degrees added to the hue the lamp reports back (the bridge's XY conversion) */
+static int ct_cap = 255; /* the warmest t the lamp can report (a lamp with a warmer limit than the one asked for) */
+static bool stay_off; /* a bridge that does not switch an Off lamp on when it is given a colour */
 static void apply_call(const char *body) {
   char tool[40], idx[16], cmd[32], lvl[16], sp[16];
   if (!jstr(body, "name", tool, sizeof tool)) return;
@@ -133,10 +135,10 @@ static void apply_call(const char *body) {
     if (strstr(body, "\"iswhite\":true")) { s->cm = 1; s->cr = s->cg = s->cb = 0; }
     else {
       uint8_t r, g, b;
-      dz_hsb2rgb((float)atoi(sp) + (float)hue_drift, &r, &g, &b);
+      dz_hsb2rgb((float)atoi(sp) + hue_drift, &r, &g, &b);
       s->cm = 3; s->cr = r; s->cg = g; s->cb = b;
     }
-    snprintf(s->status, sizeof s->status, "Set Level: %d %%", n);
+    if (!(stay_off && !strcmp(s->status, "Off"))) snprintf(s->status, sizeof s->status, "Set Level: %d %%", n);
     touch(s);
     return;
   }
@@ -145,6 +147,9 @@ static void apply_call(const char *body) {
     k = k < 2700 ? 2700 : k > 6500 ? 6500 : k;
     float L = 100.0f * (float)(6500 - k) / 3800.0f;
     s->cm = 2; s->ct = (int)lroundf(L * 255.0f / 100.0f); s->cr = s->cg = s->cb = 0;
+    if (s->ct > ct_cap) s->ct = ct_cap;
+    /* verified on a Hue bridge: a colour command switches an Off lamp on at its stored level */
+    if (!stay_off && !strcmp(s->status, "Off") && s->level > 0) snprintf(s->status, sizeof s->status, "Set Level: %d %%", s->level);
     touch(s);
     return;
   }
@@ -274,7 +279,7 @@ static void reset_sim(void) {
   if (!have) { memcpy(init, S, sizeof S); have = true; }
   memcpy(S, init, sizeof S); /* every test starts from the table above */
   group_mixed = false;
-  hue_drift = 0;
+  hue_drift = 0; ct_cap = 255; stay_off = false;
   srv_round_up = false;
   push_skip = false;
   ticks = 5; /* the first touch must differ from the table's 10:00:00 */
@@ -408,6 +413,7 @@ static void test_level_percent(void) {
 
 /* Colour lights: RGBWW 20 (orange, 70 %), WW 21 (t 157, Off, level 40), RGBW 22 (white, 50 %), RGB 23 (blue), protected 24 */
 static dz_cmd_err_t run_hue(dz_cmd_kind_t kind, const char *idx, int level, int hue, uint32_t *id) {
+  if (nres >= 15) nres = 0; /* the result buffer holds 16 */
   dz_cmd_req_t q = {.kind = kind, .idx = idx, .level = level, .hue = (int16_t)hue};
   dz_cmd_err_t e = dz_cmd_submit(&K, &q, T, id);
   for (int i = 0; e == DZ_CMD_ACCEPTED && i < 20 && dz_cmd_pending(&K); i++) {
@@ -444,21 +450,55 @@ static void test_colour(void) {
   /* white */
   CHECK(run_hue(DZ_CMD_COLOR_WHITE, "22", 80, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
   CHECK(strstr(LASTB, "\"arguments\":{\"idx\":22,\"hue\":0,\"brightness\":80,\"iswhite\":true}"));
-  /* temperature: warmth 50 -> 4600 K -> t 128; the WW lamp was Off and stays Off: not required to be On */
+  /* temperature: warmth 50 -> 4600 K -> t 128; the WW lamp was Off: the server switches it on at its stored level (verified on a Hue bridge) */
+  CHECK(!strcmp(find("21", false)->status, "Off"));
   CHECK(run_hue(DZ_CMD_COLOR_TEMP, "21", 50, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
   CHECK(strstr(LASTB, "\"name\":\"set_color_temperature\"") && strstr(LASTB, "\"arguments\":{\"idx\":21,\"kelvin\":4600}"));
-  CHECK(find("21", false)->ct == 128 && find("21", false)->level == 40);
+  CHECK(find("21", false)->ct == 128 && find("21", false)->level == 40 && !strcmp(find("21", false)->status, "Set Level: 40 %"));
   CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 100, 0, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"kelvin\":2700") && LAST.outcome == DZ_OUT_CONFIRMED);
   CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 0, 0, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"kelvin\":6500") && LAST.outcome == DZ_OUT_CONFIRMED && find("20", false)->ct == 0);
   CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 900, 0, NULL) == DZ_CMD_ACCEPTED && strstr(LASTB, "\"kelvin\":2700"));
-  /* hue drift through the bridge: within 8 degrees confirmed, beyond not */
-  hue_drift = 6;
-  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 200, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
-  hue_drift = -6;
-  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 3, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED); /* across 0 */
-  hue_drift = 12;
-  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 200, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  /* a lamp with a warmer limit: 2700 K asked (t 255), t 221 read back (measured) is confirmed; 200 by the outer-quarter rule */
+  ct_cap = 221;
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 0, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 100, 0, NULL) == DZ_CMD_ACCEPTED && find("20", false)->ct == 221 && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 50, 0, NULL) == DZ_CMD_ACCEPTED && find("20", false)->ct == 128 && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 0, 0, NULL) == DZ_CMD_ACCEPTED && find("20", false)->ct == 0 && LAST.outcome == DZ_OUT_CONFIRMED);
+  ct_cap = 200; /* 55 short of 255, but moved 200 of 255 and in the outer quarter */
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 100, 0, NULL) == DZ_CMD_ACCEPTED && find("20", false)->ct == 200 && LAST.outcome == DZ_OUT_CONFIRMED);
+  ct_cap = 150; /* not at the end of the range: NOT CONFIRMED */
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 0, 0, NULL) == DZ_CMD_ACCEPTED);
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "20", 100, 0, NULL) == DZ_CMD_ACCEPTED && find("20", false)->ct == 150 && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  ct_cap = 255;
+  /* a lamp that stays Off after a colour command is UNCONFIRMED; a lamp already On is not affected */
+  find("21", false)->status[0] = 0; strcpy(find("21", false)->status, "Off");
+  stay_off = true;
+  CHECK(run_hue(DZ_CMD_COLOR_TEMP, "21", 20, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED && !strcmp(find("21", false)->status, "Off"));
+  stay_off = false;
+  /* hue drift through the bridge (measured: red 0 read back as 15.8 degrees; 120 and 240 exact): within 20 degrees confirmed */
+  hue_drift = 15.8f;
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
   hue_drift = 0;
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 120, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 240, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  hue_drift = 40; /* beyond the tolerance: never a false confirm */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 0, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  hue_drift = 25;
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 200, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  hue_drift = 18; /* wrap-around: 350 -> 8 */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 350, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  hue_drift = -18; /* 10 -> 352 */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 10, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED);
+  hue_drift = 30; /* 350 -> 20: 30 degrees away */
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 70, 350, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  hue_drift = 0;
+  /* a hue command to an Off RGB lamp: the server switches it on */
+  strcpy(find("23", false)->status, "Off");
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "23", 60, 240, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_CONFIRMED && !strcmp(find("23", false)->status, "Set Level: 60 %"));
+  stay_off = true;
+  strcpy(find("23", false)->status, "Off");
+  CHECK(run_hue(DZ_CMD_COLOR_HUE, "23", 60, 240, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);
+  stay_off = false;
   /* stuck: the server ignores the call */
   xm = X_IGNORE;
   CHECK(run_hue(DZ_CMD_COLOR_HUE, "20", 33, 10, NULL) == DZ_CMD_ACCEPTED && LAST.outcome == DZ_OUT_UNCONFIRMED);

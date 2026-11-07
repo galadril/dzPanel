@@ -31,7 +31,7 @@
 //        'Led Strip' (blue), 202 RGBW 'Accent' (white), 203 WW 'Tunable' (m 2, t 157, On), 204 WW 'Reading Lamp' (Off, level 40), 205 RGBWW
 //        'Ceiling' (Off, level 40, green). MCP set_color_brightness {idx, hue, brightness, iswhite?} and set_color_temperature {idx, kelvin}
 //        follow what the Domoticz source does (read, not seen on a real lamp): hsb2rgb(hue,1,1), mode RGB (White with iswhite), the brightness
-//        becomes the Level (0 = Off), kelvin 2700..6500 -> t = round(100*(6500-K)/3800*2.55), mode 2, Level and Status untouched. A hue on a
+//        becomes the Level (0 = Off), kelvin 2700..6500 -> t = round(100*(6500-K)/3800*2.55), mode 2, Level untouched; an Off lamp is switched On at its stored Level (verified on a Hue bridge, Domoticz 2026.4), as is one given a hue. A hue on a
 //        WW-only lamp answers 'Error ...'. Test switches: hue_drift=DEG (RGB read back that many degrees off), stuck=1 (colour tools answer
 //        success and change nothing), protected via /__mock/touch.
 //   GET /__mock/set?mcp=expire              forget every MCP session (next call: 'Session not found')
@@ -168,7 +168,9 @@ function setColour(d, tool, a) {
     if (!isNum(a.kelvin)) return false;
     const K = Math.max(2700, Math.min(6500, a.kelvin)), L = 100 * (6500 - K) / 3800;
     Object.assign(col, { m: 2, t: Math.round(L * 255 / 100), r: 0, g: 0, b: 0 });
-    d.Color = JSON.stringify(sorted(col)); touch(d);
+    d.Color = JSON.stringify(sorted(col));
+    if (d.Data === 'Off' && d.Level > 0) { d.Status = levelText(d); d.Data = 'On'; } // like the real server: an Off lamp comes on at its stored Level
+    touch(d);
     return null;
   }
   if (!isNum(a.hue) || !isNum(a.brightness)) return false;
