@@ -21,11 +21,13 @@
  * word, then the type's word). Needs --allow-write.
  *
  * --color-test [--hue-test]: the --idx device must be a tunable-white or colour lamp (Color Switch). Through the firmware's own command
- * path: set_color_temperature at warmth 50 (kelvin 4600) when the lamp can do it, a dimmer level change (the colour must be kept), and with
- * --hue-test also set_color_brightness with hue 120 (green). After every step the lamp is read back and printed as fixed words and numbers
- * only (on/off, level, Color mode m, t, the hue computed from RGB, whether the lamp switched on). The original on/off state, level and
- * colour mode (temperature t, or with --hue-test also the hue and a white) are restored; a colour that cannot be restored without
- * --hue-test is said so. Needs --allow-write. Prints no names, status text or token.
+ * path: set_color_temperature at warmth 100, 50 and 0 (kelvin 2700, 4600, 6500; the measured t, cw and ww are printed for each) when the
+ * lamp can do it, a dimmer level change (the colour must be kept), and with --hue-test also set_color_brightness with hue 120 (green).
+ * After every step the lamp is read back and printed as fixed words and numbers only (on/off, level, Color mode m, t, cw, ww, r, g, b, the
+ * hue computed from RGB). The original Color JSON is read first and restored afterwards (always, not only with --hue-test): m=2 through
+ * set_color_temperature, m=1 through the white flag, m=3 through a hue when its saturation is high. An original near-white RGB (m=3,
+ * r=g=b high) CANNOT be restored through MCP: a clear WARNING is printed. The final state is read after a settling delay. Needs
+ * --allow-write. Prints no names, status text or token.
  *
  * --tabs: compares the server's filter=light|temp|weather|utility membership with dz_tabs_of() and prints a diff
  * report (by Type / SubType and direction only; no idx, name or URL credentials).
@@ -297,8 +299,9 @@ static int mcp_check(void) {
 static void colour_word(const dz_device_t *d) {
   float h = 0, sat = 0;
   bool has_hue = d->has_color && d->col_m == 3 && dz_rgb_to_hue(d->col_r, d->col_g, d->col_b, &h, &sat);
-  printf("    lamp: %s level=%d mode m=%d t=%d hue=%d\n", dz_status_is_on(d) ? "on" : "off", d->has_level ? d->level : -1, d->has_color ? d->col_m : -1,
-         d->has_color ? d->col_t : -1, has_hue ? (int)(h + 0.5f) : -1);
+  printf("    lamp: %s level=%d mode m=%d t=%d cw=%d ww=%d r=%d g=%d b=%d hue=%d\n", dz_status_is_on(d) ? "on" : "off", d->has_level ? d->level : -1,
+         d->has_color ? d->col_m : -1, d->has_color ? d->col_t : -1, d->has_color ? d->col_cw : -1, d->has_color ? d->col_ww : -1,
+         d->has_color ? d->col_r : -1, d->has_color ? d->col_g : -1, d->has_color ? d->col_b : -1, has_hue ? (int)(h + 0.5f) : -1);
 }
 
 static int color_test(bool hue_test) {
@@ -318,11 +321,17 @@ static int color_test(bool hue_test) {
   K.verify_delay_ms = 2500;
   dz_device_t d;
   if (d0.col_caps & DZ_COLCAP_CT) {
-    puts("  a. temperature: warmth 50 (kelvin 4600)");
-    rc |= !run_cmd(DZ_CMD_COLOR_TEMP, 50, "temp 50");
-    if (read_dev(&d)) {
-      colour_word(&d);
-      printf("    expected t=%d; lamp %s after the command (it was %s)\n", dz_warmth_to_t(50), dz_status_is_on(&d) ? "on" : "off", was_on ? "on" : "off");
+    static const int warmths[3] = {100, 50, 0}; /* kelvin 2700, 4600, 6500 */
+    for (int i = 0; i < 3; i++) {
+      printf("  a%d. temperature: warmth %d (kelvin %d)\n", i + 1, warmths[i], dz_warmth_to_kelvin(warmths[i]));
+      rc |= !run_cmd(DZ_CMD_COLOR_TEMP, warmths[i], "temp");
+      ru_sleep_ms(2500); /* let the bridge settle before the read */
+      if (read_dev(&d)) {
+        colour_word(&d);
+        printf("    kelvin %d: expected t=%d, measured t=%d cw=%d ww=%d; lamp %s after the command (it was %s)\n", dz_warmth_to_kelvin(warmths[i]),
+               dz_warmth_to_t(warmths[i]), d.has_color ? d.col_t : -1, d.has_color ? d.col_cw : -1, d.has_color ? d.col_ww : -1,
+               dz_status_is_on(&d) ? "on" : "off", was_on ? "on" : "off");
+      }
     }
   } else puts("  a. temperature: skipped (the lamp has no colour-temperature capability)");
   puts("  b. brightness change: the colour must be kept");
@@ -340,12 +349,19 @@ static int color_test(bool hue_test) {
       if (read_dev(&d)) colour_word(&d);
     } else puts("  c. hue: skipped (the lamp has no RGB capability)");
   }
-  /* restore: colour mode first, then the level, then on/off */
+  /* restore: colour mode first (the original Color JSON was read before anything was sent), then the level, then on/off */
   puts("  restore");
+  bool rgb_lost = false;
   if (m0 == 2 && (d0.col_caps & DZ_COLCAP_CT)) rc |= !run_cmd(DZ_CMD_COLOR_TEMP, dz_t_to_warmth(t0), "restore temp");
-  else if (m0 == 3 && hue0_ok && hue_test) { g_hue = (int)(hue0 + 0.5f) % 360; rc |= !run_cmd(DZ_CMD_COLOR_HUE, bright_pct(&d0, lvl0), "restore hue"); }
-  else if (m0 == 1 && hue_test && (d0.col_caps & DZ_COLCAP_W)) rc |= !run_cmd(DZ_CMD_COLOR_WHITE, bright_pct(&d0, lvl0), "restore white");
-  else if (m0 == 3 || m0 == 1) puts("  NOTE: the original colour mode was not changed by this test (no --hue-test)");
+  else if (m0 == 1 && (d0.col_caps & DZ_COLCAP_W)) rc |= !run_cmd(DZ_CMD_COLOR_WHITE, bright_pct(&d0, lvl0), "restore white");
+  else if (m0 == 3 && hue0_ok && sat0 >= 0.7f && (d0.col_caps & DZ_COLCAP_RGB)) {
+    g_hue = (int)(hue0 + 0.5f) % 360;
+    rc |= !run_cmd(DZ_CMD_COLOR_HUE, bright_pct(&d0, lvl0), "restore hue");
+  } else if (m0 == 3) {
+    /* near-white RGB (r=g=b high) has no hue: MCP can send white (m=1), a temperature (m=2) or a saturated hue, not this */
+    puts("  WARNING: original RGB colour cannot be restored through MCP, original was near-white RGB");
+    rgb_lost = true;
+  }
   if (was_on) {
     if (lvl0 > 0) rc |= !run_cmd(DZ_CMD_SET_LEVEL, lvl0, "restore level");
     else rc |= !run_cmd(DZ_CMD_ON, -1, "restore On");
@@ -353,12 +369,15 @@ static int color_test(bool hue_test) {
     if (lvl0 > 0 && read_dev(&d) && dz_status_is_on(&d)) rc |= !run_cmd(DZ_CMD_SET_LEVEL, lvl0, "restore level");
     rc |= !run_cmd(DZ_CMD_OFF, -1, "restore Off");
   }
+  ru_sleep_ms(3000); /* settling delay: a read straight after a command can be stale */
   if (!read_dev(&d1)) { puts("  final read failed: the original state could NOT be verified"); return 1; }
   puts("  final:");
   colour_word(&d1);
+  if (rgb_lost) rc = 1;
   if (dz_status_is_on(&d1) != was_on) { puts("  WARNING: the original on/off state could NOT be restored"); rc = 1; }
   if (was_on && lvl0 > 0 && (!d1.has_level || d1.level != lvl0)) { puts("  WARNING: the original level could NOT be restored"); rc = 1; }
   if (m0 == 2 && d1.has_color && d1.col_m == 2 && abs((int)d1.col_t - t0) > 3) { puts("  WARNING: the original colour temperature could NOT be restored"); rc = 1; }
+  if (m0 >= 1 && m0 <= 3 && !rgb_lost && (!d1.has_color || d1.col_m != m0)) { puts("  WARNING: the original colour mode could NOT be restored"); rc = 1; }
   printf("color-test: %s\n", rc ? "problems" : "ok");
   return rc;
 }
