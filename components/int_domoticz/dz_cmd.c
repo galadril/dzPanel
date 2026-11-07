@@ -23,6 +23,7 @@ void dz_cmd_init(dz_cmd_t *c, dz_client_t *client, dz_model_t *model, bool allow
   c->model = model;
   c->allow_control = allow_control;
   c->verify_delay_ms = 1500;
+  c->min_interval_ms = DZ_CMD_MIN_INTERVAL_MS;
   c->push_mode = DZ_PUSH_MODE_DEFAULT;
   c->cb = cb;
   c->user = user;
@@ -30,6 +31,44 @@ void dz_cmd_init(dz_cmd_t *c, dz_client_t *client, dz_model_t *model, bool allow
 }
 
 static bool is_scene_cmd(dz_cmd_kind_t k) { return k == DZ_CMD_SCENE_ON || k == DZ_CMD_SCENE_OFF; }
+
+/* Light commands are rate limited per device: at most one SEND per dz_cmd_t.min_interval_ms. Families that replace each other while waiting:
+ * 1 level, 2 colour (hue, white, temperature), 3 power (On, Off). TOGGLE is limited but never merged (two toggles are not one). */
+static bool rl_kind(dz_cmd_kind_t k) {
+  return k == DZ_CMD_SET_LEVEL || dz_cmd_is_colour(k) || k == DZ_CMD_ON || k == DZ_CMD_OFF || k == DZ_CMD_TOGGLE;
+}
+static int merge_family(dz_cmd_kind_t k) {
+  if (k == DZ_CMD_SET_LEVEL) return 1;
+  if (dz_cmd_is_colour(k)) return 2;
+  if (k == DZ_CMD_ON || k == DZ_CMD_OFF) return 3;
+  return 0;
+}
+
+static void note_send(dz_cmd_t *c, const char *idx, uint32_t now) {
+  dz_cmd_sent_t *old = &c->sent[0];
+  for (size_t i = 0; i < DZ_CMD_SENT; i++) {
+    dz_cmd_sent_t *e = &c->sent[i];
+    if (e->used && !strcmp(e->idx, idx)) { e->t = now; return; }
+    if (!e->used) { old = e; break; }
+    if ((int32_t)(old->t - e->t) > 0) old = e;
+  }
+  old->used = true;
+  snprintf(old->idx, sizeof old->idx, "%s", idx);
+  old->t = now;
+}
+
+/* When the slot may next act: its own due time, pushed back until the device's last send is min_interval_ms old (light commands only). */
+static uint32_t eff_due(const dz_cmd_t *c, const dz_cmd_slot_t *s) {
+  uint32_t d = s->due_ms;
+  if ((s->state != 1 && s->state != 3) || !rl_kind(s->req.kind) || !c->min_interval_ms) return d;
+  for (size_t i = 0; i < DZ_CMD_SENT; i++) {
+    const dz_cmd_sent_t *e = &c->sent[i];
+    if (!e->used || strcmp(e->idx, s->idx) != 0) continue;
+    uint32_t ok = e->t + c->min_interval_ms;
+    if ((int32_t)(ok - d) > 0) d = ok;
+  }
+  return d;
+}
 
 /* The MCP setpoint tool takes Celsius only. A server whose temperature unit is not KNOWN to be Celsius (getconfig failed or has not
  * run yet) is treated like a Fahrenheit one: a wrong guess would store 70 F as 70 C in a heating device. */
@@ -139,20 +178,23 @@ dz_cmd_err_t dz_cmd_submit(dz_cmd_t *c, const dz_cmd_req_t *req, uint32_t now_ms
   int16_t hue = req->hue > 359 ? 359 : req->hue;
   /* Merge: a command of the same family for the same device that is still waiting to be sent is replaced (a drag released twice in a
    * row sends the last value only). It gets a new id: the older id is never reported. */
-  bool lvl_fam = req->kind == DZ_CMD_SET_LEVEL;
-  if (lvl_fam || dz_cmd_is_colour(req->kind)) {
+  int fam = merge_family(req->kind);
+  if (fam) {
     for (size_t i = 0; i < DZ_CMD_QUEUE; i++) {
       dz_cmd_slot_t *s = &c->q[i];
       if ((s->state != 1 && s->state != 3) || strcmp(s->idx, req->idx) != 0) continue;
-      if ((s->req.kind == DZ_CMD_SET_LEVEL) != lvl_fam || (!lvl_fam && !dz_cmd_is_colour(s->req.kind))) continue;
+      if (merge_family(s->req.kind) != fam) continue;
+      bool same_kind = s->req.kind == req->kind;
       s->id = c->next_id++;
       s->req = *req;
       s->req.idx = NULL;
       s->req.hue = hue;
       s->level = level;
-      s->pre = d;
-      s->state = 1;
-      s->due_ms = now_ms;
+      if (s->state == 1 || !same_kind) { /* a slot past its pre-flight keeps the fresh read and waits for the send; another kind is checked again */
+        s->pre = d;
+        s->state = 1;
+        s->due_ms = now_ms;
+      }
       if (id) *id = s->id;
       return DZ_CMD_ACCEPTED;
     }
@@ -187,7 +229,7 @@ uint32_t dz_cmd_ms_until_due(const dz_cmd_t *c, uint32_t now_ms) {
   uint32_t best = UINT32_MAX;
   for (size_t i = 0; i < DZ_CMD_QUEUE; i++) {
     if (!c->q[i].state) continue;
-    int32_t d = (int32_t)(c->q[i].due_ms - now_ms);
+    int32_t d = (int32_t)(eff_due(c, &c->q[i]) - now_ms);
     uint32_t u = d > 0 ? (uint32_t)d : 0;
     if (u < best) best = u;
   }
@@ -461,6 +503,7 @@ static dz_fail_t http_fail(int status) {
 
 static void do_send(dz_cmd_t *c, dz_cmd_slot_t *s, uint32_t now) {
   dz_client_t *cl = c->client;
+  if (rl_kind(s->req.kind)) note_send(c, s->idx, now);
   int send_level = s->req.kind == DZ_CMD_SET_LEVEL ? level_pct(s->level, s->pre.max_level) : s->level; /* selectors: LevelInt as is */
   bool push = s->req.kind == DZ_CMD_PUSH;
   size_t blen = push ? dz_mcp_encode_push(cl->mcp_call, sizeof cl->mcp_call, dz_client_mcp_next_id(cl), s->idx, &s->pre, c->push_mode, s->push_step)
@@ -547,7 +590,7 @@ bool dz_cmd_pump(dz_cmd_t *c, uint32_t now) {
   dz_cmd_slot_t *best = NULL;
   for (size_t i = 0; i < DZ_CMD_QUEUE; i++) {
     dz_cmd_slot_t *s = &c->q[i];
-    if (!s->state || (int32_t)(now - s->due_ms) < 0) continue;
+    if (!s->state || (int32_t)(now - eff_due(c, s)) < 0) continue;
     if (!best || (int32_t)(s->id - best->id) < 0) best = s;
   }
   if (!best) return false;

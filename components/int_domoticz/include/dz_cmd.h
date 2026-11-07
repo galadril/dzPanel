@@ -122,10 +122,16 @@ typedef struct {
   dz_fail_t fail;
 } dz_cmd_slot_t;
 
+#define DZ_CMD_SENT 8
+#define DZ_CMD_MIN_INTERVAL_MS 300 /* between two sends of light commands (level, colour, on/off, toggle) to one device */
+typedef struct { char idx[12]; uint32_t t; bool used; } dz_cmd_sent_t;
+
 typedef struct {
   dz_client_t *client;
   dz_model_t *model;
   bool allow_control;
+  uint32_t min_interval_ms;  /* per-device spacing of light-command sends; 0 = off (tests) */
+  dz_cmd_sent_t sent[DZ_CMD_SENT];
   uint32_t verify_delay_ms;  /* default 1500; a second read follows after the same delay */
   dz_push_mode_t push_mode;  /* default DZ_PUSH_MODE_DEFAULT; the live test may set another */
   dz_cmd_cb cb;

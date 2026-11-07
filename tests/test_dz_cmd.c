@@ -632,7 +632,7 @@ static void test_refusals(void) {
   CHECK(run(DZ_CMD_ON, "1", 0, 0, true, NULL) == DZ_CMDE_CONTROL_DISABLED && F.calls == 0);
   /* queue full */
   setup(true);
-  dz_cmd_req_t q = {.kind = DZ_CMD_ON, .idx = "1"};
+  dz_cmd_req_t q = {.kind = DZ_CMD_TOGGLE, .idx = "1"}; /* not merged: On/Off taps on one lamp replace each other while waiting */
   int acc = 0;
   for (int i = 0; i < 12; i++) acc += dz_cmd_submit(&K, &q, T, NULL) == DZ_CMD_ACCEPTED;
   CHECK(acc == DZ_CMD_QUEUE && dz_cmd_submit(&K, &q, T, NULL) == DZ_CMDE_QUEUE_FULL);
@@ -992,7 +992,84 @@ static void test_preflight(void) {
   CHECK(run(DZ_CMD_SCENE_ON, "1", 0, 0, true, NULL) == DZ_CMD_ACCEPTED && LAST.fail == DZ_FAIL_PROTECTED && cmd_calls == 0);
 }
 
+/* per-device spacing of light-command sends: a burst of taps is merged, the last value wins, other devices and families are free */
+static void burst(dz_cmd_kind_t kind, const char *idx, int n, int dt, int base, int step) {
+  for (int i = 0; i < n; i++) {
+    dz_cmd_req_t q = {.kind = kind, .idx = idx, .level = base + i * step};
+    CHECK(dz_cmd_submit(&K, &q, T, NULL) == DZ_CMD_ACCEPTED); /* never QUEUE_FULL, never dropped */
+    T += (uint32_t)dt;
+    dz_cmd_pump(&K, T);
+  }
+}
+static void drain(void) {
+  for (int i = 0; i < 80 && dz_cmd_pending(&K); i++) {
+    uint32_t w = dz_cmd_ms_until_due(&K, T);
+    if (w == UINT32_MAX) break;
+    T += w;
+    dz_cmd_pump(&K, T);
+  }
+}
+static void test_rate_limit(void) {
+  setup(true);
+  burst(DZ_CMD_SET_LEVEL, "2", 20, 20, 5, 5); /* 20 taps in 400 ms: 5 .. 100 */
+  CHECK(dz_cmd_pending(&K) <= 3);
+  drain();
+  CHECK(cmd_calls >= 1 && cmd_calls <= 3);
+  CHECK(find("2", false)->level == 100);      /* the last value wins */
+  /* a colour burst on one lamp, the same */
+  int before = cmd_calls;
+  for (int i = 0; i < 20; i++) {
+    dz_cmd_req_t q = {.kind = DZ_CMD_COLOR_HUE, .idx = "20", .level = 70, .hue = i * 10};
+    CHECK(dz_cmd_submit(&K, &q, T, NULL) == DZ_CMD_ACCEPTED);
+    T += 20;
+    dz_cmd_pump(&K, T);
+  }
+  drain();
+  CHECK(cmd_calls - before >= 1 && cmd_calls - before <= 3);
+  /* On/Off taps: the newest replaces a waiting one */
+  setup(true);
+  for (int i = 0; i < 9; i++) {
+    dz_cmd_req_t q = {.kind = i % 2 ? DZ_CMD_OFF : DZ_CMD_ON, .idx = "1"};
+    CHECK(dz_cmd_submit(&K, &q, T, NULL) == DZ_CMD_ACCEPTED);
+    T += 10;
+    dz_cmd_pump(&K, T);
+  }
+  drain();
+  CHECK(cmd_calls <= 3 && !strcmp(find("1", false)->status, "On")); /* the ninth (i = 8) is On */
+  /* the sends of one device are at least 300 ms apart */
+  setup(true);
+  burst(DZ_CMD_SET_LEVEL, "2", 1, 0, 30, 0);
+  dz_cmd_pump(&K, T); dz_cmd_pump(&K, T); /* pre-flight, send */
+  CHECK(cmd_calls == 1);
+  uint32_t t_first = T;
+  burst(DZ_CMD_SET_LEVEL, "2", 1, 0, 60, 0); /* the first one is in verify: this one takes a new slot, but waits for its turn */
+  CHECK(dz_cmd_pump(&K, T) == false || cmd_calls == 1);
+  while (cmd_calls < 2 && T < t_first + 5000) { uint32_t w = dz_cmd_ms_until_due(&K, T); if (w == UINT32_MAX) break; T += w; dz_cmd_pump(&K, T); }
+  CHECK(cmd_calls == 2 && T - t_first >= DZ_CMD_MIN_INTERVAL_MS);
+  drain();
+  CHECK(find("2", false)->level == 60);
+  /* two devices are independent: both are sent at once */
+  setup(true);
+  dz_cmd_req_t a = {.kind = DZ_CMD_SET_LEVEL, .idx = "2", .level = 30};
+  dz_cmd_req_t b = {.kind = DZ_CMD_SET_LEVEL, .idx = "11", .level = 10};
+  CHECK(dz_cmd_submit(&K, &a, T, NULL) == DZ_CMD_ACCEPTED && dz_cmd_submit(&K, &b, T, NULL) == DZ_CMD_ACCEPTED && dz_cmd_pending(&K) == 2);
+  for (int i = 0; i < 4; i++) dz_cmd_pump(&K, T); /* two pre-flights, two sends, all at the same instant */
+  CHECK(cmd_calls == 2);
+  drain();
+  /* a scene is unaffected by a recent light send of the same idx number */
+  setup(true);
+  burst(DZ_CMD_SET_LEVEL, "2", 1, 0, 30, 0);
+  dz_cmd_pump(&K, T); dz_cmd_pump(&K, T);
+  CHECK(cmd_calls == 1);
+  dz_cmd_req_t sc = {.kind = DZ_CMD_SCENE_ON, .idx = "2", .confirmed = true};
+  CHECK(dz_cmd_submit(&K, &sc, T, NULL) == DZ_CMD_ACCEPTED);
+  dz_cmd_pump(&K, T); dz_cmd_pump(&K, T);
+  CHECK(cmd_calls == 2); /* sent in the same instant */
+  drain();
+}
+
 int main(void) {
+  test_rate_limit();
   test_mcp_encode();
   test_kinds_table();
   test_mcp_gates();
