@@ -13,6 +13,7 @@ dz_light_mode_t dz_light_mode(const dz_device_t *d) {
 }
 
 void dz_hsb2rgb(float hue, uint8_t *r, uint8_t *g, uint8_t *b) {
+  if (!isfinite(hue)) hue = 0.0f; /* NaN / infinity: (int)floorf would be undefined */
   hue = fmodf(hue, 360.0f);
   if (hue < 0.0f) hue += 360.0f;
   float h = hue / 60.0f;

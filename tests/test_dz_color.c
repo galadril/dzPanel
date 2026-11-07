@@ -63,6 +63,16 @@ static void test_words(void) {
         !strcmp(dz_warmth_word(20), "COOL") && !strcmp(dz_warmth_word(0), "DAYLIGHT"));
 }
 
+static void test_hsb_nonfinite(void) {
+  uint8_t r, g, b, r0, g0, b0;
+  dz_hsb2rgb(0.0f, &r0, &g0, &b0);
+  float bad[] = { NAN, INFINITY, -INFINITY };
+  for (int i = 0; i < 3; i++) {
+    dz_hsb2rgb(bad[i], &r, &g, &b);
+    CHECK(r == r0 && g == g0 && b == b0); /* treated as hue 0 */
+  }
+}
+
 static void test_mode(void) {
   dz_device_t d;
   memset(&d, 0, sizeof d);
@@ -74,6 +84,7 @@ static void test_mode(void) {
 
 int main(void) {
   test_hsb();
+  test_hsb_nonfinite();
   test_hue_edges();
   test_temp();
   test_words();

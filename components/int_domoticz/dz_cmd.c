@@ -267,7 +267,7 @@ size_t dz_mcp_encode_hue(char *out, size_t cap, uint32_t rpc_id, dz_cmd_kind_t k
     case DZ_CMD_SCENE_ON: tool = "switch_scene"; word = "On"; break;
     case DZ_CMD_SCENE_OFF: tool = "switch_scene"; word = "Off"; break;
     case DZ_CMD_SETPOINT: tool = "set_setpoint_value"; break;
-    case DZ_CMD_COLOR_HUE: case DZ_CMD_COLOR_WHITE: tool = "set_color_brightness"; if (level < 1 || level > 100 || hue < 0 || hue > 360) return 0; break;
+    case DZ_CMD_COLOR_HUE: case DZ_CMD_COLOR_WHITE: tool = "set_color_brightness"; if (level < 1 || level > 100 || (kind == DZ_CMD_COLOR_HUE && (hue < 0 || hue > 360))) return 0; break; /* white ignores the hue */
     case DZ_CMD_COLOR_TEMP: tool = "set_color_temperature"; if (level < 0 || level > 100) return 0; break;
     case DZ_CMD_MODE: return 0;
   }

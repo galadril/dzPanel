@@ -697,6 +697,11 @@ static void test_mcp_encode(void) {
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_ON, "12", &d, -1, 0) > 0 && !strcmp(b, EXP("set_switch_state", "{\"idx\":12,\"state\":\"On\"}")));
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_OFF, "12", &d, -1, 0) > 0 && !strcmp(b, EXP("set_switch_state", "{\"idx\":12,\"state\":\"Off\"}")));
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_TOGGLE, "1", &d, -1, 0) > 0 && !strcmp(b, EXP("toggle_switch_state", "{\"idx\":1}")));
+  /* white ignores the hue (-1 from a caller is fine); a hue command validates it */
+  CHECK(dz_mcp_encode_hue(b, sizeof b, 5, DZ_CMD_COLOR_WHITE, "7", &d, 50, -1, 0) > 0 && strstr(b, "\"iswhite\":true"));
+  CHECK(dz_mcp_encode_hue(b, sizeof b, 5, DZ_CMD_COLOR_HUE, "7", &d, 50, -1, 0) == 0);
+  CHECK(dz_mcp_encode_hue(b, sizeof b, 5, DZ_CMD_COLOR_HUE, "7", &d, 50, 361, 0) == 0);
+  CHECK(dz_mcp_encode_hue(b, sizeof b, 5, DZ_CMD_COLOR_HUE, "7", &d, 50, 360, 0) > 0);
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SET_LEVEL, "2", &d, 30, 0) > 0 && !strcmp(b, EXP("set_dimmer_level", "{\"idx\":2,\"level\":30}")));
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SELECTOR, "4", &d, 20, 0) > 0 && !strcmp(b, EXP("set_dimmer_level", "{\"idx\":4,\"level\":20}")));
   CHECK(dz_mcp_encode(b, sizeof b, 5, DZ_CMD_SET_LEVEL, "2", &d, 101, 0) == 0); /* above the MCP range */
