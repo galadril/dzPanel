@@ -341,7 +341,54 @@ static void run_noring(int size, bool square) {
   sim_shutdown(&S);
 }
 
+/* MaxDimLevel above 100: the command path refuses level commands, so the page is read-only (UNSUPPORTED) and the percentage is clamped */
+static void run_unsupported(int size, bool square) {
+  sim_t S;
+  CHECK(sim_init_ex(&S, size, square));
+  ru_ring_img_free();
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_LIGHTS, 600000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
+  ru_dzapp_set_display_info(a, "sim", !square);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f.T);
+  spy_t spy;
+  memset(&spy, 0, sizeof spy);
+  ru_dzapp_set_cmd_spy(a, spy_fn, &spy);
+  int c = size / 2, x, y;
+  push(&f, "{\"idx\":\"9\",\"Name\":\"Plain Dimmer\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchTypeVal\":7,\"Status\":\"Set Level: 78 %\","
+         "\"Data\":\"On\",\"Level\":200,\"LevelInt\":200,\"MaxDimLevel\":255,\"Favorite\":1}");
+  ru_dzapp_open(a, "9", false);
+  tick(&f, a, 10);
+  lv_obj_t *w = ru_dzapp_light(a);
+  CHECK(w != NULL);
+  if (!w) { sim_shutdown(&S); return; }
+  CHECK(!strcmp(text_of(ru_light_part(w, 5)), "UNSUPPORTED"));
+  int pct = atoi(text_of(ru_light_part(w, 4)));
+  CHECK(pct == 78 && strchr(text_of(ru_light_part(w, 4)), '%')); /* 200 of 255 */
+  /* a level at the top of the scale never reads above 100 % */
+  push(&f, "{\"idx\":\"9\",\"Name\":\"Plain Dimmer\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchTypeVal\":7,\"Status\":\"Set Level: 100 %\","
+         "\"Data\":\"On\",\"Level\":255,\"LevelInt\":255,\"MaxDimLevel\":255,\"Favorite\":1}");
+  tick(&f, a, 300);
+  w = ru_dzapp_light(a);
+  CHECK(w && !strcmp(text_of(ru_light_part(w, 4)), "100%"));
+  /* no drag ring, no disc tap sends anything */
+  ring_xy(size, square ? 43.0f : 43.0f - 2.2f, 270, &x, &y);
+  touch(x, y, true);
+  touch(x, y, false);
+  touch(c, c, true);
+  touch(c, c, false);
+  CHECK(spy.n == 0);
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+  ru_ring_img_free();
+  sim_shutdown(&S);
+}
+
 int main(void) {
+  run_unsupported(466, false);
+  run_unsupported(480, true);
   run_noring(466, false);
   run_noring(480, true);
   run(466, false);

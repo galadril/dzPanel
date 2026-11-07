@@ -1796,7 +1796,11 @@ static void lt_paint(light_t *l) {
   char buf[24];
   if (!known) snprintf(buf, sizeof buf, "--");
   else if (!lit && !pend_bri && !pend_col) snprintf(buf, sizeof buf, "OFF");
-  else snprintf(buf, sizeof buf, "%d%%", lt_pct(l, bv));
+  else if (s->no_level) snprintf(buf, sizeof buf, "ON");
+  else {
+    int pc = lt_pct(l, bv);
+    snprintf(buf, sizeof buf, "%d%%", pc < 0 ? 0 : pc > 100 ? 100 : pc);
+  }
   set_label(l->hero, buf);
   set_text_color(l->hero, lit || pend_bri || pend_col ? t->text : t->text_dim);
   icon_recolor(l->glyph, lit || pend_bri || pend_col ? t->text : ru_dim(t->text_dim, 150));
@@ -2066,7 +2070,7 @@ void ru_light_set(lv_obj_t *w, const ru_light_state_t *s) {
   light_t *l = lt_get(w);
   bool first = !l->have_st;
   int prev_mode = l->st.mode;
-  bool changed = first || l->st.known != s->known || l->st.on != s->on || l->st.level != s->level || l->st.mode != s->mode ||
+  bool changed = first || l->st.known != s->known || l->st.on != s->on || l->st.level != s->level || l->st.no_level != s->no_level || l->st.mode != s->mode ||
                  l->st.has_hue != s->has_hue || l->st.hue != s->hue || l->st.warmth != s->warmth || l->st.color != s->color;
   if (!changed) return;
   l->st = *s;

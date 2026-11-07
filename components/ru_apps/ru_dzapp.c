@@ -1289,8 +1289,16 @@ static void light_state_of(const dz_device_t *d, bool known, ru_light_state_t *o
   dz_state_t ds = dz_device_state(d);
   o->known = known && ds != DZ_STATE_UNKNOWN;
   o->on = ds == DZ_STATE_ON;
-  int max = d->max_level > 0 ? d->max_level : 100;
-  o->level = d->has_level ? (d->level < 0 ? 0 : d->level > max ? max : d->level) : (o->on ? max : 0);
+  int max = d->max_level;
+  if (max >= 1 && max <= 100) {
+    o->level = d->has_level ? (d->level < 0 ? 0 : d->level > max ? max : d->level) : (o->on ? max : 0);
+  } else if (max > 100) { /* unsupported by the command path: show the level as a percentage, clamped */
+    long p = d->has_level ? ((long)d->level * 100 + max / 2) / max : (o->on ? 100 : 0);
+    o->level = p < 0 ? 0 : p > 100 ? 100 : (int)p;
+  } else { /* no usable MaxDimLevel: the state only */
+    o->level = o->on ? 100 : 0;
+    o->no_level = true;
+  }
   dz_light_mode_t m = d->col_caps ? dz_light_mode(d) : DZ_LM_NONE;
   o->mode = (int)m;
   if (m == DZ_LM_COLOR) {
@@ -1320,7 +1328,8 @@ static void light_apply(ru_dzapp_t *a, const dz_device_t *d, ru_val_state_t st) 
   light_state_of(d, known, &ls);
   ru_light_set(a->light, &ls);
   bool ctl = a->allow_control && d->controllable;
-  const char *why = d->is_protected ? "PROTECTED" : !ctl ? "VIEW ONLY" : st == RU_VAL_STALE ? "STALE" : "";
+  bool unsup = d->max_level < 1 || d->max_level > 100; /* dz_cmd_submit refuses level commands for these dimmers */
+  const char *why = d->is_protected ? "PROTECTED" : unsup ? "UNSUPPORTED" : !ctl ? "VIEW ONLY" : st == RU_VAL_STALE ? "STALE" : "";
   ru_light_set_readonly(a->light, why[0] != 0, why);
   ru_light_fb_t fs = RU_LIGHT_FB_NONE;
   const char *ft = "";

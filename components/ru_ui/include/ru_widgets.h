@@ -155,6 +155,7 @@ typedef struct {
   bool known;        /* false: "--", rings unlit, no knobs */
   bool on;
   int level;         /* 0..max, the stored level also while off */
+  bool no_level;     /* the level is not known as a percentage: the hero says ON instead of N% */
   int mode;          /* ru_light_mode_t */
   bool has_hue;      /* colour mode: the hue is known (a white-ish RGB has none: knob hidden) */
   int hue;           /* 0..359 */
