@@ -114,6 +114,15 @@ The brightness is NOT in the colour: it is the device `Level` (0..`MaxDimLevel`)
 
 Verify (`matches` in `dz_cmd.c`): HUE needs `m == 3`, a hue within 8 degrees of the one asked (the bridge's XY conversion drifts; the hue is computed from RGB with `dz_rgb_to_hue`, saturation at least 0.8), and the Level within one percent; WHITE needs `m == 1`; TEMP needs `m == 2` and `t` within 3 of the expected. The lamp is not required to be On. Whether a colour or temperature command switches an Off lamp on is **unverified**: `DZ_COLOR_WHEN_OFF_SENDS_ON` (default 0) decides whether the UI follows with an On. A queued colour (or level) command for the same lamp that has not been sent yet is replaced by the newer one (`dz_cmd_submit`). `tests/dz_live_check --color-test [--hue-test]` is the live test (fixed words and numbers only).
 
+Light command behaviour and what is still unverified (no live test has covered these):
+
+- A colour command (hue, white) to a lamp whose stored level is 0 uses brightness 100. Whether a colour command switches an Off lamp on is **unverified** (`DZ_COLOR_WHEN_OFF_SENDS_ON = 0`).
+- The hue verify tolerance of 8 degrees is **unverified on a Hue bridge** (XY drift). Which way a wrong tolerance fails (a good change reported as unconfirmed, or a bad one confirmed) is **NOT CONFIRMED**.
+- Per-device spacing: light commands (colour, level, On, Off, Toggle) to one device are sent at least 300 ms apart (`DZ_CMD_MIN_INTERVAL_MS`). While a command waits, a newer one of the same family (level, colour, On/Off) replaces it, so a burst of taps sends the last value only and never fills the queue. Toggle is spaced but not merged. Different devices and scenes are not limited.
+- A dimmer whose `MaxDimLevel` is above 100 (or unusable) is shown read-only with the caption UNSUPPORTED: the MCP level tool takes a percentage 0..100, and the shown percent is clamped to 0..100.
+- When the colour ring image (about 176 KB, PSRAM only) cannot be allocated, the colour ring is a read-only track captioned NO COLOUR RING; brightness and the centre disc keep working. One allocation attempt per page, never per paint.
+- When the LVGL heap cannot hold a widget's state, the widget is left inert and a detail page falls back to a plain text page (name, state, back).
+
 ### Live updates: WebSocket
 
 `DomoticzWebsocketHandler.cpp` implements a socket on the same server. The client sends JSON events (`request`, `subscribe`, `unsubscribe`, `unsubscribe_devices`) and gets pushed device and scene updates for the devices it subscribed to. This replaces polling and is the better path for the foreground screen. It is **unverified**: the URL path, auth on the socket, and the message shapes need a live capture. Plan: polling with `lastupdate` first (v0.4), WebSocket as an upgrade.
