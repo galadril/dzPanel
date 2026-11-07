@@ -22,7 +22,7 @@ typedef struct {
 } appfx_t;
 
 typedef enum {
-  APPFX_REAL,    /* tests/fixtures/real_getdevices.json + real_getscenes.json (sanitised capture, names scrubbed) */
+  APPFX_REAL,    /* tests/fixtures/real_getdevices.json + real_getscenes.json (synthetic: renumbered idx, generic names, fixed dates) */
   APPFX_MOCK,    /* mock_getdevices + mock_getscenes: has lock, blinds, thermostat, selector, push, Scene and Group */
   APPFX_MOCK_MIXED, /* as MOCK, with one Group On and one Group Mixed */
   APPFX_EMPTY,   /* nothing at all */

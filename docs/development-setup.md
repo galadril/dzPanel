@@ -37,7 +37,7 @@ Needs: a C11 compiler, CMake 3.16+, SDL2 development headers (simulator only), N
 node sim/mock/domoticz_mock.js --port 18080   # tokens: viewer-token (read), user-token (can switch)
 ```
 
-It mirrors real 2026.4 response shapes (see `tests/fixtures/real_*.json`, sanitised captures) and can inject latency, 401/403, HTML error pages, hangs and truncated bodies.
+It mirrors real 2026.4 response shapes (see `tests/fixtures/real_*.json`, synthetic fixtures shaped like a capture) and can inject latency, 401/403, HTML error pages, hangs and truncated bodies.
 
 ## 4. Firmware toolchain
 
@@ -97,4 +97,4 @@ I (12345) heap: int free <N> big <N> min <N> | psram free <N> big <N> min <N> | 
 
 - Host tools read the Domoticz token from `DOMOTICZ_ACCESSTOKEN`, or from the variable named by `--token-env NAME`. Never write it to a file, a URL, argv or a log.
 - `tests/dz_live_check` has no default server: `--url URL` is required. Read-only checks: `--tabs`, `--lights`. Anything that writes (`--mcp`, `--push-test [--push-mode set|toggle|offon]`) needs `--idx N` (the one test device) and `--allow-write`, and prints only fixed words, HTTP statuses and numbers. The mock (`sim/mock/domoticz_mock.js`) models the push skip (`/__mock/set?push=skip|force`). Never write the URL, idx or device names into the repo.
-- Never upload raw Domoticz responses: they contain home coordinates and internal URLs. Fixtures in `tests/fixtures/real_*.json` are scrubbed; scrub new ones the same way.
+- Never upload raw Domoticz responses: they contain home coordinates and internal URLs. Fixtures in `tests/fixtures/real_*.json` are synthetic (see `tests/fixtures/README.md`); scrub new ones the same way.

@@ -1,6 +1,9 @@
 # Fixtures
 
-- `real_*.json`: sanitised captures from a live Domoticz 2026.4 server (home coordinates and internal URLs removed).
+- `real_getdevices.json`, `real_getscenes.json`: **SYNTHETIC.** Originally shaped from a capture of a Domoticz 2026.4 server, now rewritten: idx values are renumbered 1..31
+  (one stable mapping for devices and scenes), names are `Device N` / `Scene N`, hardware is `Hardware A..L` or `Dummy`, `LastUpdate` times are fixed
+  offsets from the file's `ServerTime` (quantised), meter totals and prices are round numbers. Type, SubType, SwitchType and Data patterns are kept because
+  the parser tests depend on them. The file names keep the `real_` prefix; do not paste a new capture over them without the same scrubbing.
 - `mock_getdevices.json`, `mock_getscenes.json`, `mock_getversion.json`: hand-written.
 - `mock_climate_metric.json`, `mock_climate_imperial.json`, `mock_getconfig_metric.json`, `mock_getconfig_imperial.json`:
   **HAND-WRITTEN, not captures.** They are derived from reading `CWebServer::GetJSonDevices`, `Cmd_GetConfig` and

@@ -165,15 +165,15 @@ static void test_delta_apply(void) {
   run_until_quiet(6); /* version, config, devices, scenes, plans, first delta */
   CHECK(dz_client_state(&C) == DZ_CS_OK);
   /* one changed device in a delta (real shape: result omitted when empty, present otherwise) */
-  delta_body = "{\"ActTime\":1793449500,\"ServerTime\":\"2026-10-31 13:30:00\",\"result\":[{\"idx\":\"1487\",\"Name\":\"Device 6\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchTypeVal\":0,\"Status\":\"On\",\"Data\":\"On\"}],\"status\":\"OK\",\"title\":\"Devices\"}";
+  delta_body = "{\"ActTime\":1793449500,\"ServerTime\":\"2026-10-31 13:30:00\",\"result\":[{\"idx\":\"22\",\"Name\":\"Device 6\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchTypeVal\":0,\"Status\":\"On\",\"Data\":\"On\"}],\"status\":\"OK\",\"title\":\"Devices\"}";
   uint32_t g = dz_model_generation(&M);
   T += 10000;
   CHECK(dz_client_step(&C, T));
   CHECK(dz_model_generation(&M) == g + 1);
   dz_device_t d; ru_val_t v; ru_val_state_t st;
-  CHECK(dz_model_get(&M, "1487", false, &d, &v, &st, T) && !strcmp(d.status, "On") && st == RU_VAL_OK);
+  CHECK(dz_model_get(&M, "22", false, &d, &v, &st, T) && !strcmp(d.status, "On") && st == RU_VAL_OK);
   /* an ActTime hidden inside a string must not become the cursor */
-  delta_body = "{\"result\":[{\"idx\":\"1487\",\"Name\":\"\\\"ActTime\\\": 99\",\"Status\":\"On\",\"Type\":\"Light/Switch\",\"SwitchTypeVal\":0}],\"ActTime\":1793449600,\"status\":\"OK\"}";
+  delta_body = "{\"result\":[{\"idx\":\"22\",\"Name\":\"\\\"ActTime\\\": 99\",\"Status\":\"On\",\"Type\":\"Light/Switch\",\"SwitchTypeVal\":0}],\"ActTime\":1793449600,\"status\":\"OK\"}";
   T += 10000;
   CHECK(dz_client_step(&C, T) && C.cursor == 1793449600);
   /* ActTime missing: keep full reads, never guess a cursor */
