@@ -278,7 +278,72 @@ static void run_swipe_dial(int size, bool square) {
   sim_shutdown(&S);
 }
 
+/* the ring image cannot be allocated: the colour ring is a read-only track with a caption; brightness and the disc keep working;
+ * the allocation is tried once per page, never per paint */
+static void run_noring(int size, bool square) {
+  sim_t S;
+  CHECK(sim_init_ex(&S, size, square));
+  ru_ring_img_free();
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_LIGHTS, 600000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
+  ru_dzapp_set_display_info(a, "sim", !square);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f.T);
+  spy_t spy;
+  memset(&spy, 0, sizeof spy);
+  ru_dzapp_set_cmd_spy(a, spy_fn, &spy);
+  int c = size / 2, x, y;
+  float bri_mid = square ? 43.0f : 43.0f - 2.2f, col_mid = square ? 28.5f : bri_mid;
+  ru_ring_img_test_fail_alloc(true);
+  ru_dzapp_open(a, "1", false);
+  tick(&f, a, 10);
+  lv_obj_t *w = ru_dzapp_light(a);
+  CHECK(w != NULL);
+  if (!w) { ru_ring_img_test_fail_alloc(false); sim_shutdown(&S); return; }
+  if (!square) ru_light_press_chip(w, 1); /* round: show the colour ring */
+  tick(&f, a, 10);
+  CHECK(!strcmp(text_of(ru_light_part(w, 5)), "NO COLOUR RING"));
+  /* many paints: the allocation is not retried (generations stay, no image) */
+  uint32_t g0 = ru_ring_img_generations();
+  ru_ring_img_test_fail_alloc(false); /* memory is back, but this page does not retry per paint */
+  for (int i = 0; i < 5; i++) tick(&f, a, 300);
+  CHECK(ru_ring_img_generations() == g0 && !strcmp(text_of(ru_light_part(w, 5)), "NO COLOUR RING"));
+  /* the colour ring is not touchable */
+  int before = spy.n;
+  ring_xy(size, col_mid, 225, &x, &y);
+  touch(x, y, true);
+  touch(x, y, false);
+  CHECK(spy.n == before);
+  /* the disc still works */
+  touch(c, c, true);
+  touch(c, c, false);
+  CHECK(spy.n == before + 1 && spy.last.kind == DZ_CMD_OFF);
+  /* brightness still works (square: its ring is always there; round: switch back) */
+  before = spy.n;
+  if (!square) ru_light_press_chip(w, 0);
+  ring_xy(size, bri_mid, 270, &x, &y);
+  touch(x, y, true);
+  touch(x, y, false);
+  CHECK(spy.n == before + 1 && spy.last.kind == DZ_CMD_SET_LEVEL);
+  /* the next page open retries once and now has the ring */
+  ru_dzapp_back(a);
+  tick(&f, a, 10);
+  ru_dzapp_open(a, "1", false);
+  tick(&f, a, 10);
+  CHECK(ru_ring_img_generations() == g0 + 1);
+  w = ru_dzapp_light(a);
+  CHECK(w != NULL && strcmp(text_of(ru_light_part(w, 5)), "NO COLOUR RING") != 0);
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+  ru_ring_img_free();
+  sim_shutdown(&S);
+}
+
 int main(void) {
+  run_noring(466, false);
+  run_noring(480, true);
   run(466, false);
   run(480, false);
   run(480, true);

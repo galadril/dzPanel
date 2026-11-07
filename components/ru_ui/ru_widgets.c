@@ -1600,6 +1600,7 @@ typedef struct {
   bool show_col;        /* round panel: the colour arc is the ring shown (else brightness) */
   bool user_view;       /* the user picked a chip: kept until the lamp's mode changes */
   int img_kind;         /* what the arc image holds (-1: none yet) */
+  bool img_fail;        /* the ring image could not be allocated: the colour ring stays a read-only track; tried once per page (widget) */
   ru_light_fb_t fb;
   char fb_text[24];
   bool ro;
@@ -1662,6 +1663,8 @@ static bool lt_centre(const light_t *l, float *cx, float *cy) {
   return true;
 }
 
+static bool lt_col_ok(const light_t *l) { return l->carc && l->img_kind == l->vkind; } /* the colour ring has its image: it may be dragged */
+
 static lt_zone_t lt_zone_of(const light_t *l, int x, int y, float *p) {
   float cx, cy;
   lt_centre(l, &cx, &cy);
@@ -1673,21 +1676,27 @@ static lt_zone_t lt_zone_of(const light_t *l, int x, int y, float *p) {
   if (r < l->disc_r) return ZONE_DISC;
   if (l->cfg.two_rings) {
     if (r >= l->band_b0 && r <= l->band_b1 && lt_sweep_p(deg, LT_ANGLE_TOL, &pp)) { if (p) *p = pp; return ZONE_BRI; }
-    if (l->carc && r >= l->band_c0 && r <= l->band_c1 && lt_sweep_p(deg, LT_ANGLE_TOL, &pp)) { if (p) *p = pp; return ZONE_COL; }
+    if (lt_col_ok(l) && r >= l->band_c0 && r <= l->band_c1 && lt_sweep_p(deg, LT_ANGLE_TOL, &pp)) { if (p) *p = pp; return ZONE_COL; }
     return ZONE_NONE;
   }
   if (r >= l->band_b0 && r <= l->band_b1 && lt_sweep_p(deg, LT_ANGLE_TOL, &pp)) {
     if (p) *p = pp;
-    return l->show_col && l->carc ? ZONE_COL : ZONE_BRI;
+    if (l->show_col && l->carc) return lt_col_ok(l) ? ZONE_COL : ZONE_NONE;
+    return ZONE_BRI;
   }
   return ZONE_NONE;
 }
 
 static void lt_ensure_img(light_t *l) {
-  if (!l->carc || l->img_kind == l->vkind) return;
+  if (!l->carc || l->img_kind == l->vkind || l->img_fail) return;
   ru_ring_color_fn fn = l->vkind == RU_RING_HUE ? l->hk.hue_fn : l->hk.temp_fn;
   const lv_image_dsc_t *im = ru_ring_img_get(l->dc, l->wc, (ru_ring_kind_t)l->vkind, fn);
-  if (!im) return;
+  if (!im) { /* out of memory: no retry on later paints; the ring becomes a plain read-only track */
+    l->img_fail = true;
+    if (l->img_kind >= 0) { lv_obj_set_style_arc_image_src(l->carc, NULL, LV_PART_MAIN); lv_obj_invalidate(l->carc); }
+    l->img_kind = -1;
+    return;
+  }
   lv_obj_set_style_arc_image_src(l->carc, im, LV_PART_MAIN);
   lv_obj_invalidate(l->carc);
   l->img_kind = l->vkind;
@@ -1751,7 +1760,7 @@ static void lt_paint(light_t *l) {
   int col_v = -1;
   if (l->carc) {
     lt_ensure_img(l);
-    int mv = lt_model_col_v(l);
+    int mv = lt_col_ok(l) ? lt_model_col_v(l) : -1;
     col_v = drag_col ? l->drag_v : (pend_col && l->pend_vkind == l->vkind) ? l->pend_v : mv;
     set_hidden(l->carc, !col_vis);
     lv_opa_t aop = on || drag_col ? LV_OPA_COVER : LV_OPA_40;
@@ -1761,7 +1770,7 @@ static void lt_paint(light_t *l) {
       ru_ring_color_fn fn = l->vkind == RU_RING_HUE ? l->hk.hue_fn : l->hk.temp_fn;
       lv_color_t kc = rgb_of(fn((float)col_v / (float)LT_RANGE));
       sty_bg(l->carc, kc, aop, LV_PART_KNOB);
-      sty_border(l->carc, l->ro || !known ? 0 : ru_u(0.6f) < 2 ? 2 : ru_u(0.6f), t->text, aop, LV_PART_KNOB);
+      sty_border(l->carc, l->ro || !known || !lt_col_ok(l) ? 0 : ru_u(0.6f) < 2 ? 2 : ru_u(0.6f), t->text, aop, LV_PART_KNOB);
     } else {
       sty_bg(l->carc, t->text, LV_OPA_TRANSP, LV_PART_KNOB);
       sty_border(l->carc, 0, t->text, LV_OPA_TRANSP, LV_PART_KNOB);
@@ -1801,6 +1810,9 @@ static void lt_paint(light_t *l) {
   } else if (l->fb != RU_LIGHT_FB_NONE && l->fb_text[0]) {
     cap = l->fb_text;
     capc = l->fb == RU_LIGHT_FB_OK ? t->ok : l->fb == RU_LIGHT_FB_WARN ? t->warn : l->fb == RU_LIGHT_FB_ERROR ? t->error : t->text_dim;
+  } else if (col_vis && !lt_col_ok(l)) {
+    cap = "NO COLOUR RING";
+    capc = t->warn;
   } else if (!known) {
     cap = "";
   } else if (l->cfg.two_rings && l->carc) {
