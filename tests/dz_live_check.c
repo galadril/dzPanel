@@ -185,6 +185,13 @@ static int lights_report(void) {
 /* ---- --mcp: On, Off, level 30 and a restore on the --idx device only ---- */
 static char g_idx[12];
 static int g_hue;
+/* A device level (0..MaxDimLevel) as the brightness percentage the colour tools take: the same conversion as the firmware (light_brightness in
+ * ru_dzapp.c): rounded, 100 when it comes out below 1 or above 100. */
+static int bright_pct(const dz_device_t *d, int level) {
+  int max = d->max_level > 0 ? d->max_level : 100;
+  int pct = level > 0 ? (int)((100L * level + max / 2) / max) : 0;
+  return pct < 1 || pct > 100 ? 100 : pct;
+}
 static bool run_cmd(dz_cmd_kind_t kind, int level, const char *what) {
   ru_sleep_ms(1500);
   done = 0;
@@ -329,15 +336,15 @@ static int color_test(bool hue_test) {
     if (d0.col_caps & DZ_COLCAP_RGB) {
       puts("  c. hue 120 (green) at the current brightness");
       g_hue = 120;
-      rc |= !run_cmd(DZ_CMD_COLOR_HUE, probe, "hue 120");
+      rc |= !run_cmd(DZ_CMD_COLOR_HUE, bright_pct(&d0, probe), "hue 120");
       if (read_dev(&d)) colour_word(&d);
     } else puts("  c. hue: skipped (the lamp has no RGB capability)");
   }
   /* restore: colour mode first, then the level, then on/off */
   puts("  restore");
   if (m0 == 2 && (d0.col_caps & DZ_COLCAP_CT)) rc |= !run_cmd(DZ_CMD_COLOR_TEMP, dz_t_to_warmth(t0), "restore temp");
-  else if (m0 == 3 && hue0_ok && hue_test) { g_hue = (int)(hue0 + 0.5f) % 360; rc |= !run_cmd(DZ_CMD_COLOR_HUE, lvl0 > 0 ? lvl0 : 100, "restore hue"); }
-  else if (m0 == 1 && hue_test && (d0.col_caps & DZ_COLCAP_W)) rc |= !run_cmd(DZ_CMD_COLOR_WHITE, lvl0 > 0 ? lvl0 : 100, "restore white");
+  else if (m0 == 3 && hue0_ok && hue_test) { g_hue = (int)(hue0 + 0.5f) % 360; rc |= !run_cmd(DZ_CMD_COLOR_HUE, bright_pct(&d0, lvl0), "restore hue"); }
+  else if (m0 == 1 && hue_test && (d0.col_caps & DZ_COLCAP_W)) rc |= !run_cmd(DZ_CMD_COLOR_WHITE, bright_pct(&d0, lvl0), "restore white");
   else if (m0 == 3 || m0 == 1) puts("  NOTE: the original colour mode was not changed by this test (no --hue-test)");
   if (was_on) {
     if (lvl0 > 0) rc |= !run_cmd(DZ_CMD_SET_LEVEL, lvl0, "restore level");
