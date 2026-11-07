@@ -57,6 +57,14 @@ static void test_ring_img(int size) {
   rgb565(at(im2, d, rm, 30), &r, &g, &b); CHECK(b > 235 && r > 190 && r < 235);                 /* right end: cool D6E6FF */
   CHECK(ru_ring_img_get(d, w, RU_RING_HUE, hue_fn) && ru_ring_img_generations() == g0 + 3);
   CHECK(!ru_ring_img_get(4, 2, RU_RING_HUE, hue_fn) && !ru_ring_img_get(d, w, RU_RING_HUE, NULL));
+  /* allocation failure: NULL (no fallback memory), nothing generated; works again afterwards */
+  ru_ring_img_free();
+  ru_ring_img_test_fail_alloc(true);
+  uint32_t gf = ru_ring_img_generations();
+  CHECK(ru_ring_img_get(d, w, RU_RING_HUE, hue_fn) == NULL && ru_ring_img_generations() == gf);
+  CHECK(ru_ring_img_get(d, w, RU_RING_TEMP, temp_fn) == NULL);
+  ru_ring_img_test_fail_alloc(false);
+  CHECK(ru_ring_img_get(d, w, RU_RING_HUE, hue_fn) != NULL);
   ru_ring_img_free();
   sim_shutdown(&S);
 }

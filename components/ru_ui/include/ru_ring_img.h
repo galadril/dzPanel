@@ -5,6 +5,7 @@
  * (diameter, width, kind) returns the cached image without touching the pixels. */
 #pragma once
 #include "lvgl.h"
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef enum { RU_RING_HUE = 0, RU_RING_TEMP = 1 } ru_ring_kind_t;
@@ -13,10 +14,12 @@ typedef enum { RU_RING_HUE = 0, RU_RING_TEMP = 1 } ru_ring_kind_t;
 typedef uint32_t (*ru_ring_color_fn)(float p);
 
 /* The sweep geometry is the one the dials use: rotation 135, sweep 270 (open at the bottom). d = outer diameter of the arc, w = its width.
- * Returns NULL if the buffer cannot be allocated. The pointer stays valid until the next call with other parameters. */
+ * Returns NULL if the buffer cannot be allocated (PSRAM only on the device, never internal RAM). The pointer stays valid until the next call with other parameters. */
 const lv_image_dsc_t *ru_ring_img_get(int d, int w, ru_ring_kind_t kind, ru_ring_color_fn fn);
 
 /* how many times pixels were generated since start (tests: a rebuild must not generate again) */
 uint32_t ru_ring_img_generations(void);
 /* frees the buffer (tests, low memory); the next get regenerates */
 void ru_ring_img_free(void);
+/* tests: make the buffer allocation fail (true) or work again (false) */
+void ru_ring_img_test_fail_alloc(bool fail);

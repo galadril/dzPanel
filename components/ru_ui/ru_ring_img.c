@@ -6,15 +6,17 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
-static void *big_alloc(size_t n) {
-  void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  return p ? p : heap_caps_malloc(n, MALLOC_CAP_8BIT);
-}
+/* PSRAM only: falling back to internal RAM would take the heap the network stack and LVGL need (the image is ~176 KB on the square panel) */
+static void *big_alloc_raw(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
 #define big_free heap_caps_free
 #else
-static void *big_alloc(size_t n) { return malloc(n); }
+static void *big_alloc_raw(size_t n) { return malloc(n); }
 #define big_free free
 #endif
+
+static bool s_fail_alloc;
+void ru_ring_img_test_fail_alloc(bool fail) { s_fail_alloc = fail; }
+static void *big_alloc(size_t n) { return s_fail_alloc ? NULL : big_alloc_raw(n); }
 
 #define PI_F 3.14159265f
 
