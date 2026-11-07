@@ -19,8 +19,13 @@ static void free_on_delete(lv_event_t *e) {
   lv_free(d);
 }
 
+static bool s_fail_attach;
+void ru_widgets_test_fail_attach(bool fail) { s_fail_attach = fail; }
+bool ru_widget_ok(const lv_obj_t *o) { return o && lv_obj_get_user_data((lv_obj_t *)o) != NULL; }
+
 static void *wd_attach(lv_obj_t *o, size_t sz) {
-  void *d = lv_malloc_zeroed(sz);
+  void *d = s_fail_attach ? NULL : lv_malloc_zeroed(sz);
+  if (!d) return NULL; /* heap exhausted: the caller returns the bare object, every setter tolerates NULL */
   lv_obj_set_user_data(o, d);
   lv_obj_add_event_cb(o, free_on_delete, LV_EVENT_DELETE, NULL);
   return d;
@@ -185,6 +190,7 @@ typedef struct {
 
 static void tile_apply(lv_obj_t *tile, const char *text, ru_val_state_t st) {
   tile_t *d = wd_get(tile);
+  if (!d) return;
   const ru_theme_t *t = ru_theme();
   if (d->inited && d->state == st && lv_color_eq(d->applied_ok, d->ok_color) &&
       !strcmp(lv_label_get_text(d->value), text)) return;
@@ -206,7 +212,8 @@ static void tile_apply(lv_obj_t *tile, const char *text, ru_val_state_t st) {
 static void tile_clicked(lv_event_t *e) {
   lv_obj_t *o = lv_event_get_target(e);
   tile_t *d = wd_get(o);
-  if (d && d->tap) d->tap(o, d->tap_ud);
+  if (!d) return;
+  if (d->tap) d->tap(o, d->tap_ud);
 }
 
 lv_obj_t *ru_value_tile_create(lv_obj_t *parent, int w, int h, const char *label) {
@@ -219,6 +226,7 @@ lv_obj_t *ru_value_tile_create(lv_obj_t *parent, int w, int h, const char *label
   lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
   lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
   tile_t *d = wd_attach(o, sizeof(tile_t));
+  if (!d) return o;
   d->ok_color = t->ok;
   int pad = h / 2 - ru_u(1);
   d->label = lv_label_create(o);
@@ -253,15 +261,17 @@ void ru_value_tile_set_text(lv_obj_t *tile, const char *text, ru_val_state_t st)
 
 void ru_value_tile_set_color(lv_obj_t *tile, lv_color_t c) {
   tile_t *d = wd_get(tile);
+  if (!d) return;
   if (lv_color_eq(d->ok_color, c)) return;
   d->ok_color = c;
   if (d->state == RU_VAL_OK) set_text_color(d->value, c);
 }
 
-ru_val_state_t ru_value_tile_state(const lv_obj_t *tile) { return ((tile_t *)wd_get(tile))->state; }
+ru_val_state_t ru_value_tile_state(const lv_obj_t *tile) { tile_t *d = wd_get(tile); return d ? d->state : RU_VAL_UNKNOWN; }
 
 void ru_value_tile_on_tap(lv_obj_t *tile, ru_tap_cb_t cb, void *ud) {
   tile_t *d = wd_get(tile);
+  if (!d) return;
   d->tap = cb;
   d->tap_ud = ud;
   lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
@@ -291,6 +301,7 @@ lv_obj_t *ru_ring_gauge_create(lv_obj_t *parent, int d, const char *caption) {
   ring_init(&tmp.ring, parent, d, ru_u(1.6f), ROT, SWEEP, 1000, false, false);
   lv_obj_t *box = tmp.ring.box;
   gauge_t *g = wd_attach(box, sizeof(gauge_t));
+  if (!g) return box;
   g->ring = tmp.ring;
   int S = lv_obj_get_width(box);
   g->val = ru_label_new(box, "--", ru_font_title(), t->text, S / 2, S / 2 - ru_u(1));
@@ -301,12 +312,14 @@ lv_obj_t *ru_ring_gauge_create(lv_obj_t *parent, int d, const char *caption) {
 
 void ru_ring_gauge_set_color(lv_obj_t *box, lv_color_t c) {
   gauge_t *g = wd_get(box);
+  if (!g) return;
   g->ring.color = c;
   if (g->ring.lit && !(g->ring.applied && g->ring.a_lit && lv_color_eq(g->ring.a_color, c))) ring_set_lit(&g->ring, true, c, true);
 }
 
 void ru_ring_gauge_set(lv_obj_t *box, const ru_val_t *v, float min, float max, uint32_t now_ms) {
   gauge_t *g = wd_get(box);
+  if (!g) return;
   const ru_theme_t *t = ru_theme();
   char buf[32];
   ru_val_state_t st = ru_val_state(v, now_ms);
@@ -334,6 +347,7 @@ void ru_ring_gauge_set(lv_obj_t *box, const ru_val_t *v, float min, float max, u
 
 void ru_ring_gauge_set_display(lv_obj_t *box, const char *text, float frac, ru_val_state_t st) {
   gauge_t *g = wd_get(box);
+  if (!g) return;
   const ru_theme_t *t = ru_theme();
   if (st == RU_VAL_UNKNOWN || !text || !text[0]) {
     if (gauge_same(g, "--", -1, (int)RU_VAL_UNKNOWN)) return;
@@ -370,6 +384,7 @@ lv_obj_t *ru_status_rim_create(lv_obj_t *parent) {
   int D = ru_theme_geom()->diameter;
   lv_obj_t *root = ru_cont_new(parent, 0, 0, D, D);
   rim_t *r = wd_attach(root, sizeof(rim_t));
+  if (!r) return root;
   r->D = D;
   r->line = circle(root, D - 2, 0, 0);
   lv_obj_set_style_border_width(r->line, 1, 0);
@@ -393,6 +408,7 @@ lv_obj_t *ru_status_rim_create(lv_obj_t *parent) {
 
 void ru_status_rim_set_state(lv_obj_t *root, ru_rim_state_t s) {
   rim_t *r = wd_get(root);
+  if (!r) return;
   const ru_theme_t *t = ru_theme();
   if (r->state == (int)s + 1) return;
   r->state = (int)s + 1;
@@ -402,11 +418,13 @@ void ru_status_rim_set_state(lv_obj_t *root, ru_rim_state_t s) {
 
 void ru_status_rim_set_color(lv_obj_t *root, lv_color_t c) {
   rim_t *r = wd_get(root);
+  if (!r) return;
   lv_obj_set_style_border_color(r->line, c, 0);
 }
 
 void ru_status_rim_set_bead(lv_obj_t *root, bool visible, float deg_from_top) {
   rim_t *r = wd_get(root);
+  if (!r) return;
   if (!visible) {
     lv_obj_add_flag(r->bead, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(r->bead_halo, LV_OBJ_FLAG_HIDDEN);
@@ -442,6 +460,7 @@ static void dimmer_event(lv_event_t *e) {
   lv_obj_t *arc = lv_event_get_target(e);
   lv_obj_t *box = lv_obj_get_parent(arc);
   dimmer_t *d = wd_get(box);
+  if (!d) return;
   lv_event_code_t c = lv_event_get_code(e);
   if (c == LV_EVENT_VALUE_CHANGED) {
     int v = lv_arc_get_value(arc);
@@ -462,6 +481,7 @@ lv_obj_t *ru_dimmer_create(lv_obj_t *parent, int d, int max, const char *caption
   ring_init(&tmp.ring, parent, d, ru_u(2.2f), ROT, SWEEP, max, true, true);
   lv_obj_t *box = tmp.ring.box;
   dimmer_t *w = wd_attach(box, sizeof(dimmer_t));
+  if (!w) return box;
   w->ring = tmp.ring;
   w->max = max;
   int S = lv_obj_get_width(box);
@@ -474,6 +494,7 @@ lv_obj_t *ru_dimmer_create(lv_obj_t *parent, int d, int max, const char *caption
 
 void ru_dimmer_set(lv_obj_t *box, int v) {
   dimmer_t *d = wd_get(box);
+  if (!d) return;
   if (v < 0) v = 0;
   if (v > d->max) v = d->max;
   d->unknown = false;
@@ -483,10 +504,11 @@ void ru_dimmer_set(lv_obj_t *box, int v) {
   dimmer_text(d, v);
 }
 
-int ru_dimmer_get(const lv_obj_t *box) { return lv_arc_get_value(((dimmer_t *)wd_get(box))->ring.arc); }
+int ru_dimmer_get(const lv_obj_t *box) { dimmer_t *d = wd_get(box); return d ? lv_arc_get_value(d->ring.arc) : 0; }
 
 void ru_dimmer_set_unknown(lv_obj_t *box) {
   dimmer_t *d = wd_get(box);
+  if (!d) return;
   d->unknown = true;
   ring_set(&d->ring, 0);
   ring_set_lit(&d->ring, false, ru_theme()->stale, false);
@@ -495,6 +517,7 @@ void ru_dimmer_set_unknown(lv_obj_t *box) {
 
 void ru_dimmer_on_change(lv_obj_t *box, ru_int_cb_t cb, void *ud) {
   dimmer_t *d = wd_get(box);
+  if (!d) return;
   d->cb = cb;
   d->ud = ud;
 }
@@ -553,6 +576,7 @@ typedef struct {
 
 static void toggle_paint(lv_obj_t *box) {
   toggle_t *w = wd_get(box);
+  if (!w) return;
   const ru_theme_t *t = ru_theme();
   lv_color_t c = w->st == RU_ONOFF_ON ? t->accent : (w->st == RU_ONOFF_OFF ? ru_dim(t->text_dim, 150) : ru_dim(t->stale, 110));
   lv_obj_set_style_border_color(w->ringc, w->st == RU_ONOFF_ON ? t->accent : t->track, 0);
@@ -576,6 +600,7 @@ static void toggle_paint(lv_obj_t *box) {
 static void toggle_clicked(lv_event_t *e) {
   lv_obj_t *box = lv_event_get_target(e);
   toggle_t *w = wd_get(box);
+  if (!w) return;
   if (w->st == RU_ONOFF_UNKNOWN) return; /* never guess the state */
   if (w->cb) w->cb(box, w->st == RU_ONOFF_OFF, w->ud);
 }
@@ -589,6 +614,7 @@ lv_obj_t *ru_toggle_create(lv_obj_t *parent, int d) {
   lv_obj_update_layout(box);
   lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
   toggle_t *w = wd_attach(box, sizeof(toggle_t));
+  if (!w) return box;
   w->d = d;
   for (int k = 2; k >= 0; k--) {
     w->glow[k] = circle(box, d + 2 * step * (k + 1), 0, 0);
@@ -612,12 +638,14 @@ lv_obj_t *ru_toggle_create(lv_obj_t *parent, int d) {
 
 void ru_toggle_set(lv_obj_t *box, ru_onoff_t s) {
   toggle_t *w = wd_get(box);
+  if (!w) return;
   w->st = s;
   toggle_paint(box);
 }
-ru_onoff_t ru_toggle_get(const lv_obj_t *box) { return ((toggle_t *)wd_get(box))->st; }
+ru_onoff_t ru_toggle_get(const lv_obj_t *box) { toggle_t *w = wd_get(box); return w ? w->st : RU_ONOFF_UNKNOWN; }
 void ru_toggle_on_change(lv_obj_t *box, ru_bool_cb_t cb, void *ud) {
   toggle_t *w = wd_get(box);
+  if (!w) return;
   w->cb = cb;
   w->ud = ud;
 }
@@ -644,6 +672,7 @@ static float sel_angle(const sel_t *s, int i) {
 
 static void sel_paint(lv_obj_t *box) {
   sel_t *s = wd_get(box);
+  if (!s) return;
   const ru_theme_t *t = ru_theme();
   float a = sel_angle(s, s->idx);
   ring_set(&s->ring, (int)lroundf(a - (float)ROT));
@@ -665,6 +694,7 @@ static void sel_free(lv_event_t *e) {
 static void sel_touch(lv_event_t *e) {
   lv_obj_t *box = lv_event_get_target(e);
   sel_t *s = wd_get(box);
+  if (!s) return;
   lv_event_code_t c = lv_event_get_code(e);
   float deg, r;
   if (c == LV_EVENT_RELEASED) { if (s->cb) s->cb(box, s->idx, true, s->ud); return; }
@@ -697,6 +727,7 @@ lv_obj_t *ru_selector_create(lv_obj_t *parent, int d, const char *const *names, 
   /* delete handlers run in registration order: names must go before the struct */
   lv_obj_add_event_cb(box, sel_free, LV_EVENT_DELETE, NULL);
   sel_t *s = wd_attach(box, sizeof(sel_t));
+  if (!s) return box;
   s->ring = tmp.ring;
   s->n = n;
   s->r_lab = d / 2.0f - (float)w - (float)ru_u(5.5f);
@@ -722,17 +753,19 @@ lv_obj_t *ru_selector_create(lv_obj_t *parent, int d, const char *const *names, 
 
 void ru_selector_set(lv_obj_t *box, int i) {
   sel_t *s = wd_get(box);
+  if (!s) return;
   if (i < 0 || i >= s->n) return;
   s->idx = i;
   sel_paint(box);
 }
-int ru_selector_get(const lv_obj_t *box) { return ((sel_t *)wd_get(box))->idx; }
+int ru_selector_get(const lv_obj_t *box) { sel_t *s = wd_get(box); return s ? s->idx : 0; }
 void ru_selector_on_change(lv_obj_t *box, ru_int_cb_t cb, void *ud) {
   sel_t *s = wd_get(box);
+  if (!s) return;
   s->cb = cb;
   s->ud = ud;
 }
-lv_obj_t *ru_selector_centre(lv_obj_t *box) { return ((sel_t *)wd_get(box))->centre; }
+lv_obj_t *ru_selector_centre(lv_obj_t *box) { sel_t *s = wd_get(box); return s ? s->centre : NULL; }
 
 static lv_obj_t *bar(lv_obj_t *parent, int w, int h, lv_color_t c, int dx, int dy) {
   lv_obj_t *o = lv_obj_create(parent);
@@ -775,6 +808,7 @@ static void blinds_btn(lv_event_t *e) {
   lv_obj_t *btn = lv_event_get_target(e);
   lv_obj_t *box = lv_obj_get_parent(btn);
   blinds_t *b = wd_get(box);
+  if (!b) return;
   if (b->cb) b->cb(box, (ru_blinds_cmd_t)(intptr_t)lv_event_get_user_data(e), b->ud);
 }
 
@@ -799,6 +833,7 @@ lv_obj_t *ru_blinds_create(lv_obj_t *parent, int w, int h) {
   lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
   lv_obj_update_layout(box);
   blinds_t *b = wd_attach(box, sizeof(blinds_t));
+  if (!b) return box;
   int bd = ru_u(12.5f);
   int ww = w * 55 / 100, wh = h - bd - ru_u(9);
   b->win = lv_obj_create(box);
@@ -842,6 +877,7 @@ lv_obj_t *ru_blinds_create(lv_obj_t *parent, int w, int h) {
 
 void ru_blinds_set(lv_obj_t *box, const ru_val_t *closed, uint32_t now_ms) {
   blinds_t *b = wd_get(box);
+  if (!b) return;
   const ru_theme_t *t = ru_theme();
   ru_val_state_t st = ru_val_state(closed, now_ms);
   char buf[32];
@@ -864,6 +900,7 @@ void ru_blinds_set(lv_obj_t *box, const ru_val_t *closed, uint32_t now_ms) {
 
 void ru_blinds_on_cmd(lv_obj_t *box, ru_blinds_cb_t cb, void *ud) {
   blinds_t *b = wd_get(box);
+  if (!b) return;
   b->cb = cb;
   b->ud = ud;
 }
@@ -891,6 +928,7 @@ static void hold_paint(hold_t *h, int permille) {
 static void hold_timer(lv_timer_t *tm) {
   lv_obj_t *box = lv_timer_get_user_data(tm);
   hold_t *h = wd_get(box);
+  if (!h) return;
   if (!h->holding) return;
   uint32_t el = lv_tick_elaps(h->t0);
   int pm = h->hold_ms ? (int)(el * 1000u / h->hold_ms) : 1000;
@@ -906,6 +944,7 @@ static void hold_timer(lv_timer_t *tm) {
 static void hold_press(lv_event_t *e) {
   lv_obj_t *box = lv_event_get_target(e);
   hold_t *h = wd_get(box);
+  if (!h) return;
   lv_event_code_t c = lv_event_get_code(e);
   if (c == LV_EVENT_PRESSED) {
     h->holding = true;
@@ -928,7 +967,8 @@ static void hold_press(lv_event_t *e) {
 
 static void hold_free(lv_event_t *e) {
   hold_t *h = wd_get(lv_event_get_target(e));
-  if (h && h->timer) lv_timer_delete(h->timer);
+  if (!h) return;
+  if (h->timer) lv_timer_delete(h->timer);
 }
 
 lv_obj_t *ru_hold_confirm_create(lv_obj_t *parent, int d, const char *text, uint32_t hold_ms) {
@@ -940,6 +980,7 @@ lv_obj_t *ru_hold_confirm_create(lv_obj_t *parent, int d, const char *text, uint
   lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(box, hold_free, LV_EVENT_DELETE, NULL);
   hold_t *h = wd_attach(box, sizeof(hold_t));
+  if (!h) return box;
   h->ring = tmp.ring;
   h->hold_ms = hold_ms;
   int S = lv_obj_get_width(box);
@@ -955,13 +996,15 @@ lv_obj_t *ru_hold_confirm_create(lv_obj_t *parent, int d, const char *text, uint
 
 void ru_hold_confirm_set_progress(lv_obj_t *box, int pm) {
   hold_t *h = wd_get(box);
+  if (!h) return;
   if (pm < 0) pm = 0;
   if (pm > 1000) pm = 1000;
   hold_paint(h, pm);
 }
-int ru_hold_confirm_progress(const lv_obj_t *box) { return lv_arc_get_value(((hold_t *)wd_get(box))->ring.arc); }
+int ru_hold_confirm_progress(const lv_obj_t *box) { hold_t *h = wd_get(box); return h ? lv_arc_get_value(h->ring.arc) : 0; }
 void ru_hold_confirm_on_event(lv_obj_t *box, ru_hold_cb_t cb, void *ud) {
   hold_t *h = wd_get(box);
+  if (!h) return;
   h->cb = cb;
   h->ud = ud;
 }
@@ -973,6 +1016,7 @@ typedef struct { ru_tap_cb_t cb; void *ud; } scene_t;
 static void scene_clicked(lv_event_t *e) {
   lv_obj_t *o = lv_event_get_target(e);
   scene_t *s = wd_get(o);
+  if (!s) return;
   if (s->cb) s->cb(o, s->ud);
 }
 
@@ -998,6 +1042,7 @@ lv_obj_t *ru_scene_button_create(lv_obj_t *parent, int w, int h, const char *nam
 
 void ru_scene_button_on_tap(lv_obj_t *o, ru_tap_cb_t cb, void *ud) {
   scene_t *s = wd_get(o);
+  if (!s) return;
   s->cb = cb;
   s->ud = ud;
 }
@@ -1028,6 +1073,7 @@ static void thermo_arc(lv_event_t *e) {
   lv_obj_t *arc = lv_event_get_target(e);
   lv_obj_t *box = lv_obj_get_parent(arc);
   thermo_t *t = wd_get(box);
+  if (!t) return;
   int v = lv_arc_get_value(arc);
   if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
     for (int k = 0; k < GLOW_N; k++) lv_arc_set_value(t->ring.glow[k], v);
@@ -1041,6 +1087,7 @@ static void thermo_btn(lv_event_t *e) {
   lv_obj_t *btn = lv_event_get_target(e);
   lv_obj_t *box = lv_obj_get_parent(btn);
   thermo_t *t = wd_get(box);
+  if (!t) return;
   float nv = clampf(t->cur + (float)(intptr_t)lv_event_get_user_data(e) * t->step, t->min, t->max);
   ring_set(&t->ring, (int)lroundf((nv - t->min) / t->step));
   t->cur = nv;
@@ -1064,6 +1111,7 @@ lv_obj_t *ru_thermostat_create(lv_obj_t *parent, int d, float min, float max, fl
   ring_init(&tmp.ring, parent, d, ru_u(2.2f), ROT, SWEEP, steps, true, true);
   lv_obj_t *box = tmp.ring.box;
   thermo_t *t = wd_attach(box, sizeof(thermo_t));
+  if (!t) return box;
   t->ring = tmp.ring;
   t->min = min; t->max = max; t->step = step; t->steps = steps;
   snprintf(t->unit, sizeof t->unit, "\xC2\xB0"); /* default: a bare degree sign, as before; screens set the real unit */
@@ -1109,6 +1157,7 @@ lv_obj_t *ru_thermostat_create(lv_obj_t *parent, int d, float min, float max, fl
 
 void ru_thermostat_set_setpoint(lv_obj_t *box, float sp) {
   thermo_t *t = wd_get(box);
+  if (!t) return;
   t->cur = clampf(sp, t->min, t->max);
   ring_set(&t->ring, (int)lroundf((t->cur - t->min) / t->step));
   thermo_text(t, t->cur);
@@ -1116,11 +1165,13 @@ void ru_thermostat_set_setpoint(lv_obj_t *box, float sp) {
 
 float ru_thermostat_get_setpoint(const lv_obj_t *box) {
   thermo_t *t = wd_get(box);
+  if (!t) return 0;
   return t->cur;
 }
 
 void ru_thermostat_set_current(lv_obj_t *box, const ru_val_t *cur, uint32_t now_ms) {
   thermo_t *t = wd_get(box);
+  if (!t) return;
   const ru_theme_t *th = ru_theme();
   ru_val_state_t st = ru_val_state(cur, now_ms);
   char buf[40], num[24];
@@ -1141,12 +1192,14 @@ void ru_thermostat_set_current(lv_obj_t *box, const ru_val_t *cur, uint32_t now_
 
 void ru_thermostat_set_unit(lv_obj_t *box, const char *unit) {
   thermo_t *t = wd_get(box);
+  if (!t) return;
   snprintf(t->unit, sizeof t->unit, "%s", unit ? unit : "");
   ru_thermostat_set_setpoint(box, ru_thermostat_get_setpoint(box));
 }
 
 void ru_thermostat_set_readonly(lv_obj_t *box, bool ro) {
   thermo_t *t = wd_get(box);
+  if (!t) return;
   for (int i = 0; i < 2; i++) {
     if (!t->btn[i]) continue;
     if (ro) lv_obj_add_flag(t->btn[i], LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
@@ -1158,12 +1211,14 @@ void ru_thermostat_set_readonly(lv_obj_t *box, bool ro) {
 
 void ru_thermostat_set_mode(lv_obj_t *box, const char *text, lv_color_t color) {
   thermo_t *t = wd_get(box);
+  if (!t) return;
   lv_label_set_text(t->mode, text);
   lv_obj_set_style_text_color(t->mode, color, 0);
 }
 
 void ru_thermostat_on_change(lv_obj_t *box, ru_float_cb_t cb, void *ud) {
   thermo_t *t = wd_get(box);
+  if (!t) return;
   t->cb = cb;
   t->ud = ud;
 }
@@ -1243,6 +1298,7 @@ typedef struct {
 static void stile_clicked(lv_event_t *e) {
   lv_obj_t *o = lv_event_get_target(e);
   stile_t *s = wd_get(o);
+  if (!s) return;
   if (s->cb) s->cb(o, s->ud);
 }
 
@@ -1259,6 +1315,7 @@ lv_obj_t *ru_state_tile_create(lv_obj_t *parent, int w, int h, const char *name)
   lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(o, LV_OBJ_FLAG_EVENT_BUBBLE);
   stile_t *s = wd_attach(o, sizeof(stile_t));
+  if (!s) return o;
   s->dot = ru_state_dot_create(o, ru_u(5.5f));
   lv_obj_align(s->dot, LV_ALIGN_CENTER, 0, -h * 26 / 100);
   lv_obj_remove_flag(s->dot, LV_OBJ_FLAG_CLICKABLE);
@@ -1282,6 +1339,7 @@ lv_obj_t *ru_state_tile_create(lv_obj_t *parent, int w, int h, const char *name)
 
 void ru_state_tile_set(lv_obj_t *o, ru_dot_state_t st, const char *sub, ru_val_state_t fresh) {
   stile_t *s = wd_get(o);
+  if (!s) return;
   const ru_theme_t *t = ru_theme();
   char subc[sizeof s->subtxt];
   snprintf(subc, sizeof subc, "%s", sub);
@@ -1314,6 +1372,7 @@ void ru_state_tile_set(lv_obj_t *o, ru_dot_state_t st, const char *sub, ru_val_s
 
 void ru_state_tile_set_value(lv_obj_t *o, const char *text) {
   stile_t *s = wd_get(o);
+  if (!s) return;
   char vc[sizeof s->valtxt];
   snprintf(vc, sizeof vc, "%s", text);
   if (s->val_set && !strcmp(vc, s->valtxt)) return;
@@ -1332,10 +1391,11 @@ void ru_state_tile_set_value(lv_obj_t *o, const char *text) {
   lv_obj_align(s->val, LV_ALIGN_CENTER, 0, lv_obj_get_height(o) * 28 / 100 - lv_obj_get_height(o) / 2);
 }
 
-ru_dot_state_t ru_state_tile_dot(const lv_obj_t *o) { return ((stile_t *)wd_get(o))->st; }
-const char *ru_state_tile_sub(const lv_obj_t *o) { return ((stile_t *)wd_get(o))->subtxt; }
+ru_dot_state_t ru_state_tile_dot(const lv_obj_t *o) { stile_t *s = wd_get(o); return s ? s->st : RU_DOT_UNKNOWN; }
+const char *ru_state_tile_sub(const lv_obj_t *o) { stile_t *s = wd_get(o); return s ? s->subtxt : ""; }
 void ru_state_tile_on_tap(lv_obj_t *o, ru_tap_cb_t cb, void *ud) {
   stile_t *s = wd_get(o);
+  if (!s) return;
   s->cb = cb;
   s->ud = ud;
 }
@@ -1477,6 +1537,7 @@ static void wx_layout(lv_obj_t *o, wtile_t *s, char *vshow, size_t vn, char *ssh
 static void wtile_clicked(lv_event_t *e) {
   lv_obj_t *o = lv_event_get_target(e);
   wtile_t *s = wd_get(o);
+  if (!s) return;
   if (s->cb) s->cb(o, s->ud);
 }
 
@@ -1494,6 +1555,7 @@ lv_obj_t *ru_wx_tile_create(lv_obj_t *parent, int w, int h) {
   lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(o, LV_OBJ_FLAG_EVENT_BUBBLE);
   wtile_t *s = wd_attach(o, sizeof(wtile_t));
+  if (!s) return o;
   s->w = w;
   s->h = h;
   /* the name label has its final size from the start: LONG_DOT rewrites the text for the width it has when the text is set */
@@ -1525,6 +1587,7 @@ lv_obj_t *ru_wx_tile_create(lv_obj_t *parent, int w, int h) {
 
 void ru_wx_tile_set(lv_obj_t *o, const ru_wxtile_data_t *d) {
   wtile_t *s = wd_get(o);
+  if (!s) return;
   const ru_theme_t *t = ru_theme();
   char name[sizeof s->name], icon[sizeof s->icon], value[sizeof s->value], unit[sizeof s->unit], second[sizeof s->second];
   snprintf(name, sizeof name, "%s", d->name ? d->name : "");
@@ -1564,12 +1627,14 @@ void ru_wx_tile_set(lv_obj_t *o, const ru_wxtile_data_t *d) {
 
 void ru_wx_tile_on_tap(lv_obj_t *o, ru_tap_cb_t cb, void *ud) {
   wtile_t *s = wd_get(o);
+  if (!s) return;
   s->cb = cb;
   s->ud = ud;
 }
 
 lv_obj_t *ru_wx_tile_part(const lv_obj_t *o, int which) {
   wtile_t *s = wd_get(o);
+  if (!s) return NULL;
   return which >= 0 && which < 6 ? s->part[which] : NULL;
 }
 
@@ -1956,7 +2021,8 @@ static void lt_chip_apply(light_t *l, int i) {
 static void lt_chip_click(lv_event_t *e) {
   lv_obj_t *o = lv_event_get_target(e);
   light_t *l = lt_get(lv_obj_get_parent(lv_obj_get_parent(o)));
-  if (l) lt_chip_apply(l, (int)(intptr_t)lv_event_get_user_data(e));
+  if (!l) return;
+  lt_chip_apply(l, (int)(intptr_t)lv_event_get_user_data(e));
 }
 
 static void lt_derive_view(light_t *l, int prev_mode, bool first) {
@@ -1978,6 +2044,7 @@ lv_obj_t *ru_light_create(lv_obj_t *parent, int d, const ru_light_cfg_t *cfg) {
   lv_obj_align(root, LV_ALIGN_CENTER, 0, 0);
   lv_obj_update_layout(root);
   light_t *l = wd_attach(root, sizeof(light_t));
+  if (!l) return root;
   l->root = root;
   l->cfg = *cfg;
   l->cfg.caps = caps;
@@ -2068,6 +2135,7 @@ lv_obj_t *ru_light_create(lv_obj_t *parent, int d, const ru_light_cfg_t *cfg) {
 
 void ru_light_set(lv_obj_t *w, const ru_light_state_t *s) {
   light_t *l = lt_get(w);
+  if (!l) return;
   bool first = !l->have_st;
   int prev_mode = l->st.mode;
   bool changed = first || l->st.known != s->known || l->st.on != s->on || l->st.level != s->level || l->st.no_level != s->no_level || l->st.mode != s->mode ||
@@ -2082,6 +2150,7 @@ void ru_light_set(lv_obj_t *w, const ru_light_state_t *s) {
 
 void ru_light_set_feedback(lv_obj_t *w, ru_light_fb_t st, const char *text) {
   light_t *l = lt_get(w);
+  if (!l) return;
   if (!text) text = "";
   if (l->fb == st && !strcmp(l->fb_text, text)) return;
   if (st != RU_LIGHT_FB_NONE && st != RU_LIGHT_FB_SENDING) l->pend = false;   /* the result is in: the knob goes to the model value */
@@ -2093,6 +2162,7 @@ void ru_light_set_feedback(lv_obj_t *w, ru_light_fb_t st, const char *text) {
 
 void ru_light_set_readonly(lv_obj_t *w, bool ro, const char *text) {
   light_t *l = lt_get(w);
+  if (!l) return;
   if (!text) text = "";
   if (l->ro == ro && !strcmp(l->ro_text, text)) return;
   l->ro = ro;
@@ -2102,18 +2172,21 @@ void ru_light_set_readonly(lv_obj_t *w, bool ro, const char *text) {
 
 void ru_light_on_change(lv_obj_t *w, ru_light_cb_t cb, void *ud) {
   light_t *l = lt_get(w);
+  if (!l) return;
   l->cb = cb;
   l->ud = ud;
 }
 
 bool ru_light_ring_at(const lv_obj_t *w, int x, int y) {
   light_t *l = lt_get(w);
+  if (!l) return false;
   lt_zone_t z = lt_zone_of(l, x, y, NULL);
   return z == ZONE_BRI || z == ZONE_COL;
 }
 
 lv_obj_t *ru_light_part(const lv_obj_t *w, int which) {
   light_t *l = lt_get(w);
+  if (!l) return NULL;
   switch (which) {
     case 0: return l->root;
     case 1: return l->bri.arc;
@@ -2130,9 +2203,10 @@ lv_obj_t *ru_light_part(const lv_obj_t *w, int which) {
 
 int ru_light_view(const lv_obj_t *w) {
   light_t *l = lt_get(w);
+  if (!l) return 0;
   if (!l->carc || (!l->cfg.two_rings && !l->show_col)) return -1;
   return l->vkind;
 }
 
-int ru_light_chips(const lv_obj_t *w) { return lt_get(w)->nchip; }
-void ru_light_press_chip(lv_obj_t *w, int i) { lt_chip_apply(lt_get(w), i); }
+int ru_light_chips(const lv_obj_t *w) { light_t *l = lt_get(w); return l ? l->nchip : 0; }
+void ru_light_press_chip(lv_obj_t *w, int i) { light_t *l = lt_get(w); if (l) lt_chip_apply(l, i); }

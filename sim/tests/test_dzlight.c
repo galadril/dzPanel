@@ -386,7 +386,54 @@ static void run_unsupported(int size, bool square) {
   sim_shutdown(&S);
 }
 
+/* a label with exactly this text anywhere under o */
+static bool has_text(lv_obj_t *o, const char *txt) {
+  if (lv_obj_check_type(o, &lv_label_class) && !strcmp(lv_label_get_text(o), txt)) return true;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+    if (has_text(lv_obj_get_child(o, (int32_t)i), txt)) return true;
+  return false;
+}
+
+/* the widget state cannot be allocated (LVGL heap exhausted): tile grids and detail pages must not crash; detail pages fall back to plain text */
+static void run_attachfail(int size, bool square) {
+  sim_t S;
+  CHECK(sim_init_ex(&S, size, square));
+  ru_ring_img_free();
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_LIGHTS, 600000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
+  ru_dzapp_set_display_info(a, "sim", !square);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_widgets_test_fail_attach(true);
+  ru_dzapp_ui_tick(a, f.T); /* the tile grid */
+  tick(&f, a, 10);
+  CHECK(ru_dzapp_screen(a) != NULL);
+  push(&f, "{\"idx\":\"9\",\"Name\":\"Plain Dimmer\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchTypeVal\":7,\"Status\":\"Set Level: 50 %\","
+         "\"Data\":\"On\",\"Level\":50,\"LevelInt\":50,\"MaxDimLevel\":100,\"Favorite\":1}");
+  const char *idxs[2] = { "1", "9" }; /* a colour light and a plain dimmer */
+  for (int k = 0; k < 2; k++) {
+    ru_dzapp_open(a, idxs[k], false);
+    tick(&f, a, 10);
+    tick(&f, a, 300);
+    CHECK(ru_dzapp_light(a) == NULL);
+    CHECK(has_text(ru_dzapp_screen(a), "BACK"));
+    ru_dzapp_back(a);
+    tick(&f, a, 10);
+  }
+  ru_widgets_test_fail_attach(false);
+  ru_dzapp_open(a, "9", false); /* memory is back: the real page */
+  tick(&f, a, 10);
+  CHECK(ru_dzapp_light(a) != NULL);
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+  ru_ring_img_free();
+  sim_shutdown(&S);
+}
+
 int main(void) {
+  run_attachfail(466, false);
+  run_attachfail(480, true);
   run_unsupported(466, false);
   run_unsupported(480, true);
   run_noring(466, false);

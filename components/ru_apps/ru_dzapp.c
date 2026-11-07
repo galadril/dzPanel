@@ -1455,6 +1455,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
     case DZ_CAP_ONOFF: {
       label_u(s, name, ru_font_title(), t->text_dim, 0, -40);
       lv_obj_t *w = ru_toggle_create(s, ru_u(54));
+      if (!ru_widget_ok(w)) { lv_obj_delete(w); dial = false; goto info; } /* no memory for the widget: plain text page */
       ru_toggle_set(w, unknown || ds == DZ_STATE_UNKNOWN ? RU_ONOFF_UNKNOWN : ds == DZ_STATE_ON ? RU_ONOFF_ON : RU_ONOFF_OFF);
       if (ctl) ru_toggle_on_change(w, cb_toggle, a);
       label_u(s, ctl ? (ds == DZ_STATE_ON ? "TAP TO SWITCH OFF" : "TAP TO SWITCH ON") : "VIEW ONLY", ru_font_body(), t->text_dim, 0, 33);
@@ -1464,6 +1465,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       /* every dimmer and colour light: rings + centre power disc (+ chips); the page is updated in place, see light_tick */
       ru_light_cfg_t cfg = { .caps = d.col_caps, .two_rings = a->square, .max = d.max_level > 0 ? d.max_level : 100, .hooks = &k_light_hooks };
       lv_obj_t *w = ru_light_create(s, ru_u(86), &cfg);
+      if (!ru_widget_ok(w)) { lv_obj_delete(w); dial = false; goto info; } /* no memory for the widget: plain text page */
       a->light = w;
       a->rim = rim;
       ru_light_on_change(w, cb_light, a);
@@ -1483,6 +1485,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       split_names(a, &d, &n);
       if (n < 2) goto info;
       lv_obj_t *w = ru_selector_create(s, ru_u(86), a->name_ptrs, n);
+      if (!ru_widget_ok(w)) { lv_obj_delete(w); dial = false; goto info; } /* no memory for the widget: plain text page */
       int idx = d.level_int / 10;
       ru_selector_set(w, idx >= 0 && idx < n ? idx : 0);
       if (ctl) ru_selector_on_change(w, cb_selector, a);
@@ -1494,6 +1497,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       name_back(a, s, name, -40);
       dial = true; /* the bottom row is up / stop / down: the name at the top is the back control */
       lv_obj_t *b = ru_blinds_create(s, ru_u(60), ru_u(76));
+      if (!ru_widget_ok(b)) { lv_obj_delete(b); dial = false; goto info; }
       lv_obj_align(b, LV_ALIGN_CENTER, 0, ru_u(5.2f));
       ru_val_t cl = d.has_level && (d.switch_type == 13 || d.switch_type == 21)
                         ? ru_val_make((float)(d.level), RU_UNIT_PCT, a->now, 600000) : ru_val_unknown();
@@ -1516,6 +1520,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       float step = th.control ? th.step : d.has_setpoint_range ? d.setpoint_step : 0.5f;
       if (!(hi > lo) || !(step > 0.0f)) { lo = floorf(th.setpoint) - 10.0f; hi = lo + 20.0f; step = 0.5f; }
       lv_obj_t *w = ru_thermostat_create(s, ru_u(86), lo, hi, step);
+      if (!ru_widget_ok(w)) { lv_obj_delete(w); dial = false; goto info; } /* no memory for the widget: plain text page */
       ru_thermostat_set_unit(w, th.unit);
       if (d.has_setpoint) ru_thermostat_set_setpoint(w, d.setpoint);
       ru_val_t now = th.has_now ? make_val(th.now, RU_UNIT_NONE, plan ? pst : st, a->now) : ru_val_unknown();
@@ -1537,6 +1542,7 @@ static lv_obj_t *build_detail(ru_dzapp_t *a) {
       for (int i = 0; i < n; i++) { if (!ru_cl_mode_name(&d, i, a->names[i], NAME_LEN)) snprintf(a->names[i], NAME_LEN, "?"); a->name_ptrs[i] = a->names[i]; }
       if (n < 2) goto info;
       lv_obj_t *w = ru_selector_create(s, ru_u(86), a->name_ptrs, n);
+      if (!ru_widget_ok(w)) { lv_obj_delete(w); dial = false; goto info; } /* no memory for the widget: plain text page */
       int slot = ru_cl_mode_slot(&d);
       ru_selector_set(w, slot >= 0 ? slot : 0);
       /* no MCP tool for the thermostat mode: the modes are shown, not set */
