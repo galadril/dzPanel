@@ -50,7 +50,7 @@ bool ru_apps_available(ru_section_t s) { return g_shared && ru_dzapp_section_ava
 ru_err_t ru_apps_register(ru_runtime_t *rt, ru_dzapp_t *shared) {
   g_shared = shared;
   for (int i = 0; i < RU_SEC_COUNT; i++) {
-    ru_err_t e = ru_runtime_register(rt, k_table[i], i == RU_SEC_FAVS);
+    ru_err_t e = ru_runtime_register(rt, k_table[i], i == (int)ru_dzapp_home_section(shared));
     if (e != RU_OK) return e;
   }
   return RU_OK;

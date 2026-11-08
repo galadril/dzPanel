@@ -73,6 +73,7 @@ static void test_states_without_server(void) {
   CHECK(dz_client_init(&C, &cfg));
   ru_dzapp_t *a = ru_dzapp_create(&M, &C, true);
   CHECK(a != NULL);
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid */
   T = 100000;
   ru_dzapp_ui_tick(a, T);
   ru_dzapp_home(a);
@@ -89,6 +90,7 @@ static void test_states_without_server(void) {
 static void test_token_rejected(void) {
   make("wrong-token");
   ru_dzapp_t *a = ru_dzapp_create(&M, &C, true);
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid */
   ru_dzapp_ui_tick(a, T);
   ru_dzapp_home(a);
   pump(a, 40, 1500);
@@ -115,6 +117,7 @@ static int first_row_with_cap(ru_dzapp_t *a, dz_cap_t want, char *idx, bool *sce
 static void test_full_flow(void) {
   make("user-token");
   ru_dzapp_t *a = ru_dzapp_create(&M, &C, true);
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid */
   ru_dzapp_ui_tick(a, T);
   ru_dzapp_home(a);
   pump(a, 60, 1500);
@@ -211,6 +214,7 @@ static void test_full_flow(void) {
 static void test_view_only(void) {
   make("viewer-token");
   ru_dzapp_t *a = ru_dzapp_create(&M, &C, false); /* a Viewer token: no controls */
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid */
   ru_dzapp_ui_tick(a, T);
   ru_dzapp_home(a);
   pump(a, 60, 1500);

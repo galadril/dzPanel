@@ -85,6 +85,7 @@ static ru_dzapp_t *start(appfx_t *f, const char *dir, appfx_set_t set, uint32_t 
   ru_dzapp_t *a = ru_dzapp_create(&f->model, &f->client, control);
   CHECK(a != NULL);
   ru_dzapp_set_display_info(a, "sim", !g_square);
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid; the Clock start page has its own tests */
   f->T += 1000;
   ru_dzapp_set_conn(a, DZ_CS_OK);
   ru_dzapp_set_cmd_spy(a, spy_cb, NULL);
@@ -1206,6 +1207,64 @@ static void clock_page(int size) {
   sim_shutdown(&s);
 }
 
+/* ---- the start page: Clock by default, Favourites selectable; Home, back and the runtime's home follow it ---- */
+
+static void start_page(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_REAL, 600000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true); /* no start() helper: this is the default */
+  CHECK(a != NULL);
+  ru_dzapp_set_display_info(a, "sim", !g_square);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  CHECK(ru_dzapp_home_section(a) == RU_SEC_CLOCK && ru_dzapp_section(a) == RU_SEC_CLOCK);
+  ru_dzapp_ui_tick(a, f.T);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_CLOCK && shows(a, "SAT 31 OCT"));
+  /* Home is the Clock; back from Favourites (and from any page) lands on it; back on the Clock goes nowhere */
+  ru_dzapp_show_section(a, RU_SEC_FAVS);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_CLOCK && ru_dzapp_view(a) == RU_VIEW_HOME);
+  CHECK(!ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_CLOCK);
+  ru_dzapp_show_section(a, RU_SEC_SETTINGS);
+  ru_dzapp_home(a);
+  CHECK(ru_dzapp_section(a) == RU_SEC_CLOCK);
+  ru_dzapp_show_section(a, RU_SEC_FAVS);
+  ru_dzapp_open_sub(a, RU_SUB_ABOUT);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_SETTINGS); /* sub -> Settings, then Home */
+  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_CLOCK);
+  /* the runtime's home app is the start page */
+  ru_heap_t heap;
+  ru_heap_init(&heap, 0);
+  ru_runtime_t rt;
+  ru_runtime_init(&rt, &heap, NULL, NULL);
+  CHECK(ru_apps_register(&rt, a) == RU_OK);
+  CHECK(ru_runtime_go_home(&rt) == RU_OK && ru_dzapp_section(a) == RU_SEC_CLOCK && !strcmp(ru_runtime_foreground(&rt)->id, RU_APP_ID_CLOCK));
+  CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_HOME) == RU_OK && ru_dzapp_section(a) == RU_SEC_FAVS);
+  ru_runtime_shutdown(&rt);
+  ru_apps_unbind();
+  CHECK(heap.live == 0);
+
+  /* Favourites as the start page */
+  CHECK(!ru_dzapp_set_home_section(a, RU_SEC_LIGHTS) && !ru_dzapp_set_home_section(a, RU_SEC_COUNT) && ru_dzapp_home_section(a) == RU_SEC_CLOCK);
+  CHECK(ru_dzapp_set_home_section(a, RU_SEC_FAVS) && ru_dzapp_home_section(a) == RU_SEC_FAVS);
+  ru_dzapp_show_section(a, RU_SEC_CLOCK);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_FAVS); /* the Clock is now an ordinary page */
+  CHECK(!ru_dzapp_back(a));
+  ru_dzapp_show_section(a, RU_SEC_TEMP);
+  ru_dzapp_home(a);
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);
+  ru_heap_init(&heap, 0);
+  ru_runtime_init(&rt, &heap, NULL, NULL);
+  CHECK(ru_apps_register(&rt, a) == RU_OK);
+  CHECK(ru_runtime_go_home(&rt) == RU_OK && !strcmp(ru_runtime_foreground(&rt)->id, RU_APP_ID_HOME));
+  ru_runtime_shutdown(&rt);
+  ru_apps_unbind();
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+  sim_shutdown(&s);
+}
+
 /* ---- pages: order, membership, hidden sections, paging, swipes, return to the page ---- */
 
 static const char *const SEC_NAMES[RU_SEC_COUNT] = { "CLOCK", "FAVOURITES", "LIGHTS", "SCENES", "TEMPERATURE", "WEATHER", "UTILITY", "ENERGY", "SETTINGS" };
@@ -1506,6 +1565,7 @@ int main(void) {
     sections(size);
     backend_path(size);
     clock_page(size);
+    start_page(size);
     page_model(size);
     paging(size);
     swipes(size);

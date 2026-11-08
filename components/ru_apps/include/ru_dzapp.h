@@ -77,9 +77,14 @@ typedef struct { uint32_t rebuilds, inplace, evals, build_max_us, sig_max_us, co
 void ru_dzapp_stats(ru_dzapp_t *a, ru_dzapp_stats_t *out, bool reset);
 /* Navigation, also used by the gesture layer later. */
 void ru_dzapp_open(ru_dzapp_t *a, const char *idx, bool is_scene);
+/* The start page: the section Home goes to, the one back stops at (back on it returns false) and the first screen. Default
+ * RU_SEC_CLOCK; only RU_SEC_CLOCK and RU_SEC_FAVS are accepted (false otherwise, nothing changes). Takes effect on the next
+ * navigation (or on the first screen, when none has been built yet): it never moves a screen that is shown. */
+bool ru_dzapp_set_home_section(ru_dzapp_t *a, ru_section_t s);
+ru_section_t ru_dzapp_home_section(const ru_dzapp_t *a);
 void ru_dzapp_home(ru_dzapp_t *a);
 /* One step back: confirm -> where it came from (detail or settings sub), detail -> its section, sub -> Settings,
- * any other section -> Home. false on Home (nothing to go back to). Used by the on-screen back controls and the shell. */
+ * any other section -> Home (the start page). false on Home (nothing to go back to). Used by the on-screen back controls and the shell. */
 bool ru_dzapp_back(ru_dzapp_t *a);
 /* Square panels only: the corner back chevron on a detail, sub or confirm screen, in screen pixels. false on a round
  * panel or on a section screen (nothing is drawn there). */

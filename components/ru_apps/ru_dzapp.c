@@ -86,6 +86,7 @@ struct ru_dzapp {
   uint32_t now, interact_until;
   char banner[56];
 
+  ru_section_t home_sec; /* the start page: RU_SEC_CLOCK (default) or RU_SEC_FAVS; Home, back and the first screen follow it */
   int energy_sel;
   /* the Clock page: its labels and gauges are updated in place; the chosen gauge devices are part of the structure signature */
   lv_obj_t *clk_time, *clk_date, *clk_gauge[CLK_GAUGES];
@@ -445,7 +446,7 @@ bool ru_dzapp_back(ru_dzapp_t *a) {
     case RU_VIEW_SUB: ru_dzapp_show_section(a, RU_SEC_SETTINGS); return true;
     default: break;
   }
-  if (a->section == RU_SEC_FAVS) return false;
+  if (a->section == a->home_sec) return false;
   ru_dzapp_home(a);
   return true;
 }
@@ -1970,7 +1971,7 @@ static void clock_in_place(ru_dzapp_t *a) {
 /* ------------------------------------------------------------------ public UI API */
 
 void ru_dzapp_show_section(ru_dzapp_t *a, ru_section_t s) {
-  if (s >= RU_SEC_COUNT || !ru_dzapp_section_available(a, s)) s = RU_SEC_FAVS;
+  if (s >= RU_SEC_COUNT || !ru_dzapp_section_available(a, s)) s = a->home_sec;
   /* the page is kept when the same section is shown again (back from a detail or a hold), reset when it changes */
   if (s != a->section) a->page = 0;
   a->section = s;
@@ -1981,8 +1982,16 @@ void ru_dzapp_show_section(ru_dzapp_t *a, ru_section_t s) {
 
 void ru_dzapp_home(ru_dzapp_t *a) {
   a->page = 0;
-  ru_dzapp_show_section(a, RU_SEC_FAVS);
+  ru_dzapp_show_section(a, a->home_sec);
 }
+
+bool ru_dzapp_set_home_section(ru_dzapp_t *a, ru_section_t s) {
+  if (s != RU_SEC_CLOCK && s != RU_SEC_FAVS) return false;
+  a->home_sec = s;
+  if (!a->scr) a->section = s; /* nothing on screen yet: the first screen is the start page */
+  return true;
+}
+ru_section_t ru_dzapp_home_section(const ru_dzapp_t *a) { return a->home_sec; }
 ru_section_t ru_dzapp_section(const ru_dzapp_t *a) { return a->section; }
 int ru_dzapp_page(const ru_dzapp_t *a) { return a->page; }
 int ru_dzapp_pages(const ru_dzapp_t *a) { return a->pages; }
@@ -2194,7 +2203,8 @@ ru_dzapp_t *ru_dzapp_create(dz_model_t *model, dz_client_t *client, bool allow_c
   a->client = client;
   a->allow_control = allow_control;
   a->brightness = 80;
-  a->section = RU_SEC_FAVS;
+  a->home_sec = RU_SEC_CLOCK;
+  a->section = a->home_sec;
   ru_fb_init(&a->fb);
   a->req_q = ru_queue_create(sizeof(req_msg_t), 8);
   a->res_q = ru_queue_create(sizeof(res_msg_t), 16);

@@ -67,6 +67,7 @@ static ru_dzapp_t *start_many(appfx_t *f) {
   ru_dzapp_t *a = ru_dzapp_create(&f->model, &f->client, true);
   CHECK(a != NULL);
   ru_dzapp_set_display_info(a, "sim", false);
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid; the Clock start page has its own tests */
   f->T += 1000;
   ru_dzapp_set_conn(a, DZ_CS_OK);
   ru_dzapp_ui_tick(a, f->T);
@@ -327,6 +328,7 @@ static void test_stale_flip(void) {
   ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
   CHECK(a != NULL);
   ru_dzapp_set_display_info(a, "sim", false);
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid; the Clock start page has its own tests */
   f.T += 1000;
   ru_dzapp_set_conn(a, DZ_CS_OK);
   ru_dzapp_ui_tick(a, f.T);
@@ -435,6 +437,7 @@ static void test_wx_tiles(void) {
   ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
   CHECK(a != NULL);
   ru_dzapp_set_display_info(a, "sim", false);
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid; the Clock start page has its own tests */
   f.T += 1000;
   ru_dzapp_set_conn(a, DZ_CS_OK);
   ru_dzapp_ui_tick(a, f.T);
@@ -527,6 +530,7 @@ static void test_clock_minute(void) {
   ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
   CHECK(a != NULL);
   ru_dzapp_set_display_info(a, "sim", false);
+  ru_dzapp_set_home_section(a, RU_SEC_FAVS); /* these tests are about the Favourites grid; the Clock start page has its own tests */
   f.T += 1000;
   ru_dzapp_set_conn(a, DZ_CS_OK);
   ru_dzapp_ui_tick(a, f.T);
