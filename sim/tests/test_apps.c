@@ -1265,6 +1265,126 @@ static void start_page(int size) {
   sim_shutdown(&s);
 }
 
+/* ---- Settings: START PAGE and ROTATION ---- */
+
+static struct { int n_start, n_rot, n_restart, last_start, last_rot; ru_pref_result_t rot_answer; } PH;
+static ru_pref_result_t pref_cb(ru_pref_t p, int v, void *ud) {
+  (void)ud;
+  if (p == RU_PREF_START) { PH.n_start++; PH.last_start = v; return RU_PREF_APPLIED; }
+  if (p == RU_PREF_RESTART) { PH.n_restart++; return RU_PREF_APPLIED; }
+  PH.n_rot++;
+  PH.last_rot = v;
+  return PH.rot_answer;
+}
+
+static void settings_prefs(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  int c = size / 2;
+  appfx_t f;
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
+  memset(&PH, 0, sizeof PH);
+  ru_dzapp_set_pref_hook(a, pref_cb, NULL);
+  ru_dzapp_show_section(a, RU_SEC_SETTINGS);
+
+  /* seven rows, all visible without scrolling, every one inside the circle */
+  CHECK(ru_dzapp_home_rows(a) == 7);
+  screen_ok(&s, a, "settings", size);
+  CHECK(shows(a, "START PAGE") && shows(a, "ROTATION") && shows(a, "CLOCK") && shows(a, "0\xC2\xB0"));
+  lv_obj_t *first = NULL, *last = NULL;
+  {
+    lv_obj_t *scr = ru_dzapp_screen(a);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(scr); i++) {
+      lv_obj_t *ch = lv_obj_get_child(scr, (int32_t)i);
+      if (lv_obj_get_child_count(ch) == 7 && !lv_obj_has_flag(ch, LV_OBJ_FLAG_SCROLLABLE)) { first = lv_obj_get_child(ch, 0); last = lv_obj_get_child(ch, 6); }
+    }
+  }
+  CHECK(first != NULL && last != NULL);
+  if (first && last) {
+    lv_area_t a0, a6;
+    lv_obj_get_coords(first, &a0);
+    lv_obj_get_coords(last, &a6);
+    int R = size / 2;
+    int xs[2] = { a0.x1, a0.x2 }, ys[2] = { a0.y1, a6.y2 };
+    int xl[2] = { a6.x1, a6.x2 };
+    for (int i = 0; i < 2; i++) {
+      CHECK((xs[i] - c) * (xs[i] - c) + (ys[0] - c) * (ys[0] - c) <= R * R);
+      CHECK((xl[i] - c) * (xl[i] - c) + (ys[1] - c) * (ys[1] - c) <= R * R);
+    }
+  }
+
+  /* START PAGE: a tap toggles at once, the hook stores, the row shows it */
+  CHECK(ru_dzapp_home_section(a) == RU_SEC_FAVS); /* start() chose Favourites for the grid tests */
+  CHECK(shows(a, "FAVS"));
+  CHECK(ru_dzapp_tap_row(a, 3) && ru_dzapp_home_section(a) == RU_SEC_CLOCK && PH.n_start == 1 && PH.last_start == 0 && shows(a, "CLOCK"));
+  CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_SETTINGS);
+  CHECK(ru_dzapp_tap_row(a, 3) && ru_dzapp_home_section(a) == RU_SEC_FAVS && PH.n_start == 2 && PH.last_start == 1 && shows(a, "FAVS"));
+  ru_dzapp_home(a);
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);
+  ru_dzapp_show_section(a, RU_SEC_SETTINGS);
+
+  /* ROTATION: a device that can only do 0 refuses, says so, and stores nothing */
+  ru_dzapp_set_rotation_info(a, 0, 1u);
+  CHECK(ru_dzapp_tap_row(a, 4) && ru_dzapp_view(a) == RU_VIEW_SUB && ru_dzapp_home_rows(a) == 4 && shows(a, "NOW 0\xC2\xB0"));
+  screen_ok(&s, a, "rotation", size);
+  ru_dzapp_pick_rotation(a, 90);
+  CHECK(PH.n_rot == 0 && ru_dzapp_rotation(a) == 0 && !strcmp(ru_dzapp_rotation_note(a), "NOT SUPPORTED ON THIS PANEL") && shows(a, "NOT SUPPORTED"));
+  screen_ok(&s, a, "rotation_refused", size);
+  ru_dzapp_pick_rotation(a, 0); /* the one in force: nothing to do, and the note goes */
+  CHECK(PH.n_rot == 0 && !ru_dzapp_rotation_note(a)[0]);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_SETTINGS);
+
+  /* a platform that turns the screen at once */
+  ru_dzapp_set_rotation_info(a, 0, 0xFu);
+  PH.rot_answer = RU_PREF_APPLIED;
+  ru_dzapp_open_sub(a, RU_SUB_ROTATION);
+  sim_render();
+  /* the chips sit in a compass layout: top 0, left 90, bottom 180, right 270 */
+  click_at(c - ru_u(25), c); /* the 90 chip */
+  CHECK(PH.n_rot == 1 && PH.last_rot == 90 && ru_dzapp_rotation(a) == 90 && ru_dzapp_view(a) == RU_VIEW_SUB && shows(a, "NOW 90\xC2\xB0"));
+  click_at(c, c + ru_u(21)); /* 180 */
+  CHECK(PH.n_rot == 2 && PH.last_rot == 180 && ru_dzapp_rotation(a) == 180);
+  click_at(c + ru_u(25), c); /* 270 */
+  CHECK(PH.last_rot == 270 && ru_dzapp_rotation(a) == 270);
+  click_at(c, c - ru_u(21)); /* 0 */
+  CHECK(PH.last_rot == 0 && ru_dzapp_rotation(a) == 0 && PH.n_rot == 4);
+  ru_dzapp_back(a);
+  CHECK(shows(a, "0\xC2\xB0") && ru_dzapp_section(a) == RU_SEC_SETTINGS);
+
+  /* the platform answers: unsupported */
+  PH.rot_answer = RU_PREF_UNSUPPORTED;
+  ru_dzapp_open_sub(a, RU_SUB_ROTATION);
+  ru_dzapp_pick_rotation(a, 180);
+  CHECK(ru_dzapp_rotation(a) == 0 && ru_dzapp_view(a) == RU_VIEW_SUB && !strcmp(ru_dzapp_rotation_note(a), "NOT SUPPORTED ON THIS PANEL"));
+
+  /* the platform stores it for the next start: a hold, "RESTART TO APPLY"; the rotation in force does not change */
+  PH.rot_answer = RU_PREF_NEEDS_RESTART;
+  ru_dzapp_open_sub(a, RU_SUB_ROTATION);
+  ru_dzapp_pick_rotation(a, 90);
+  CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM && !strcmp(ru_dzapp_confirm_verb(a), "RESTART TO APPLY") && shows(a, "RESTART TO APPLY") && ru_dzapp_rotation(a) == 0);
+  screen_ok(&s, a, "rotation_restart", size);
+  click_at(c, c + ru_u(13)); /* a short press does not restart */
+  CHECK(PH.n_restart == 0 && ru_dzapp_view(a) == RU_VIEW_CONFIRM);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_SUB && shows(a, "RESTART TO APPLY") && shows(a, "NOW 0\xC2\xB0")); /* cancel: still pending, offered again */
+  CHECK(SPY.n == 0);
+  sim_render();
+  click_at(c, c + ru_u(33)); /* the line itself offers the hold again */
+  CHECK(PH.n_restart == 0 && ru_dzapp_view(a) == RU_VIEW_CONFIRM && !strcmp(ru_dzapp_confirm_verb(a), "RESTART TO APPLY"));
+  hold_confirm(size);
+  CHECK(PH.n_restart == 1 && SPY.n == 0); /* the hold restarts the device; it sends no Domoticz command */
+  finish(&f, a);
+
+  /* no hook at all: the start page lives in memory, rotation is unsupported */
+  a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
+  ru_dzapp_show_section(a, RU_SEC_SETTINGS);
+  CHECK(ru_dzapp_tap_row(a, 3) && ru_dzapp_home_section(a) == RU_SEC_CLOCK);
+  ru_dzapp_open_sub(a, RU_SUB_ROTATION);
+  ru_dzapp_pick_rotation(a, 90);
+  CHECK(ru_dzapp_rotation(a) == 0 && ru_dzapp_rotation_note(a)[0]);
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
 /* ---- pages: order, membership, hidden sections, paging, swipes, return to the page ---- */
 
 static const char *const SEC_NAMES[RU_SEC_COUNT] = { "CLOCK", "FAVOURITES", "LIGHTS", "SCENES", "TEMPERATURE", "WEATHER", "UTILITY", "ENERGY", "SETTINGS" };
@@ -1566,6 +1686,7 @@ int main(void) {
     backend_path(size);
     clock_page(size);
     start_page(size);
+    settings_prefs(size);
     page_model(size);
     paging(size);
     swipes(size);

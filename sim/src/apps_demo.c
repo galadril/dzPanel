@@ -182,7 +182,7 @@ const char *const apps_demo_names[] = {
   "clock", "clock_nosync", "clock_offline", "clock_stale", "clock_two", "clock_none",
   "home", "home_connecting", "home_offline", "home_token", "home_stale", "home_empty", "home_favs_many", "home_favs_none",
   "lights", "lights_many", "lights_types", "scenes", "scenes_mixed", "temperature", "weather", "utility", "energy", "energy_counter", "settings", "settings_conn",
-  "settings_bright", "settings_about",
+  "settings_bright", "settings_about", "settings_rot", "settings_rot_restart", "settings_rot_refused",
   "home_climate", "home_climate_f", "climate_temp", "climate_temp_hum_baro", "climate_hum", "climate_wind", "climate_rain", "climate_uv",
   "climate_lux", "climate_air", "climate_value", "climate_text", "climate_unseen",
   "climate_temp_f", "climate_wind_f", "climate_nounits", "climate_stale",
@@ -241,6 +241,12 @@ static appfx_set_t set_for(const char *n) {
   if (!strcmp(n, "confirm_scene") || !strcmp(n, "confirm_lock")) return APPFX_MOCK;
   if (!strcmp(n, "home_empty") || !strcmp(n, "home_connecting")) return APPFX_EMPTY;
   return APPFX_REAL;
+}
+
+/* a platform that stores the rotation and applies it after a restart (a device) */
+static ru_pref_result_t demo_pref_restart(ru_pref_t pref, int value, void *ud) {
+  (void)value; (void)ud;
+  return pref == RU_PREF_ROTATION ? RU_PREF_NEEDS_RESTART : RU_PREF_APPLIED;
 }
 
 ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
@@ -316,6 +322,13 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
     ru_dzapp_open(a, "118", false);
     sim_render();
     click_at(c + ru_u(14), c + ru_u(24)); /* the + button: a setpoint always asks for a hold */
+  } else if (!strncmp(n, "settings_rot", 12)) {
+    /* the rotation screen: the simulator can turn the picture (all four), a device that cannot says so (refused), one that needs a
+     * restart asks for a hold */
+    ru_dzapp_set_rotation_info(a, 0, !strcmp(n, "settings_rot_refused") ? 1u : 0xFu);
+    if (!strcmp(n, "settings_rot_restart")) ru_dzapp_set_pref_hook(a, demo_pref_restart, NULL);
+    ru_dzapp_open_sub(a, RU_SUB_ROTATION);
+    if (!strcmp(n, "settings_rot_restart") || !strcmp(n, "settings_rot_refused")) ru_dzapp_pick_rotation(a, 90);
   } else if (!strcmp(n, "settings_conn")) ru_dzapp_open_sub(a, RU_SUB_CONNECTION);
   else if (!strcmp(n, "settings_bright")) ru_dzapp_open_sub(a, RU_SUB_BRIGHTNESS);
   else if (!strcmp(n, "settings_about")) ru_dzapp_open_sub(a, RU_SUB_ABOUT);

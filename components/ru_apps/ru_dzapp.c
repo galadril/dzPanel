@@ -100,6 +100,12 @@ struct ru_dzapp {
   int brightness;
   void (*bright_fn)(int, void *);
   void *bright_ud;
+  ru_pref_result_t (*pref_fn)(ru_pref_t, int, void *);
+  void *pref_ud;
+  int rot_cur, rot_pending; /* rotation in force; a rotation stored for the next start (-1 none) */
+  unsigned rot_mask;
+  char rot_note[32];
+  bool pend_restart;        /* the confirm screen is the restart hold, not a command */
   void (*spy_fn)(const dz_cmd_req_t *, void *);
   void *spy_ud;
   const ru_dzapp_backend_t *backend; /* device: dz_service owns client, model and commands; NULL = own net step */
@@ -292,6 +298,7 @@ static const char *verb_for(dz_cmd_kind_t kind) {
 
 static void start_confirm(ru_dzapp_t *a, const dz_device_t *d, const req_msg_t *m, const char *verb, const char *state) {
   a->pend = *m;
+  a->pend_restart = false;
   ru_dzv_clamp(a->pend_title, sizeof a->pend_title, d->name, 18);
   ru_dzv_upper(a->pend_title, sizeof a->pend_title, a->pend_title);
   snprintf(a->pend_state, sizeof a->pend_state, "%s", state);
@@ -439,6 +446,7 @@ static void fb_label(ru_dzapp_t *a, lv_obj_t *scr, float dy_u) {
 bool ru_dzapp_back(ru_dzapp_t *a) {
   switch (a->view) {
     case RU_VIEW_CONFIRM:
+      a->pend_restart = false;
       if (a->ret_view == RU_VIEW_DETAIL || a->ret_view == RU_VIEW_SUB) { a->view = a->ret_view; build_and_show(a); }
       else ru_dzapp_show_section(a, a->section);
       return true;
@@ -1151,10 +1159,21 @@ static lv_obj_t *build_clock(ru_dzapp_t *a) {
 
 /* ------------------------------------------------------------------ section: settings */
 
+#define SETTING_START 100 /* row_t.setting of a row that is not a sub screen: the start page toggle */
+
 static void cb_setting(lv_obj_t *w, void *ud) {
   (void)w;
   row_t *r = ud;
-  ru_dzapp_open_sub(r->app, (ru_sub_t)r->setting);
+  ru_dzapp_t *a = r->app;
+  if (r->setting == SETTING_START) { /* a tap toggles Clock <-> Favourites; the platform stores it */
+    ru_section_t to = a->home_sec == RU_SEC_CLOCK ? RU_SEC_FAVS : RU_SEC_CLOCK;
+    ru_dzapp_set_home_section(a, to);
+    if (a->pref_fn) a->pref_fn(RU_PREF_START, to == RU_SEC_FAVS ? 1 : 0, a->pref_ud);
+    build_and_show(a);
+    a->sig = screen_sig(a);
+    return;
+  }
+  ru_dzapp_open_sub(a, (ru_sub_t)r->setting);
 }
 
 static const char *state_word(dz_conn_state_t c) {
@@ -1176,18 +1195,22 @@ static lv_obj_t *build_settings(ru_dzapp_t *a) {
   title(s, "SETTINGS");
   int w;
   lv_obj_t *list = list_box(s, -32, 35, &w);
+  lv_obj_remove_flag(list, LV_OBJ_FLAG_SCROLLABLE); /* seven rows, all visible */
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(list, ru_u(1.2f), 0);
+  lv_obj_set_style_pad_row(list, ru_u(0.7f), 0);
   a->list = list;
-  char bright[16];
+  char bright[16], rot[8];
   snprintf(bright, sizeof bright, "%d%%", a->brightness);
+  snprintf(rot, sizeof rot, "%d\xC2\xB0", a->rot_cur);
   /* the token is never shown, not even in part: only whether one is configured */
   bool has_token = a->client && a->client->token[0];
   const struct { const char *name, *val; int sub; lv_color_t col; } rows[] = {
     { "STATUS", state_word(cs), RU_SUB_CONNECTION, cs == DZ_CS_OK ? t->ok : cs == DZ_CS_CONNECTING ? t->text_dim : cs == DZ_CS_OFFLINE ? t->warn : t->error },
     { "TOKEN", has_token ? "SET  ****" : "NOT SET", -1, has_token ? t->text : t->warn },
     { "ACCESS", a->allow_control ? "CONTROL" : "VIEW ONLY", -1, t->text },
+    { "START PAGE", a->home_sec == RU_SEC_FAVS ? "FAVS" : "CLOCK", SETTING_START, t->text },
+    { "ROTATION", rot, RU_SUB_ROTATION, t->text },
     { "BRIGHTNESS", bright, RU_SUB_BRIGHTNESS, t->text },
     { "ABOUT", ">", RU_SUB_ABOUT, t->text_dim },
   };
@@ -1195,7 +1218,7 @@ static lv_obj_t *build_settings(ru_dzapp_t *a) {
     row_t *r = &a->rows[a->nrows];
     r->app = a; r->scene = false; r->setting = rows[i].sub;
     r->idx[0] = 0;
-    lv_obj_t *tile = ru_value_tile_create(list, w, ru_u(11), rows[i].name);
+    lv_obj_t *tile = ru_value_tile_create(list, w, ru_u(9), rows[i].name);
     ru_value_tile_set_color(tile, rows[i].col);
     ru_value_tile_set_text(tile, rows[i].val, RU_VAL_OK);
     if (rows[i].sub >= 0) ru_value_tile_on_tap(tile, cb_setting, r);
@@ -1212,6 +1235,69 @@ static void cb_bright(lv_obj_t *w, int v, bool fin, void *ud) {
   if (v < 5) v = 5;
   a->brightness = v;
   if (fin && a->bright_fn) a->bright_fn(v, a->bright_ud);
+}
+
+/* ---- rotation: four chips in a compass layout; the chip's position is where the top of the picture ends up on the panel
+ * (0 = the top edge as now, 90 = the left edge, 180 = the bottom edge, 270 = the right edge) ---- */
+
+static bool rot_supported(const ru_dzapp_t *a, int deg) { return deg >= 0 && deg < 360 && deg % 90 == 0 && (a->rot_mask >> (deg / 90) & 1u); }
+
+static void cb_rot_chip(lv_event_t *e) {
+  row_t *r = lv_event_get_user_data(e);
+  lv_obj_t *w = lv_event_get_target(e);
+  if (lv_obj_get_screen(w) != r->app->scr) return;
+  ru_dzapp_pick_rotation(r->app, r->setting);
+}
+
+static void cb_rot_restart(lv_event_t *e) {
+  ru_dzapp_t *a = lv_event_get_user_data(e);
+  if (lv_obj_get_screen((lv_obj_t *)lv_event_get_target(e)) != a->scr || a->rot_pending < 0) return;
+  a->pend_restart = true;
+  snprintf(a->pend_title, sizeof a->pend_title, "ROTATION %d\xC2\xB0", a->rot_pending);
+  a->pend_state[0] = 0;
+  snprintf(a->pend_verb, sizeof a->pend_verb, "RESTART TO APPLY");
+  a->ret_view = RU_VIEW_SUB;
+  a->view = RU_VIEW_CONFIRM;
+  build_and_show(a);
+}
+
+static void build_rotation(ru_dzapp_t *a, lv_obj_t *s) {
+  const ru_theme_t *t = ru_theme();
+  title(s, "ROTATION");
+  static const struct { int deg; float x, y; } pos[4] = { { 0, 0, -21 }, { 90, -25, 0 }, { 180, 0, 21 }, { 270, 25, 0 } };
+  int cw = ru_u(19), ch = ru_u(10);
+  for (int i = 0; i < 4; i++) {
+    int deg = pos[i].deg;
+    bool sup = rot_supported(a, deg), cur = deg == a->rot_cur, pend = deg == a->rot_pending && !cur;
+    lv_obj_t *c = outlined(s, cw, ch, ru_u(3));
+    lv_obj_align(c, LV_ALIGN_CENTER, ru_u(pos[i].x), ru_u(pos[i].y));
+    lv_color_t col = !sup ? ru_dim(t->text_dim, 130) : cur ? t->accent : pend ? t->warn : t->text;
+    lv_obj_set_style_border_color(c, !sup ? ru_dim(t->text_dim, 100) : col, 0);
+    if (cur) lv_obj_set_style_border_width(c, 2, 0);
+    char txt[8];
+    snprintf(txt, sizeof txt, "%d\xC2\xB0", deg);
+    lv_obj_t *l = lv_label_create(c);
+    lv_obj_set_style_text_font(l, ru_font_title(), 0);
+    lv_obj_set_style_text_color(l, col, 0);
+    lv_label_set_text(l, txt);
+    lv_obj_center(l);
+    if (a->nrows < MAX_ROWS) {
+      row_t *r = &a->rows[a->nrows];
+      r->app = a; r->scene = false; r->setting = deg; r->idx[0] = 0;
+      lv_obj_add_event_cb(c, cb_rot_chip, LV_EVENT_CLICKED, r);
+      a->row_tiles[a->nrows++] = c;
+    }
+  }
+  char now[16];
+  snprintf(now, sizeof now, "NOW %d\xC2\xB0", a->rot_cur);
+  label_u(s, now, ru_font_body(), t->text, 0, 0);
+  if (a->rot_note[0]) label_u(s, a->rot_note, ru_font_small(), t->warn, 0, 33);
+  else if (a->rot_pending >= 0 && a->rot_pending != a->rot_cur) {
+    lv_obj_t *l = label_u(s, "RESTART TO APPLY", ru_font_small(), t->warn, 0, 33);
+    lv_obj_add_flag(l, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(l, ru_u(3));
+    lv_obj_add_event_cb(l, cb_rot_restart, LV_EVENT_CLICKED, a);
+  }
 }
 
 static lv_obj_t *build_sub(ru_dzapp_t *a) {
@@ -1246,6 +1332,9 @@ static lv_obj_t *build_sub(ru_dzapp_t *a) {
       ru_dimmer_on_change(w, cb_bright, a);
       break;
     }
+    case RU_SUB_ROTATION:
+      build_rotation(a, s);
+      break;
     case RU_SUB_ABOUT:
     default:
       title(s, "ABOUT");
@@ -1340,6 +1429,10 @@ static void cb_hold(lv_obj_t *w, ru_hold_event_t ev, void *ud) {
   /* RU_HOLD_CANCELLED fires on ANY early release: it must not leave the screen (a slightly short hold would dump
    * the user out). Leaving is the CANCEL button's job only. */
   if (ev != RU_HOLD_CONFIRMED) return;
+  if (a->pend_restart) { /* the restart hold: the platform restarts, nothing else to do */
+    if (a->pref_fn) a->pref_fn(RU_PREF_RESTART, 0, a->pref_ud);
+    return;
+  }
   a->pend.req.confirmed = true;
   post_cmd(a, &a->pend);
   /* back to where the user came from: the result line appears there */
@@ -2079,6 +2172,8 @@ void ru_dzapp_select(ru_dzapp_t *a, ru_section_t s, int n) {
 
 void ru_dzapp_open_sub(ru_dzapp_t *a, ru_sub_t sub) {
   a->sub = sub;
+  a->rot_note[0] = 0;
+  a->pend_restart = false;
   a->view = RU_VIEW_SUB;
   build_and_show(a);
   a->sig = screen_sig(a);
@@ -2204,6 +2299,8 @@ ru_dzapp_t *ru_dzapp_create(dz_model_t *model, dz_client_t *client, bool allow_c
   a->allow_control = allow_control;
   a->brightness = 80;
   a->home_sec = RU_SEC_CLOCK;
+  a->rot_pending = -1;
+  a->rot_mask = 1u;
   a->section = a->home_sec;
   ru_fb_init(&a->fb);
   a->req_q = ru_queue_create(sizeof(req_msg_t), 8);
@@ -2241,6 +2338,47 @@ int ru_dzapp_clock_gauges(const ru_dzapp_t *a) { return clock_view(a) ? a->clk_n
 const char *ru_dzapp_toast(const ru_dzapp_t *a) { return ru_fb_text(&a->fb); }
 const ru_fb_t *ru_dzapp_feedback(const ru_dzapp_t *a) { return &a->fb; }
 void ru_dzapp_set_conn(ru_dzapp_t *a, dz_conn_state_t s) { atomic_store(&a->conn, (int)s); }
+void ru_dzapp_set_pref_hook(ru_dzapp_t *a, ru_pref_result_t (*fn)(ru_pref_t, int, void *), void *ud) { a->pref_fn = fn; a->pref_ud = ud; }
+void ru_dzapp_set_rotation_info(ru_dzapp_t *a, int current_deg, unsigned mask) {
+  a->rot_cur = current_deg >= 0 && current_deg < 360 && current_deg % 90 == 0 ? current_deg : 0;
+  a->rot_mask = (mask & 0xFu) | (1u << (a->rot_cur / 90)); /* the rotation in force is by definition possible */
+}
+int ru_dzapp_rotation(const ru_dzapp_t *a) { return a->rot_cur; }
+const char *ru_dzapp_rotation_note(const ru_dzapp_t *a) { return a->rot_note; }
+
+void ru_dzapp_pick_rotation(ru_dzapp_t *a, int deg) {
+  a->rot_note[0] = 0;
+  if (a->view != RU_VIEW_SUB || a->sub != RU_SUB_ROTATION) return;
+  if (!rot_supported(a, deg)) {
+    snprintf(a->rot_note, sizeof a->rot_note, "NOT SUPPORTED ON THIS PANEL");
+  } else if (deg == a->rot_cur && a->rot_pending < 0) {
+    return; /* already so */
+  } else if (!a->pref_fn) {
+    snprintf(a->rot_note, sizeof a->rot_note, "NOT SUPPORTED ON THIS PANEL");
+  } else {
+    switch (a->pref_fn(RU_PREF_ROTATION, deg, a->pref_ud)) {
+      case RU_PREF_APPLIED: a->rot_cur = deg; a->rot_pending = -1; break;
+      case RU_PREF_NEEDS_RESTART:
+        if (deg == a->rot_cur) a->rot_pending = -1; /* back to what is in force: nothing is pending */
+        else a->rot_pending = deg;
+        break;
+      default: snprintf(a->rot_note, sizeof a->rot_note, "NOT SUPPORTED ON THIS PANEL"); break;
+    }
+    if (a->rot_pending >= 0 && a->rot_pending != a->rot_cur) { /* straight to the hold: the user asked for it */
+      a->pend_restart = true;
+      snprintf(a->pend_title, sizeof a->pend_title, "ROTATION %d\xC2\xB0", a->rot_pending);
+      a->pend_state[0] = 0;
+      snprintf(a->pend_verb, sizeof a->pend_verb, "RESTART TO APPLY");
+      a->ret_view = RU_VIEW_SUB;
+      a->view = RU_VIEW_CONFIRM;
+      build_and_show(a);
+      return;
+    }
+  }
+  build_and_show(a);
+  a->sig = screen_sig(a);
+}
+
 void ru_dzapp_set_brightness_hook(ru_dzapp_t *a, void (*fn)(int, void *), void *ud) { a->bright_fn = fn; a->bright_ud = ud; }
 int ru_dzapp_brightness(const ru_dzapp_t *a) { return a->brightness; }
 void ru_dzapp_set_cmd_spy(ru_dzapp_t *a, void (*fn)(const dz_cmd_req_t *, void *), void *ud) { a->spy_fn = fn; a->spy_ud = ud; }
@@ -2270,7 +2408,7 @@ bool ru_dzapp_row_info(const ru_dzapp_t *a, size_t n, ru_dzapp_row_info_t *out) 
 }
 
 bool ru_dzapp_tap_row(ru_dzapp_t *a, size_t n) {
-  if (a->view != RU_VIEW_HOME || n >= a->nrows) return false;
+  if ((a->view != RU_VIEW_HOME && a->view != RU_VIEW_SUB) || n >= a->nrows) return false;
   lv_obj_send_event(a->row_tiles[n], LV_EVENT_CLICKED, NULL);
   return true;
 }

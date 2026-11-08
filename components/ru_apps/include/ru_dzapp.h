@@ -34,7 +34,7 @@ const char *ru_section_name(ru_section_t s);
 /* RU_VIEW_HOME = a section screen (any section, see ru_dzapp_section), DETAIL = a device, CONFIRM = hold to confirm,
  * SUB = a settings sub screen (connection, brightness, about). */
 typedef enum { RU_VIEW_HOME, RU_VIEW_DETAIL, RU_VIEW_CONFIRM, RU_VIEW_SUB } ru_view_t;
-typedef enum { RU_SUB_CONNECTION, RU_SUB_BRIGHTNESS, RU_SUB_ABOUT } ru_sub_t;
+typedef enum { RU_SUB_CONNECTION, RU_SUB_BRIGHTNESS, RU_SUB_ABOUT, RU_SUB_ROTATION } ru_sub_t;
 
 /* model and client stay owned by the caller and must outlive the app. allow_control=false (a Viewer token)
  * hides controls and refuses every command. Returns NULL on allocation failure. */
@@ -127,6 +127,27 @@ const ru_fb_t *ru_dzapp_feedback(const ru_dzapp_t *a);
 void ru_dzapp_set_conn(ru_dzapp_t *a, dz_conn_state_t s);  /* simulator driver / tests, when no network thread runs */
 void ru_dzapp_set_brightness_hook(ru_dzapp_t *a, void (*fn)(int percent, void *ud), void *ud);
 int ru_dzapp_brightness(const ru_dzapp_t *a);
+
+/* ---- preferences (Settings: START PAGE, ROTATION) ----
+ * The app owns no storage. A change goes to the platform through the hook, on the UI thread; the platform persists it and
+ * answers whether it took effect.
+ *   RU_PREF_START     value = ru_start_t as int (0 Clock, 1 Favourites): applied at once by the app, the hook only stores.
+ *   RU_PREF_ROTATION  value = degrees (0, 90, 180, 270). The answer says what happens:
+ *                     RU_PREF_APPLIED      the screen is already turned (simulator),
+ *                     RU_PREF_RESTART      stored, applies after a restart: the app then asks for a hold, "RESTART TO APPLY",
+ *                     RU_PREF_UNSUPPORTED  refused (not stored).
+ *   RU_PREF_RESTART   the hold was confirmed: the platform restarts. The answer is ignored.
+ * Without a hook a start page change lives in memory only and a rotation change is unsupported. */
+typedef enum { RU_PREF_START, RU_PREF_ROTATION, RU_PREF_RESTART } ru_pref_t;
+typedef enum { RU_PREF_APPLIED, RU_PREF_NEEDS_RESTART, RU_PREF_UNSUPPORTED } ru_pref_result_t;
+void ru_dzapp_set_pref_hook(ru_dzapp_t *a, ru_pref_result_t (*fn)(ru_pref_t pref, int value, void *ud), void *ud);
+/* The rotation in force and which ones the panel can do (bit n = n * 90 degrees; bit 0 = 0). Default 0 and only 0. */
+void ru_dzapp_set_rotation_info(ru_dzapp_t *a, int current_deg, unsigned mask);
+int ru_dzapp_rotation(const ru_dzapp_t *a);
+/* Test hook: choose a rotation exactly as a tap on its chip does. */
+void ru_dzapp_pick_rotation(ru_dzapp_t *a, int deg);
+/* The line under the chips ("NOT SUPPORTED ON THIS PANEL", "RESTART TO APPLY", ""), for tests. */
+const char *ru_dzapp_rotation_note(const ru_dzapp_t *a);
 /* Called on the UI thread with every request the UI submits, right before it is queued (tests). */
 void ru_dzapp_set_cmd_spy(ru_dzapp_t *a, void (*fn)(const dz_cmd_req_t *req, void *ud), void *ud);
 /* Feed a command outcome as if dz_cmd had reported it (tests, simulator driver). */
