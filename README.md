@@ -6,8 +6,6 @@
 
 dzPanel is unofficial display firmware for Domoticz on ESP32-S3 boards, round and square (Waveshare ESP32-S3-Touch-AMOLED 1.75" and 2.16", Guition ESP32-S3-4848S040). A glanceable Domoticz companion. It shows live device values, scenes, groups and energy, and offers safe touch controls. It works with any Domoticz setup: screens are chosen from what a device can do, never from its name.
 
-> **Status: pre-hardware.** Nothing has run on a real board yet. The host code, the simulator and the installer page are tested; the firmware compiles (see below) but is unproven on a device. The licence is not decided.
-
 ## What exists
 
 | Part | State |
