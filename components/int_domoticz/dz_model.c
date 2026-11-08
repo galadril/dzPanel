@@ -123,6 +123,15 @@ static ru_val_state_t entry_state(const dz_model_t *m, const dz_entry_t *e, uint
   return RU_VAL_OK;
 }
 
+bool dz_model_server_now(dz_model_t *m, uint32_t now_ms, int64_t *epoch_s) {
+  bool ok;
+  ru_mutex_lock(m->mu);
+  ok = m->server_epoch_s >= 0;
+  if (ok && epoch_s) *epoch_s = m->server_epoch_s + (int64_t)((uint32_t)(now_ms - m->server_sync_ms) / 1000u);
+  ru_mutex_unlock(m->mu);
+  return ok;
+}
+
 void dz_model_begin(dz_model_t *m) {
   ru_mutex_lock(m->mu);
   m->stage_n = 0;

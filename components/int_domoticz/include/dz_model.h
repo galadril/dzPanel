@@ -101,6 +101,10 @@ uint32_t dz_model_overflow(dz_model_t *m);
 uint32_t dz_model_changes(dz_model_t *m);
 uint32_t dz_model_generation(dz_model_t *m);
 
+/* The server's wall clock now (seconds since 1970, in the server's local time as Domoticz reports it): the ServerTime of the
+ * last non-PARTIAL commit plus the monotonic time since. false = no ServerTime seen yet (epoch_s untouched). */
+bool dz_model_server_now(dz_model_t *m, uint32_t now_ms, int64_t *epoch_s);
+
 /* Units (see dz_units_t). get copies under the lock and returns true when at least one unit is known. */
 bool dz_model_units(dz_model_t *m, dz_units_t *out);
 void dz_model_set_units(dz_model_t *m, const dz_units_t *u);

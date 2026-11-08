@@ -218,6 +218,24 @@ static void test_time(void) {
 }
 
 
+static void test_server_now(void) {
+  fresh(CAP);
+  int64_t t0, t = 77, ref;
+  CHECK(!dz_model_server_now(&M, 5000, &t) && t == 77); /* nothing committed: unknown, untouched */
+  int ch;
+  CHECK(apply(DEVS(SW("1", "On")), DZ_COMMIT_PARTIAL, 1000, &ch) == DZ_OK);
+  CHECK(!dz_model_server_now(&M, 5000, &t));             /* a PARTIAL commit does not set it */
+  CHECK(apply(DEVS(SW("1", "On")), DZ_COMMIT_FULL_DEVICES, 2000, &ch) == DZ_OK);
+  CHECK(dz_time_parse("2026-10-31 12:00:00", &ref));
+  CHECK(dz_model_server_now(&M, 2000, &t0) && t0 == ref);
+  CHECK(dz_model_server_now(&M, 2999, &t) && t == ref);   /* whole seconds only */
+  CHECK(dz_model_server_now(&M, 2000 + 125000, &t) && t == ref + 125);
+  CHECK(apply("{\"ServerTime\":\"2026-10-31 18:00:00\",\"result\":[],\"status\":\"OK\"}", DZ_COMMIT_PARTIAL, 3000, &ch) == DZ_OK);
+  CHECK(dz_model_server_now(&M, 2000, &t) && t == ref);   /* PARTIAL does not move it */
+  CHECK(dz_model_server_now(&M, 3000, NULL));
+  dz_model_deinit(&M);
+}
+
 static void test_hostile(void) {
   static dz_entry_t e2[64];
   static dz_device_t s2[64];
@@ -295,5 +313,6 @@ int main(void) {
   test_freshness();
   test_values();
   test_time();
+  test_server_now();
   MT_DONE();
 }
