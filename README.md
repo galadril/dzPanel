@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/banner.png" alt="dzPanel: an open-source smart display platform for ESP32" width="100%">
+</p>
+
 # dzPanel
 
 dzPanel is unofficial display firmware for Domoticz on ESP32-S3 boards, round and square (Waveshare ESP32-S3-Touch-AMOLED 1.75" and 2.16", Guition ESP32-S3-4848S040). A glanceable Domoticz companion. It shows live device values, scenes, groups and energy, and offers safe touch controls. It works with any Domoticz setup: screens are chosen from what a device can do, never from its name.
@@ -17,7 +21,15 @@ dzPanel is unofficial display firmware for Domoticz on ESP32-S3 boards, round an
 | ESP-IDF firmware project | In progress; see `docs/progress/` |
 | Anything on real hardware | **Not done** |
 
-## Try it without hardware
+## Supported boards
+
+| Board | Display | Build name |
+|---|---|---|
+| Waveshare ESP32-S3-Touch-AMOLED 1.75" | round AMOLED, 466 x 466 | `amoled-175` |
+| Guition ESP32-S3-4848S040 | 4" square touchscreen, 480 x 480 | `guition-4848s040` |
+| Waveshare ESP32-S3-Touch-AMOLED 2.16" | AMOLED | named in the design; no build target yet |
+
+## Quick start: build and test without hardware
 
 ```bash
 tools/fetch_vendor.sh                              # pinned third-party sources (LVGL for the simulator)
@@ -25,7 +37,9 @@ cmake -S . -B /tmp/vb -DRU_BUILD_SIM=OFF && cmake --build /tmp/vb -j8 && (cd /tm
 node sim/mock/domoticz_mock.js --port 18080        # a fake Domoticz to point the code at
 ```
 
-Firmware (needs ESP-IDF 5.5, see the setup doc):
+### Firmware
+
+Needs ESP-IDF 5.5 (see the setup doc):
 
 ```bash
 tools/build_fw.sh amoled-175           # Waveshare 1.75" AMOLED, build dir firmware/build-amoled-175
@@ -34,6 +48,19 @@ tools/make_image.sh guition-4848s040   # build + merge into dist/dzpanel-guition
 ```
 
 Full instructions, including the ESP-IDF setup: [`docs/development-setup.md`](docs/development-setup.md).
+
+## Simulator
+
+The simulator renders the real UI code with LVGL 9.4.0 on the host, so screens can be checked without a board. Build it with `cmake -B build && cmake --build build -j8` (SDL2 headers needed; the first build takes several minutes). Then:
+
+```bash
+build/sim/dzpanel_sim --list                                  # screens
+build/sim/dzpanel_sim --screen home                           # interactive window (left/right = screen, p = save PNG)
+build/sim/dzpanel_sim --size 480 --shape square --all /tmp/s  # headless PNGs of every screen
+cmake --build build --target screenshots                      # refresh sim/screenshots
+```
+
+Screenshots live in `sim/screenshots`. The logo and its brand blue are measured from the banner by `tools/brand/extract_colours.py`.
 
 ## Documents
 
