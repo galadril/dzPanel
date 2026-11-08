@@ -3,6 +3,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "dz_cmd.h"
 #include "dz_parse.h"
@@ -52,3 +53,29 @@ void ru_dzv_upper(char *dst, size_t n, const char *src);
 void ru_dzv_clamp(char *dst, size_t n, const char *src, size_t max); /* UTF-8 safe, ".." marks a cut */
 /* n-th selector name (upper case), false if absent. */
 bool ru_dzv_selector_name(const dz_device_t *d, int index, char *out, size_t n);
+
+/* ---- clock ---- */
+/* epoch_s is a server wall-clock time (dz_model_server_now), counted as if the zone were UTC: no zone or DST rules are
+ * applied, the digits are the ones Domoticz showed. Own day arithmetic, no libc time. */
+void ru_dzv_clock_text(int64_t epoch_s, char out[6]);  /* "13:07" (24 h) */
+void ru_dzv_date_text(int64_t epoch_s, char out[12]);  /* "SAT 31 OCT" */
+
+/* ---- gauges (the clock page's round gauges) ---- */
+typedef enum {
+  RU_GAUGE_TEXT,     /* value shown as text only, ring unlit (frac < 0) */
+  RU_GAUGE_TEMP,     /* 0..40 C or 32..104 F, needs the unit to scale */
+  RU_GAUGE_POWER,    /* 0..nice max of the reading, W or kW */
+  RU_GAUGE_PERCENT   /* humidity and other percent readings, 0..100 */
+} ru_gauge_kind_t;
+typedef struct {
+  bool known;              /* a value is present; false: text is "--" and frac -1 */
+  char text[24];           /* "18.5°C", "78%", "2.1kW" */
+  float frac;              /* 0..1 ring fill, -1 = unlit ring */
+  ru_gauge_kind_t kind;
+  char caption[9];         /* the device name, upper case, cut to 8 characters */
+} ru_gauge_view_t;
+/* Can this device be a gauge (a number worth a ring: temperature, humidity, power and other numeric readings)? false for
+ * switches, scenes, text and mode devices; out is then "--" unknown. A gauge candidate with no value yet returns true with known=false. */
+bool ru_dzv_gauge(const dz_device_t *d, const dz_units_t *units, ru_gauge_view_t *out);
+/* 1-2-5 step at or above v (v <= 0: 1). The range of a power ring. */
+float ru_dzv_nice_max(float v);

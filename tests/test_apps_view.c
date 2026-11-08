@@ -59,7 +59,75 @@ static void switch_classes(void) {
   }
 }
 
+static void clock_and_gauges(void) {
+  char hm[6], dt[12];
+  int64_t ep;
+  CHECK(dz_time_parse("2026-10-31 13:07:41", &ep));
+  ru_dzv_clock_text(ep, hm);
+  ru_dzv_date_text(ep, dt);
+  CHECK(!strcmp(hm, "13:07") && !strcmp(dt, "SAT 31 OCT"));
+  CHECK(dz_time_parse("2024-02-29 00:00:00", &ep)); /* leap day, midnight */
+  ru_dzv_clock_text(ep, hm); ru_dzv_date_text(ep, dt);
+  CHECK(!strcmp(hm, "00:00") && !strcmp(dt, "THU 29 FEB"));
+  CHECK(dz_time_parse("2026-12-31 23:59:59", &ep));
+  ru_dzv_clock_text(ep, hm); ru_dzv_date_text(ep, dt);
+  CHECK(!strcmp(hm, "23:59") && !strcmp(dt, "THU 31 DEC"));
+  ru_dzv_date_text(ep + 1, dt);
+  CHECK(!strcmp(dt, "FRI 1 JAN"));
+  CHECK(dz_time_parse("2026-03-01 09:05:00", &ep));
+  ru_dzv_clock_text(ep, hm); ru_dzv_date_text(ep, dt);
+  CHECK(!strcmp(hm, "09:05") && !strcmp(dt, "SUN 1 MAR"));
+  ru_dzv_clock_text(0, hm); ru_dzv_date_text(0, dt); /* the epoch itself */
+  CHECK(!strcmp(hm, "00:00") && !strcmp(dt, "THU 1 JAN"));
+  ru_dzv_clock_text(-1, hm); ru_dzv_date_text(-1, dt); /* before it: floor, not truncate */
+  CHECK(!strcmp(hm, "23:59") && !strcmp(dt, "WED 31 DEC"));
+
+  dz_units_t c_units = {.have_temp = true, .temp = "C"}, f_units = {.have_temp = true, .temp = "F"};
+  ru_gauge_view_t gv;
+  dz_device_t d = one("{\"idx\":\"30\",\"Name\":\"Living Room Sensor\",\"Type\":\"Temp\",\"SubType\":\"LaCrosse TX3\",\"Temp\":20.0,\"Data\":\"20.0 C\"}");
+  CHECK(ru_dzv_gauge(&d, &c_units, &gv) && gv.known && gv.kind == RU_GAUGE_TEMP);
+  CHECK(!strcmp(gv.text, "20.0\xC2\xB0" "C") && gv.frac > 0.499f && gv.frac < 0.501f);
+  CHECK(!strcmp(gv.caption, "LIVING R")); /* 8 characters, no trailing space issue */
+  CHECK(ru_dzv_gauge(&d, &f_units, &gv) && gv.known && !strcmp(gv.text, "20.0\xC2\xB0" "F") && gv.frac < 0.0f + 1.0f);
+  CHECK(gv.frac == 0.0f); /* 20 F is below the 32 F end */
+  d.rd[0].v = 68.0f;
+  CHECK(ru_dzv_gauge(&d, &f_units, &gv) && gv.frac > 0.499f && gv.frac < 0.501f);
+  d.rd[0].v = 55.0f; /* above 40 C: pinned, not wrapped */
+  CHECK(ru_dzv_gauge(&d, &c_units, &gv) && gv.frac == 1.0f);
+  d.rd[0].v = 20.0f;
+  CHECK(ru_dzv_gauge(&d, NULL, &gv) && gv.known && gv.kind == RU_GAUGE_TEXT && gv.frac < 0.0f && !strcmp(gv.text, "20.0")); /* no unit: no scale */
+  d.n_rd = 0;
+  CHECK(ru_dzv_gauge(&d, &c_units, &gv) && !gv.known && !strcmp(gv.text, "--") && gv.frac < 0.0f); /* no value is not 0 */
+
+  d = one("{\"idx\":\"31\",\"Name\":\"Hum\",\"Type\":\"Humidity\",\"SubType\":\"LaCrosse TX3\",\"Humidity\":78,\"HumidityStatus\":\"Wet\",\"Data\":\"Humidity 78 %\"}");
+  CHECK(ru_dzv_gauge(&d, &c_units, &gv) && gv.known && gv.kind == RU_GAUGE_PERCENT && !strcmp(gv.text, "78%"));
+  CHECK(gv.frac > 0.779f && gv.frac < 0.781f && !strcmp(gv.caption, "HUM"));
+
+  d = one("{\"idx\":\"32\",\"Name\":\"Mains\",\"Type\":\"Usage\",\"SubType\":\"Electric\",\"Data\":\"2100 Watt\",\"Usage\":\"2100 Watt\"}");
+  CHECK(ru_dzv_gauge(&d, NULL, &gv) && gv.known && gv.kind == RU_GAUGE_POWER && !strcmp(gv.text, "2.1kW"));
+  CHECK(gv.frac > 0.419f && gv.frac < 0.421f); /* 2100 of a 5000 W range */
+  d.usage_w = 850;
+  CHECK(ru_dzv_gauge(&d, NULL, &gv) && !strcmp(gv.text, "850W") && gv.frac > 0.849f && gv.frac < 0.851f);
+  d.usage_w = 0; /* a real zero is a zero */
+  CHECK(ru_dzv_gauge(&d, NULL, &gv) && gv.known && !strcmp(gv.text, "0W") && gv.frac == 0.0f);
+  d.has_usage = false;
+  CHECK(ru_dzv_gauge(&d, NULL, &gv) && !gv.known && !strcmp(gv.text, "--"));
+
+  /* a numeric reading without a scale: text only, ring unlit */
+  d = one("{\"idx\":\"33\",\"Name\":\"Wind\",\"Type\":\"Wind\",\"SubType\":\"WTGR800\",\"Direction\":225,\"DirectionStr\":\"SW\",\"Speed\":\"3.9\",\"Gust\":\"6.1\",\"Data\":\"SW;225;3.9;6.1;12.4;10.1\"}");
+  dz_units_t wu = {.have_wind = true, .wind = "m/s"};
+  CHECK(ru_dzv_gauge(&d, &wu, &gv) && gv.known && gv.kind == RU_GAUGE_TEXT && gv.frac < 0.0f && !strcmp(gv.text, "3.9 m/s"));
+
+  /* not gauges: switches, scenes */
+  d = one("{\"idx\":\"3\",\"Name\":\"L\",\"Type\":\"Light/Switch\",\"SwitchType\":\"On/Off\",\"Status\":\"On\"}");
+  CHECK(!ru_dzv_gauge(&d, &c_units, &gv) && !gv.known && !strcmp(gv.text, "--"));
+  d = one("{\"idx\":\"1\",\"Name\":\"S\",\"Type\":\"Scene\",\"Status\":\"On\"}");
+  CHECK(!ru_dzv_gauge(&d, &c_units, &gv));
+  CHECK(ru_dzv_nice_max(0.0f) == 1.0f && ru_dzv_nice_max(1200.0f) == 2000.0f && ru_dzv_nice_max(2100.0f) == 5000.0f);
+}
+
 int main(void) {
+  clock_and_gauges();
   /* ---- Scene: push only, no state, tap is always On ---- */
   dz_device_t sc = one("{\"idx\":\"1\",\"Name\":\"S\",\"Type\":\"Scene\",\"Status\":\"On\"}");
   CHECK(sc.cap == DZ_CAP_SCENE);

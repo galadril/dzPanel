@@ -742,12 +742,7 @@ static lv_obj_t *add_entry_tile(ru_dzapp_t *a, lv_obj_t *parent, int w, int h, c
 
 /* ------------------------------------------------------------------ section: home */
 
-static float nice_max(float v) {
-  if (!(v > 0.0f)) return 1.0f;
-  float e = powf(10.0f, floorf(log10f(v)));
-  float m = v / e;
-  return (m <= 1.0f ? 1.0f : m <= 2.0f ? 2.0f : m <= 5.0f ? 5.0f : 10.0f) * e;
-}
+static float nice_max(float v) { return ru_dzv_nice_max(v); }
 
 /* A gauge value for a number the view model parsed. Freshness comes from the model's verdict for the entry (OK, STALE,
  * UNKNOWN), never from whether the model chose to keep a reading of its own for that capability. */

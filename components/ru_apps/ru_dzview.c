@@ -197,3 +197,126 @@ void ru_dzv_value_text_u(const dz_device_t *d, const dz_units_t *units, char *ou
   *known = false;
   snprintf(out, n, "--");
 }
+
+/* ---- clock ---- */
+
+static int64_t floor_div(int64_t a, int64_t b) { int64_t q = a / b; return (a % b != 0 && (a < 0) != (b < 0)) ? q - 1 : q; }
+
+void ru_dzv_clock_text(int64_t epoch_s, char out[6]) {
+  int64_t sod = epoch_s - floor_div(epoch_s, 86400) * 86400;
+  unsigned h = (unsigned)(sod / 3600) % 24u, m = (unsigned)(sod % 3600 / 60) % 60u;
+  snprintf(out, 6, "%02u:%02u", h, m);
+}
+
+void ru_dzv_date_text(int64_t epoch_s, char out[12]) {
+  static const char *const wd[7] = {"THU", "FRI", "SAT", "SUN", "MON", "TUE", "WED"}; /* 1970-01-01 was a Thursday */
+  static const char *const mo[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+  int64_t days = floor_div(epoch_s, 86400);
+  /* civil from days (Howard Hinnant), proleptic Gregorian */
+  int64_t z = days + 719468;
+  int64_t era = floor_div(z, 146097);
+  int64_t doe = z - era * 146097;
+  int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  int64_t mp = (5 * doy + 2) / 153;
+  int day = (int)(doy - (153 * mp + 2) / 5 + 1);
+  int mon = (int)(mp < 10 ? mp + 3 : mp - 9); /* 1..12 */
+  int w = (int)(days - floor_div(days, 7) * 7);
+  snprintf(out, 12, "%s %d %s", wd[w], day, mo[mon - 1]);
+}
+
+/* ---- gauges ---- */
+
+float ru_dzv_nice_max(float v) {
+  if (!(v > 0.0f) || !isfinite(v)) return 1.0f;
+  float e = powf(10.0f, floorf(log10f(v)));
+  float m = v / e;
+  return (m <= 1.0f ? 1.0f : m <= 2.0f ? 2.0f : m <= 5.0f ? 5.0f : 10.0f) * e;
+}
+
+static void gauge_caption(const dz_device_t *d, char *out, size_t n) {
+  char up[40];
+  ru_dzv_upper(up, sizeof up, d->name);
+  size_t len = strlen(up), cut = len < 8 ? len : 8;
+  while (cut > 0 && cut < len && ((unsigned char)up[cut] & 0xC0) == 0x80) cut--;
+  while (cut > 0 && up[cut - 1] == ' ') cut--;
+  if (cut >= n) cut = n - 1;
+  memcpy(out, up, cut);
+  out[cut] = 0;
+}
+
+/* "2.1" "2.10" -> shortest of the two forms with a unit glued on: "2.1kW", "850W" */
+static void gauge_power(float w, char *out, size_t n) {
+  float a = fabsf(w);
+  if (a >= 1000.0f) {
+    char num[12];
+    snprintf(num, sizeof num, a >= 10000.0f ? "%.0f" : "%.2f", (double)w / 1000.0);
+    if (strchr(num, '.')) {
+      size_t l = strlen(num);
+      while (l > 1 && num[l - 1] == '0') num[--l] = 0;
+      if (num[l - 1] == '.') num[--l] = 0;
+    }
+    snprintf(out, n, "%skW", num);
+  } else snprintf(out, n, "%.0fW", (double)w);
+}
+
+bool ru_dzv_gauge(const dz_device_t *d, const dz_units_t *units, ru_gauge_view_t *o) {
+  memset(o, 0, sizeof *o);
+  snprintf(o->text, sizeof o->text, "--");
+  o->frac = -1.0f;
+  o->kind = RU_GAUGE_TEXT;
+  gauge_caption(d, o->caption, sizeof o->caption);
+  ru_cl_units_t u;
+  ru_cl_units(units, &u);
+  if (d->cap == DZ_CAP_ENERGY) {
+    ru_energy_view_t e;
+    ru_dzv_energy(d, &e);
+    if (e.known) {
+      gauge_power(e.hero_w, o->text, sizeof o->text);
+      o->known = true;
+      o->kind = RU_GAUGE_POWER;
+      o->frac = fminf(fabsf(e.hero_w) / ru_dzv_nice_max(fmaxf(fabsf(e.hero_w), 1000.0f)), 1.0f);
+    } else if (e.has_today) {
+      snprintf(o->text, sizeof o->text, d->today_unit[0] ? "%.1f%s" : "%.1f", (double)d->today, d->today_unit);
+      o->known = true;
+    }
+    return true;
+  }
+  if (d->cap != DZ_CAP_TEMP && d->cap != DZ_CAP_WEATHER && d->cap != DZ_CAP_SENSOR) return false;
+  ru_cl_page_t pg = ru_cl_page_of(d);
+  if (pg == RU_CLP_NONE || pg == RU_CLP_TEXT || pg == RU_CLP_SETPOINT) /* no number: only a temperature device is still a gauge, without a value */
+    return d->cap != DZ_CAP_SENSOR && d->n_rd == 0 && pg != RU_CLP_SETPOINT;
+  if (pg == RU_CLP_TEMP) {
+    const dz_reading_t *r = dz_dev_room_temp(d);
+    if (r && r->has && isfinite(r->v)) {
+      ru_cl_text(r, &u, o->text, sizeof o->text);
+      o->known = true;
+      o->kind = RU_GAUGE_TEMP;
+      float lo, hi;
+      if (!strcmp(u.temp, "\xC2\xB0" "C")) { lo = 0.0f; hi = 40.0f; }
+      else if (!strcmp(u.temp, "\xC2\xB0" "F")) { lo = 32.0f; hi = 104.0f; }
+      else { lo = 0.0f; hi = 0.0f; }
+      if (hi > lo) o->frac = fminf(fmaxf((r->v - lo) / (hi - lo), 0.0f), 1.0f);
+      else o->kind = RU_GAUGE_TEXT; /* no unit read: no scale to guess */
+    }
+    return true;
+  }
+  const dz_reading_t *pr = NULL;
+  if (pg == RU_CLP_HUM) pr = dz_dev_reading(d, DZ_RK_HUM);
+  else if (pg == RU_CLP_VALUE) {
+    for (int i = 0; i < d->n_rd; i++)
+      if (d->rd[i].has && d->rd[i].kind != DZ_RK_TEXT && d->rd[i].kind != DZ_RK_AUXTEMP) { if (d->rd[i].kind == DZ_RK_PERCENT) pr = &d->rd[i]; break; }
+  }
+  if (pr && pr->has && isfinite(pr->v)) {
+    ru_cl_text(pr, &u, o->text, sizeof o->text);
+    o->known = true;
+    o->kind = RU_GAUGE_PERCENT;
+    o->frac = fminf(fmaxf(pr->v / 100.0f, 0.0f), 1.0f);
+    return true;
+  }
+  bool known;
+  char t[24];
+  ru_cl_summary(d, &u, t, sizeof t, &known);
+  if (known) { snprintf(o->text, sizeof o->text, "%s", t); o->known = true; }
+  return true;
+}
