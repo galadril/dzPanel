@@ -7,6 +7,12 @@
  *   ru_hal_set_brightness() 0..100 percent
  *   ru_hal_set_touch_sink() receive every touch sample as an ru_touch_t for ru_gesture
  *
+ *   ru_hal_set_rotation()   0 / 90 / 180 / 270, BEFORE ru_hal_init (a rotation is chosen at start; the UI changes it by restart)
+ *
+ * Rotation. The UI always draws and reads touch in LOGICAL coordinates (upright, D x D). The port turns the picture (hardware
+ * scan direction, or LVGL / the display adapter in software); ru_hal maps the touch samples it hands to ru_gesture back to logical
+ * coordinates with ru_rot_to_logical (the LVGL convention, see ru_geom.h). Which rotations a board can do is ru_board_t.rotations.
+ *
  * Board profile: the rest of the OS asks the profile, never "is this the 1.75". */
 #pragma once
 #include <stdbool.h>
@@ -29,11 +35,19 @@ typedef struct {
   bool draw_buf_psram;
   int draw_buf_lines;
   uint32_t flash_mb;
+  /* Rotations the port can do: bit n = n * 90 degrees (0xF = all four, 0x1 = only 0). Bit 0 is always set. A port that cannot turn the
+   * picture without tearing or an extra frame copy says 1 here and the Settings screen offers only the rotation in force. */
+  unsigned rotations;
 } ru_board_t;
 
 const ru_board_t *ru_board(void);
 
 typedef enum { RU_HAL_OK = 0, RU_HAL_ERR_DISPLAY, RU_HAL_ERR_TOUCH, RU_HAL_ERR_STATE } ru_hal_err_t;
+
+/* The rotation the next ru_hal_init applies. false (nothing changes) for an angle that is not 0/90/180/270, for one the board does
+ * not list in rotations, and after ru_hal_init. */
+bool ru_hal_set_rotation(int deg);
+int ru_hal_rotation(void); /* in force (0 until ru_hal_init applied another one) */
 
 /* Idempotent. A touch failure clears has_touch and still returns RU_HAL_OK. */
 ru_hal_err_t ru_hal_init(void);

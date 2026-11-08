@@ -8,6 +8,7 @@
 #include "ru_bus.h"
 #include "ru_cfg.h"
 #include "ru_hal.h"
+#include "ru_prefs.h"
 #include "svc_glue.h"
 #include "heap_log.h"
 #include "ui_shell.h"
@@ -28,6 +29,14 @@ void app_main(void) {
   ru_heap_log_start();
   ru_hal_heap_log("boot");
 
+  /* the interface preferences (rotation, start page) are read BEFORE the display comes up: a rotation is applied by the panel
+   * driver at start, so a change in Settings takes effect at the next restart */
+  ru_prefs_t prefs;
+  ru_prefs_load(kv, &prefs);
+  if (prefs.rotation != 0 && !ru_hal_set_rotation(prefs.rotation))
+    ESP_LOGW(TAG, "rotation %d is not supported by this board: upright", prefs.rotation);
+  ESP_LOGI(TAG, "prefs: rotation %d, start page %s", prefs.rotation, prefs.start == RU_START_FAVS ? "favourites" : "clock");
+
   ru_hal_err_t he = ru_hal_init();
   bh_set_display_ok(he == RU_HAL_OK);
   if (he != RU_HAL_OK) ESP_LOGE(TAG, "HAL init failed: running headless (console and network only)");
@@ -41,7 +50,7 @@ void app_main(void) {
   }
 
   if (he == RU_HAL_OK && ru_hal_lock(-1)) {
-    ui_shell_start(safe ? NULL : svc_service(), safe, bh_fail_count());
+    ui_shell_start(safe ? NULL : svc_service(), safe, bh_fail_count(), kv);
     ru_hal_unlock();
     ru_hal_set_brightness(80);
   }

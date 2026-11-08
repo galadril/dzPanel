@@ -14,6 +14,7 @@
 #include "ru_hal.h"
 #include "ru_heap.h"
 #include "ru_nav.h"
+#include "ru_prefs.h"
 #include "ru_osal.h"
 #include "ru_runtime.h"
 #include "ru_splash.h"
@@ -35,6 +36,7 @@ static struct {
   atomic_bool app_active; /* the Domoticz apps own the screen (bridge may tick them) */
   bool safe;
   lv_obj_t *setup_scr;
+  ru_kv_t *kv; /* interface preferences; may be NULL */
 } U;
 
 /* ---------- display diagnostics (RU_HEAP_LOG): what a refresh costs the panel ---------- */
@@ -204,6 +206,27 @@ static void brightness_hook(int percent, void *ud) {
   ru_hal_set_brightness(percent);
 }
 
+/* Settings > START PAGE / ROTATION. The start page is applied by the app at once, here it is only stored. A rotation is stored and
+ * applied by the panel driver at the next start (ru_hal_set_rotation before ru_hal_init), so it answers "restart"; the restart itself
+ * comes when the user confirms the hold. A rotation the board cannot do, or a store that failed, is refused (nothing pending). */
+static ru_pref_result_t pref_hook(ru_pref_t p, int value, void *ud) {
+  (void)ud;
+  switch (p) {
+    case RU_PREF_START:
+      return U.kv && ru_prefs_save_start(U.kv, value ? RU_START_FAVS : RU_START_CLOCK) == RU_KV_OK ? RU_PREF_APPLIED : RU_PREF_UNSUPPORTED;
+    case RU_PREF_ROTATION:
+      if (!U.kv || !((ru_board()->rotations | 1u) >> (value / 90) & 1u) || ru_prefs_save_rotation(U.kv, value) != RU_KV_OK)
+        return RU_PREF_UNSUPPORTED;
+      return value == ru_hal_rotation() ? RU_PREF_APPLIED : RU_PREF_NEEDS_RESTART;
+    case RU_PREF_RESTART:
+      ESP_LOGW(TAG, "restart to apply the rotation");
+      ru_sleep_ms(200);
+      esp_restart();
+      break;
+  }
+  return RU_PREF_UNSUPPORTED;
+}
+
 static void on_fatal(void *ctx) {
   (void)ctx;
   ESP_LOGE(TAG, "memory FATAL: controlled restart");
@@ -274,13 +297,14 @@ static void splash_begin(void) {
   if (t) lv_timer_set_repeat_count(t, 1); /* one shot, then LVGL deletes the timer */
 }
 
-void ui_shell_start(dz_service_t *svc, bool safe_mode, unsigned failed_boots) {
+void ui_shell_start(dz_service_t *svc, bool safe_mode, unsigned failed_boots, ru_kv_t *kv) {
   const ru_board_t *b = ru_board();
   ru_theme_init(b->diameter);
   disp_diag_start();
   splash_begin();
   U.safe = safe_mode;
   U.svc = svc;
+  U.kv = kv;
   lv_timer_create(control_cb, 250, NULL);
   if (safe_mode || !svc) {
     U.safe = true;
@@ -309,6 +333,13 @@ void ui_shell_start(dz_service_t *svc, bool safe_mode, unsigned failed_boots) {
   ru_dzapp_set_display_info(U.app, b->id, b->round);
   ru_dzapp_set_backend(U.app, &k_backend, svc);
   ru_dzapp_set_brightness_hook(U.app, brightness_hook, NULL);
+  {
+    ru_prefs_t prefs;
+    ru_prefs_load(U.kv, &prefs);
+    ru_dzapp_set_home_section(U.app, prefs.start == RU_START_FAVS ? RU_SEC_FAVS : RU_SEC_CLOCK);
+    ru_dzapp_set_rotation_info(U.app, ru_hal_rotation(), b->rotations); /* the rotation in force, not the stored one: that one waits for a restart */
+    ru_dzapp_set_pref_hook(U.app, pref_hook, NULL);
+  }
   if (ru_apps_register(&U.rt, U.app) != RU_OK) ESP_LOGE(TAG, "app registration failed");
 
   U.wake = ru_queue_create(1, 1);

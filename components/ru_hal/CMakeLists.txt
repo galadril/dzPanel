@@ -2,4 +2,4 @@
 idf_component_register(SRCS ru_hal.c
                        INCLUDE_DIRS include
                        REQUIRES ru_shell
-                       PRIV_REQUIRES ru_board lvgl__lvgl ru_core esp_timer esp_psram heap log)
+                       PRIV_REQUIRES ru_board ru_ui lvgl__lvgl ru_core esp_timer esp_psram heap log)

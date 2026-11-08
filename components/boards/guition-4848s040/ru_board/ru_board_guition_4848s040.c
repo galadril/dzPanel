@@ -32,11 +32,16 @@ static const ru_board_t k_board = {
     .draw_buf_psram = true,
     .draw_buf_lines = 50,
     .flash_mb = 16,
+    /* All four, by the display adapter (software rotation with tear avoidance, 3 full frame buffers in PSRAM, see ru_port_start).
+     * UNVERIFIED on the panel: the unrotated start keeps the single frame buffer of the bring-up builds. */
+    .rotations = 0xF,
 };
 
 const ru_board_t *ru_board(void) { return &k_board; }
 
 static int g_brightness;
+static int g_rot_applied;
+static uint8_t g_nfb = 1; /* RGB frame buffers: 1 upright, 3 when the adapter rotates (esp_lv_adapter_get_required_frame_buffer_count) */
 static i2c_master_bus_handle_t g_bus;
 static esp_lcd_touch_handle_t g_tp;
 static uint8_t g_tp_addr;
@@ -97,7 +102,7 @@ static esp_err_t panel_new(esp_lcd_panel_handle_t *out_panel, size_t bounce_px) 
     return e;
   }
 
-  const uint8_t nfb = esp_lv_adapter_get_required_frame_buffer_count(ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE, ESP_LV_ADAPTER_ROTATE_0);
+  const uint8_t nfb = g_nfb;
   const esp_lcd_rgb_panel_config_t rgb = {
       .clk_src = LCD_CLK_SRC_DEFAULT,
       .timings =
@@ -292,9 +297,29 @@ static lv_display_t *start_failed(const char *stage, esp_err_t e) {
   return NULL;
 }
 
-lv_display_t *ru_port_start(lv_indev_t **indev) {
+/* Our rotation (ru_geom.h: 90 turns the logical top edge to the panel's left edge, so the picture is upright when the device is turned
+ * 90 degrees CLOCKWISE) in the adapter's enum. The adapter's ROTATE_90 maps logical (x, y) to panel (D-1-y, x)
+ * (display_coord_to_phy in esp_lvgl_adapter), which is OUR 270: the two names are swapped, 180 is the same. */
+static esp_lv_adapter_rotation_t adapter_rotation(int deg) {
+  switch (deg) {
+    case 90: return ESP_LV_ADAPTER_ROTATE_270;
+    case 180: return ESP_LV_ADAPTER_ROTATE_180;
+    case 270: return ESP_LV_ADAPTER_ROTATE_90;
+    default: return ESP_LV_ADAPTER_ROTATE_0;
+  }
+}
+
+int ru_port_rotation(void) { return g_rot_applied; }
+
+lv_display_t *ru_port_start(lv_indev_t **indev, int rot) {
   *indev = NULL;
+  g_rot_applied = 0;
   esp_err_t e;
+  /* A rotation needs a tear-avoid mode (the adapter refuses it under NONE) and, with it, 3 frame buffers: the panel is created with
+   * that many, in PSRAM (3 x 480 x 480 x 2 = 1.3 MB of the 8 MB). Upright keeps the one buffer and no tear avoidance. */
+  const esp_lv_adapter_rotation_t arot = adapter_rotation(rot);
+  const esp_lv_adapter_tear_avoid_mode_t tear = rot ? ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_RGB : ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE;
+  g_nfb = esp_lv_adapter_get_required_frame_buffer_count(tear, arot);
   const esp_lv_adapter_config_t cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
   if ((e = esp_lv_adapter_init(&cfg)) != ESP_OK) return start_failed("esp_lv_adapter_init", e);
   if ((e = backlight_init()) != ESP_OK) return start_failed("backlight_init", e);
@@ -302,13 +327,13 @@ lv_display_t *ru_port_start(lv_indev_t **indev) {
   esp_lcd_panel_handle_t panel = NULL;
   if ((e = panel_new_on_core1(&panel)) != ESP_OK) return start_failed("panel_new", e);
 
-  /* Bring-up: one frame buffer in PSRAM, no tear avoidance. */
-  esp_lv_adapter_display_config_t dcfg = ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(panel, NULL, RU_GUITION_HRES, RU_GUITION_VRES,
-                                                                                    ESP_LV_ADAPTER_ROTATE_0);
-  dcfg.tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE;
+  /* Upright: one frame buffer in PSRAM, no tear avoidance (bring-up). Rotated: tear avoidance and three frame buffers in PSRAM. */
+  esp_lv_adapter_display_config_t dcfg = ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(panel, NULL, RU_GUITION_HRES, RU_GUITION_VRES, arot);
+  dcfg.tear_avoid_mode = tear;
   dcfg.profile.use_psram = true;
   lv_display_t *disp = esp_lv_adapter_register_display(&dcfg);
   if (!disp) return start_failed("register_display", ESP_FAIL);
+  g_rot_applied = rot;
 
   e = touch_new(&g_tp);
   if (e == ESP_OK) {

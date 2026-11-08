@@ -7,6 +7,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "lvgl.h"
+#include "ru_geom.h"
 
 static const char *TAG = "ru_hal";
 
@@ -17,14 +18,24 @@ static lv_indev_t *g_indev;
 static lv_indev_read_cb_t g_orig_read;
 static ru_hal_touch_cb_t g_sink;
 static void *g_sink_ud;
+static int g_rot;          /* rotation the port was started with */
+static int g_pending_rot;  /* chosen before init */
+static bool g_hw_rot;      /* the port turns the picture in hardware: LVGL needs logical touch points from us */
 
 /* Runs in the LVGL task. Wraps the port's read callback so LVGL still gets its input while ru_gesture sees every sample. */
 static void touch_read_wrap(lv_indev_t *indev, lv_indev_data_t *data) {
   g_orig_read(indev, data);
+  /* data->point is what the touch panel reports: panel coordinates. LVGL turns them for a software rotation by itself; for a
+   * hardware one we do it here. ru_gesture always gets logical coordinates, the ones the UI is laid out in. */
+  int lx = data->point.x, ly = data->point.y;
+  if (g_rot) {
+    ru_rot_to_logical(g_rot, ru_board()->diameter, data->point.x, data->point.y, &lx, &ly);
+    if (g_hw_rot) { data->point.x = lx; data->point.y = ly; }
+  }
   if (!g_sink) return;
   ru_touch_t s = {
-      .x = (int16_t)data->point.x,
-      .y = (int16_t)data->point.y,
+      .x = (int16_t)lx,
+      .y = (int16_t)ly,
       .t_ms = (uint32_t)(esp_timer_get_time() / 1000),
       .down = data->state == LV_INDEV_STATE_PRESSED,
       .contacts = 0, /* the port read path does not expose contact count or size */
@@ -33,13 +44,25 @@ static void touch_read_wrap(lv_indev_t *indev, lv_indev_data_t *data) {
   g_sink(&s, g_sink_ud);
 }
 
+bool ru_hal_set_rotation(int deg) {
+  if (g_inited || (deg != 0 && deg != 90 && deg != 180 && deg != 270)) return false;
+  if (!((ru_board()->rotations | 1u) >> (deg / 90) & 1u)) return false;
+  g_pending_rot = deg;
+  return true;
+}
+int ru_hal_rotation(void) { return g_rot; }
+
 ru_hal_err_t ru_hal_init(void) {
   if (g_inited) return RU_HAL_OK;
-  g_disp = ru_port_start(&g_indev);
+  g_disp = ru_port_start(&g_indev, g_pending_rot);
   if (!g_disp) {
     ESP_LOGE(TAG, "display start failed");
     return RU_HAL_ERR_DISPLAY;
   }
+  g_rot = ru_port_rotation();
+  if (g_rot != g_pending_rot) ESP_LOGW(TAG, "rotation %d requested, the port applied %d", g_pending_rot, g_rot);
+  g_hw_rot = g_rot != 0 && lv_display_get_rotation(g_disp) == LV_DISPLAY_ROTATION_0;
+  ESP_LOGI(TAG, "rotation %d (%s)", g_rot, g_rot == 0 ? "none" : g_hw_rot ? "panel scan direction" : "LVGL / adapter");
   if (g_indev) {
     g_orig_read = lv_indev_get_read_cb(g_indev);
     if (g_orig_read) {
