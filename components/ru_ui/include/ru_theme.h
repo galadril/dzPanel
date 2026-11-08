@@ -12,6 +12,7 @@ typedef struct {
   lv_color_t text;        /* #E6E9EE */
   lv_color_t text_dim;    /* #8A93A0 */
   lv_color_t accent;      /* Ember #FF8A3D by default */
+  lv_color_t brand;       /* dzPanel brand blue #01B1FD, measured from docs/banner.png (tools/brand/extract_colours.py) */
   lv_color_t ok, warn, error, info, stale;
 } ru_theme_t;
 

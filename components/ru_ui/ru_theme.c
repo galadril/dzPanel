@@ -15,6 +15,7 @@ void ru_theme_init(int diameter) {
   g_t.hairline = lv_color_hex(0x4A2B14);
   g_t.text = lv_color_hex(0xE6E9EE);
   g_t.text_dim = lv_color_hex(0x8A93A0);
+  g_t.brand = lv_color_hex(0x01B1FD);
   g_t.ok = lv_color_hex(0x3DDC84);
   g_t.warn = lv_color_hex(0xFFC247);
   g_t.error = lv_color_hex(0xFF5A5F);

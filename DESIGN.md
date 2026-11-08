@@ -322,6 +322,7 @@ A round AMOLED in a dark room is a ring of light floating in black. Halo leans i
 | | |
 |---|---|
 | **Accent palettes** | Ember `#FF8A3D` (default, warm, low blue so low power), Aurora `#3DE0C5`, Iris `#8C7CFF`, Rose `#FF5C8A`, Lime `#B6F25A`, Mono `#E6E9EE` |
+| **Brand blue** | `#01B1FD`, the median of the saturated blue pixels of the "Panel" glyphs in `docs/banner.png` (measured by `tools/brand/extract_colours.py`; the house icon measures `#03B2FC`). `ru_theme_t.brand`: used by the boot splash only, it does not replace the Ember accent. |
 | **Semantic** | ok `#3DDC84`, warn `#FFC247`, error `#FF5A5F`, info `#4DB3FF`, stale `#8A93A0`. Each pairs with a glyph or shape. |
 | **Fonts** | Inter (UI), Space Grotesk or Manrope (hero numerals), JetBrains Mono (diagnostics). All SIL OFL. Baked with `lv_font_conv` at 4 bpp and subset. |
 | **Unit** | `u = D / 100` (4.66 px at 466, 4.80 px at 480). All sizes, spacing and strokes are in units. |

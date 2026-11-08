@@ -449,6 +449,7 @@ Loading               Stale                  Error                 Offline      
            .         .          Total <= 1.5 s of animation; if boot is slower the bead keeps orbiting
               ' . '             APL ~1%
 ```
+Brand (updated): ring, bead and house mark in brand blue `#01B1FD` (`ru_theme_t.brand`, measured from `docs/banner.png` by `tools/brand/extract_colours.py`); wordmark "dz" in text colour + "Panel" in brand blue.
 Boot error: ring turns `error` dashed, code and hint "Hold to enter recovery".
 
 ### 10.2 Wi-Fi setup (first-run)
