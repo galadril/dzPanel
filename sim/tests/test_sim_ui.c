@@ -3,6 +3,7 @@
 #include "mini_test.h"
 #include "sim_core.h"
 #include "screens.h"
+#include "ru_geom.h"
 #include "ru_widgets.h"
 #include <stdlib.h>
 #include <string.h>
@@ -155,7 +156,136 @@ static void behaviour(int size) {
   sim_shutdown(&s);
 }
 
+/* ---- rotation: LVGL stays upright, the output and the pointer turn ---- */
+
+static int g_taps;
+static void tap_cb(lv_obj_t *w, void *ud) { (void)w; (void)ud; g_taps++; }
+
+/* the RGB bytes of a PNG written by sim_save_png (8 bit RGB, filter 0, stored deflate blocks): w*h*3 bytes, false on any surprise */
+static bool read_png_rgb(const char *path, int w, int h, uint8_t *out) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return false;
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  uint8_t *b = malloc((size_t)n);
+  uint8_t *z = malloc((size_t)n);
+  bool ok = b && z && fread(b, 1, (size_t)n, f) == (size_t)n;
+  fclose(f);
+  size_t zn = 0, o = 8;
+  while (ok && o + 12 <= (size_t)n) {
+    uint32_t len = (uint32_t)b[o] << 24 | (uint32_t)b[o + 1] << 16 | (uint32_t)b[o + 2] << 8 | b[o + 3];
+    if (!memcmp(b + o + 4, "IDAT", 4)) { memcpy(z + zn, b + o + 8, len); zn += len; }
+    o += 12 + len;
+  }
+  size_t p = 2, rowb = (size_t)w * 3 + 1, got = 0;
+  uint8_t *raw = malloc(rowb * (size_t)h);
+  while (ok && raw && p + 5 <= zn && got < rowb * (size_t)h) {
+    size_t len = z[p + 1] | (size_t)z[p + 2] << 8;
+    if ((z[p] & 6) != 0 || got + len > rowb * (size_t)h) { ok = false; break; } /* not a stored block */
+    memcpy(raw + got, z + p + 5, len);
+    got += len;
+    p += 5 + len;
+  }
+  ok = ok && raw && got == rowb * (size_t)h;
+  for (int y = 0; ok && y < h; y++) {
+    if (raw[(size_t)y * rowb] != 0) ok = false;
+    else memcpy(out + (size_t)y * (size_t)w * 3, raw + (size_t)y * rowb + 1, (size_t)w * 3);
+  }
+  free(b); free(z); free(raw);
+  return ok;
+}
+
+static void rotation(int size) {
+  sim_t s;
+  CHECK(sim_init_ex(&s, size, g_square));
+  mkdir(SHOT_DIR, 0755);
+  /* an asymmetric screen: a bright block near the top-left, a tile with a tap handler off to the right */
+  lv_obj_t *scr = lv_obj_create(NULL);
+  lv_obj_remove_style_all(scr);
+  lv_obj_set_size(scr, size, size);
+  lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+  lv_obj_t *blk = lv_obj_create(scr);
+  lv_obj_remove_style_all(blk);
+  lv_obj_set_pos(blk, size * 3 / 10, size / 4);
+  lv_obj_set_size(blk, size / 8, size / 12);
+  lv_obj_set_style_bg_color(blk, lv_color_hex(0xFF8800), 0);
+  lv_obj_set_style_bg_opa(blk, LV_OPA_COVER, 0);
+  lv_obj_t *tile = ru_value_tile_create(scr, size * 3 / 10, size / 10, "TAP");
+  lv_obj_set_pos(tile, size * 11 / 20, size * 11 / 20);
+  ru_value_tile_set_text(tile, "OK", RU_VAL_OK);
+  ru_value_tile_on_tap(tile, tap_cb, NULL);
+  lv_screen_load(scr);
+  sim_render();
+  int tx, ty;
+  centre_of(tile, &tx, &ty);
+  uint32_t *base = malloc((size_t)size * (size_t)size * 4);
+  memcpy(base, s.fb, (size_t)size * (size_t)size * 4);
+  uint32_t *pan = malloc((size_t)size * (size_t)size * 4);
+  uint8_t *rgb = malloc((size_t)size * (size_t)size * 3);
+  CHECK(base && pan && rgb);
+  CHECK(!sim_set_rotation(45) && !sim_set_rotation(-90) && !sim_set_rotation(360) && sim_rotation() == 0);
+  static const int rots[4] = {0, 90, 180, 270};
+  for (int r = 0; r < 4; r++) {
+    CHECK(sim_set_rotation(rots[r]) && sim_rotation() == rots[r]);
+    sim_render();
+    /* LVGL did not turn: the logical framebuffer is the same, only the output differs */
+    CHECK(!memcmp(base, s.fb, (size_t)size * (size_t)size * 4));
+    /* the window image and the PNG are the framebuffer turned by ru_rot_to_panel, pixel for pixel, masked as before */
+    sim_masked_copy(&s, pan);
+    char p[256];
+    snprintf(p, sizeof p, "%s/rotation_%d_r%d%s.png", SHOT_DIR, size, rots[r], g_square ? "sq" : "");
+    CHECK(sim_save_png(&s, p, true));
+    CHECK(read_png_rgb(p, size, size, rgb));
+    long bad = 0, bad_png = 0, lit = 0;
+    for (int y = 0; y < size; y++)
+      for (int x = 0; x < size; x++) {
+        int ox, oy;
+        ru_rot_to_panel(rots[r], size, x, y, &ox, &oy);
+        uint32_t want = (!g_square && sim_outside_circle(size, x, y)) ? 0 : (s.fb[y * size + x] & 0xFFFFFF);
+        if (pan[oy * size + ox] != want) bad++;
+        const uint8_t *q = &rgb[((size_t)oy * (size_t)size + (size_t)ox) * 3];
+        if ((uint32_t)q[0] << 16 != (want & 0xFF0000) || (uint32_t)q[1] << 8 != (want & 0xFF00) || q[2] != (want & 0xFF)) bad_png++;
+        if (want) lit++;
+      }
+    CHECK(bad == 0 && bad_png == 0 && lit > 100);
+    /* the orange block is where the rotation puts it */
+    {
+      int lx = size * 3 / 10 + size / 16, ly = size / 4 + size / 24, ox, oy;
+      ru_rot_to_panel(rots[r], size, lx, ly, &ox, &oy);
+      const uint8_t *q = &rgb[((size_t)oy * (size_t)size + (size_t)ox) * 3];
+      CHECK(q[0] == 0xFF && q[1] == 0x88 && q[2] == 0x00);
+    }
+    /* a finger at the PANEL position of the tile taps it; the same coordinates read as logical ones (rotation ignored) miss */
+    int px, py;
+    ru_rot_to_panel(rots[r], size, tx, ty, &px, &py);
+    g_taps = 0;
+    sim_pointer_panel(px, py, true); sim_advance(80); sim_pointer_panel(px, py, false); sim_advance(80);
+    CHECK(g_taps == 1);
+    if (rots[r] != 0 && (px != tx || py != ty)) {
+      g_taps = 0;
+      sim_pointer_panel(tx, ty, true); sim_advance(80); sim_pointer_panel(tx, ty, false); sim_advance(80);
+      lv_area_t ar;
+      lv_obj_get_coords(tile, &ar);
+      int lx, ly;
+      ru_rot_to_logical(rots[r], size, tx, ty, &lx, &ly);
+      bool hit = lx >= ar.x1 && lx <= ar.x2 && ly >= ar.y1 && ly <= ar.y2;
+      CHECK(g_taps == (hit ? 1 : 0));
+      CHECK(!hit); /* the tile is placed so that no rotation maps its own centre onto itself */
+    }
+  }
+  sim_set_rotation(0);
+  free(base); free(pan); free(rgb);
+  sim_shutdown(&s);
+}
+
 int main(void) {
+  rotation(466);
+  rotation(480);
+  g_square = true;
+  rotation(480);
+  g_square = false;
   screens_at(466);
   screens_at(480);
   behaviour(466);

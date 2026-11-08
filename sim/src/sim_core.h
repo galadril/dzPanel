@@ -26,8 +26,17 @@ uint32_t sim_now_ms(void);
 /* panel shape of the current simulator instance (for screens that print it) */
 bool sim_panel_square(void);
 
-/* synthetic pointer; takes effect on the next sim_advance */
+/* synthetic pointer in LOGICAL (LVGL) coordinates; takes effect on the next sim_advance */
 void sim_pointer(int x, int y, bool down);
+
+/* Screen rotation, as a device does it. LVGL keeps drawing upright at 0: sim_t.fb is always the LOGICAL framebuffer (every layout
+ * check looks at it). Only the OUTPUT is turned: sim_masked_copy (the window) and sim_save_png (the screenshots) give the PANEL
+ * image, and the mouse of the window goes through sim_pointer_panel. The mapping is ru_rot_to_panel (LVGL's own). deg = 0, 90,
+ * 180 or 270; false (nothing changes) for anything else. */
+bool sim_set_rotation(int deg);
+int sim_rotation(void);
+/* pointer in PANEL pixels (what a finger on the glass reports): turned back to logical coordinates, then as sim_pointer */
+void sim_pointer_panel(int x, int y, bool down);
 
 /* Optional raw touch sink, called once per 16 ms step of sim_advance with the pointer state (and the virtual time), before
  * LVGL runs. The device feeds the same samples to ru_gesture; a test or driver installs one to do the same. NULL removes. */

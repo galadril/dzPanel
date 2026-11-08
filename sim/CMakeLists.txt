@@ -92,6 +92,11 @@ add_custom_target(app_screenshots
   COMMAND dzpanel_sim --size 466 --apps ${CMAKE_SOURCE_DIR}/sim/screenshots
   COMMAND dzpanel_sim --size 480 --apps ${CMAKE_SOURCE_DIR}/sim/screenshots
   COMMAND dzpanel_sim --size 480 --shape square --apps ${CMAKE_SOURCE_DIR}/sim/screenshots
+  # a few turned screens (rotation as a device does it: the picture is rotated, LVGL stays upright)
+  COMMAND dzpanel_sim --size 466 --rotate 90 --app clock --shot ${CMAKE_SOURCE_DIR}/sim/screenshots/app_clock_466_r90.png
+  COMMAND dzpanel_sim --size 466 --rotate 180 --app clock --shot ${CMAKE_SOURCE_DIR}/sim/screenshots/app_clock_466_r180.png
+  COMMAND dzpanel_sim --size 466 --rotate 90 --app home --shot ${CMAKE_SOURCE_DIR}/sim/screenshots/app_home_466_r90.png
+  COMMAND dzpanel_sim --size 480 --shape square --rotate 270 --app settings --shot ${CMAKE_SOURCE_DIR}/sim/screenshots/app_settings_480sq_r270.png
   DEPENDS dzpanel_sim
   COMMENT "Rendering app screenshots to sim/screenshots")
 

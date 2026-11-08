@@ -6,6 +6,7 @@
 
 #include "ru_gesture.h"
 #include "ru_nav.h"
+#include "ru_prefs.h"
 #include "ru_theme.h"
 
 static char *slurp(const char *path, size_t *n) {
@@ -176,6 +177,46 @@ void appfx_unload(appfx_t *f) {
   memset(f, 0, sizeof *f);
 }
 
+/* ------------------------------------------------------------------ preferences (rotation, start page) */
+
+static ru_kv_mem_t g_kv;
+static bool g_kv_init;
+
+static void kv_ensure(void) {
+  if (g_kv_init) return;
+  ru_kv_mem_init(&g_kv);
+  g_kv_init = true;
+  if (sim_rotation()) ru_prefs_save_rotation(&g_kv.base, sim_rotation()); /* dzpanel_sim --rotate N */
+}
+
+static ru_pref_result_t sim_pref_hook(ru_pref_t p, int v, void *ud) {
+  (void)ud;
+  kv_ensure();
+  switch (p) {
+    case RU_PREF_START: return ru_prefs_save_start(&g_kv.base, v ? RU_START_FAVS : RU_START_CLOCK) == RU_KV_OK ? RU_PREF_APPLIED : RU_PREF_UNSUPPORTED;
+    case RU_PREF_ROTATION:
+      if (!sim_set_rotation(v)) return RU_PREF_UNSUPPORTED;
+      return ru_prefs_save_rotation(&g_kv.base, v) == RU_KV_OK ? RU_PREF_APPLIED : RU_PREF_UNSUPPORTED;
+    default: return RU_PREF_APPLIED; /* RU_PREF_RESTART: nothing to restart */
+  }
+}
+
+void appfx_prefs_attach(ru_dzapp_t *a) {
+  kv_ensure();
+  ru_prefs_t p;
+  ru_prefs_load(&g_kv.base, &p);
+  ru_dzapp_set_home_section(a, p.start == RU_START_FAVS ? RU_SEC_FAVS : RU_SEC_CLOCK);
+  sim_set_rotation(p.rotation);
+  ru_dzapp_set_rotation_info(a, p.rotation, 0xFu); /* the simulator can turn the picture every way */
+  ru_dzapp_set_pref_hook(a, sim_pref_hook, NULL);
+}
+
+void appfx_prefs_reset(void) {
+  ru_kv_mem_init(&g_kv);
+  g_kv_init = true;
+  sim_set_rotation(0);
+}
+
 /* ------------------------------------------------------------------ screens */
 
 const char *const apps_demo_names[] = {
@@ -265,6 +306,7 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
   ru_dzapp_t *a = ru_dzapp_create(&f->model, &f->client, true);
   if (a) ru_dzapp_set_display_info(a, "sim", !sim_panel_square());
   if (!a) return NULL;
+  appfx_prefs_attach(a);
   /* "stale": the model was last confirmed 7 minutes before the UI looks at it */
   f->T += stale ? 420000u : 1000u;
   ru_dzapp_set_conn(a, !strcmp(n, "home_connecting") ? DZ_CS_CONNECTING : !strcmp(n, "home_offline") || !strcmp(n, "clock_offline") ? DZ_CS_OFFLINE
@@ -414,6 +456,17 @@ void appfx_drag(int x0, int y0, int x1, int y1, int steps) {
     sim_advance(16);
   }
   sim_pointer(x1, y1, false);
+  sim_advance(100);
+}
+
+void appfx_drag_panel(int x0, int y0, int x1, int y1, int steps) {
+  sim_pointer_panel(x0, y0, true);
+  sim_advance(40);
+  for (int k = 1; k <= steps; k++) {
+    sim_pointer_panel(x0 + (x1 - x0) * k / steps, y0 + (y1 - y0) * k / steps, true);
+    sim_advance(16);
+  }
+  sim_pointer_panel(x1, y1, false);
   sim_advance(100);
 }
 

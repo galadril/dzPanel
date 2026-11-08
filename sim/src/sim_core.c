@@ -1,4 +1,5 @@
 #include "sim_core.h"
+#include "ru_geom.h"
 #include "ru_theme.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,6 +137,19 @@ void sim_advance(uint32_t ms) {
 
 void sim_pointer(int x, int y, bool down) { g_px = x; g_py = y; g_down = down; }
 
+static int g_rot;
+bool sim_set_rotation(int deg) {
+  if (deg != 0 && deg != 90 && deg != 180 && deg != 270) return false;
+  g_rot = deg;
+  return true;
+}
+int sim_rotation(void) { return g_rot; }
+void sim_pointer_panel(int x, int y, bool down) {
+  int lx = x, ly = y;
+  if (g_sim) ru_rot_to_logical(g_rot, g_sim->size, x, y, &lx, &ly);
+  sim_pointer(lx, ly, down);
+}
+
 void sim_render(void) {
   lv_obj_invalidate(lv_screen_active());
   sim_advance(100);
@@ -185,10 +199,13 @@ long sim_count_lit(const sim_t *s) {
 }
 
 void sim_masked_copy(const sim_t *s, uint32_t *dst) {
-  if (s->square) { for (int i = 0; i < s->size * s->size; i++) dst[i] = s->fb[i] & 0xFFFFFF; return; }
+  /* the panel image: logical pixel (x, y) lands on panel pixel ru_rot_to_panel(...) */
   for (int y = 0; y < s->size; y++)
-    for (int x = 0; x < s->size; x++)
-      dst[y * s->size + x] = sim_outside_circle(s->size, x, y) ? 0 : (s->fb[y * s->size + x] & 0xFFFFFF);
+    for (int x = 0; x < s->size; x++) {
+      int ox, oy;
+      ru_rot_to_panel(g_rot, s->size, x, y, &ox, &oy);
+      dst[oy * s->size + ox] = (!s->square && sim_outside_circle(s->size, x, y)) ? 0 : (s->fb[y * s->size + x] & 0xFFFFFF);
+    }
 }
 
 /* LVGL 9.2.2 upstream bug: lv_draw_sw_arc() never frees the radius mask it inits for rounded arcs

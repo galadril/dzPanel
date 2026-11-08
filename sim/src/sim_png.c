@@ -1,4 +1,5 @@
 /* Minimal PNG writer: 8-bit RGB, filter 0, deflate "stored" blocks. No zlib. */
+#include "ru_geom.h"
 #include "sim_core.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,8 +45,10 @@ bool sim_save_png(const sim_t *s, const char *path, bool masked) {
     uint8_t *r = raw + (size_t)y * rowb;
     *r++ = 0;
     for (int x = 0; x < w; x++) {
-      uint32_t px = s->fb[y * w + x];
-      if (masked && !s->square && sim_outside_circle(w, x, y)) px = 0;
+      int lx, ly; /* the panel pixel (x, y) shows this logical pixel */
+      ru_rot_to_logical(sim_rotation(), w, x, y, &lx, &ly);
+      uint32_t px = s->fb[ly * w + lx];
+      if (masked && !s->square && sim_outside_circle(w, lx, ly)) px = 0;
       *r++ = (uint8_t)(px >> 16); *r++ = (uint8_t)(px >> 8); *r++ = (uint8_t)px;
     }
   }

@@ -12,7 +12,8 @@ int sim_sdl_run(sim_t *s, const char *screen, int frames);
 #endif
 
 static void usage(void) {
-  puts("usage: dzpanel_sim [--size 466|480] [--shape round|square] [--screen NAME] [--shot FILE.png] [--all DIR] [--apps DIR] [--app NAME] [--headless] [--frames N] [--list]\n"
+  puts("usage: dzpanel_sim [--size 466|480] [--shape round|square] [--screen NAME] [--shot FILE.png] [--all DIR] [--apps DIR] [--app NAME] [--rotate 0|90|180|270] [--headless] [--frames N] [--list]\n"
+       "  --rotate N    turn the picture as a device with rotation N does (window, mouse and PNGs); LVGL itself stays upright\n"
        "  --shape S     round (default, circle-masked PNGs) or square (full panel, files named NAME_480sq.png)\n"
        "  --apps DIR    render every Domoticz app screen (fixture data, no network) to DIR/app_NAME_SIZE[sq].png and exit\n"
        "  --app NAME --shot FILE   render one app screen (see --list-apps)\n"
@@ -35,6 +36,7 @@ static int shot(sim_t *s, const char *name, const char *path) {
 int main(int argc, char **argv) {
   int size = 466, frames = 0;
   bool square = false;
+  int rotate = 0;
   const char *screen = "home", *shot_path = NULL, *all_dir = NULL, *apps_dir = NULL, *app_name = NULL;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--size") && i + 1 < argc) size = atoi(argv[++i]);
@@ -44,6 +46,7 @@ int main(int argc, char **argv) {
       else if (!strcmp(v, "round")) square = false;
       else { fprintf(stderr, "--shape must be round or square\n"); return 2; }
     }
+    else if (!strcmp(argv[i], "--rotate") && i + 1 < argc) { rotate = atoi(argv[++i]); if (rotate % 90 || rotate < 0 || rotate > 270) { fprintf(stderr, "--rotate must be 0, 90, 180 or 270\n"); return 2; } }
     else if (!strcmp(argv[i], "--screen") && i + 1 < argc) screen = argv[++i];
     else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot_path = argv[++i];
     else if (!strcmp(argv[i], "--all") && i + 1 < argc) all_dir = argv[++i];
@@ -58,13 +61,16 @@ int main(int argc, char **argv) {
   if (size != 466 && size != 480) { fprintf(stderr, "--size must be 466 or 480\n"); return 2; }
   sim_t s;
   if (!sim_init_ex(&s, size, square)) { fprintf(stderr, "init failed\n"); return 1; }
+  sim_set_rotation(rotate);
+  char rsuf[8] = ""; /* a turned run names its files _r90 ... */
+  if (rotate) snprintf(rsuf, sizeof rsuf, "_r%d", rotate);
   int rc = 0;
   if (app_name && shot_path) rc = apps_demo_shot(&s, FIXTURE_DIR, app_name, shot_path);
   else if (apps_dir) {
     mkdir(apps_dir, 0755);
     for (int k = 0; k < apps_demo_count && !rc; k++) {
       char p[512];
-      snprintf(p, sizeof p, "%s/app_%s_%d%s.png", apps_dir, apps_demo_names[k], size, square ? "sq" : "");
+      snprintf(p, sizeof p, "%s/app_%s_%d%s%s.png", apps_dir, apps_demo_names[k], size, square ? "sq" : "", rsuf);
       rc = apps_demo_shot(&s, FIXTURE_DIR, apps_demo_names[k], p);
     }
   }
@@ -73,7 +79,7 @@ int main(int argc, char **argv) {
     mkdir(all_dir, 0755);
     for (int k = 0; k < sim_screen_count && !rc; k++) {
       char p[512];
-      snprintf(p, sizeof p, "%s/%s_%d%s.png", all_dir, sim_screen_names[k], size, square ? "sq" : "");
+      snprintf(p, sizeof p, "%s/%s_%d%s%s.png", all_dir, sim_screen_names[k], size, square ? "sq" : "", rsuf);
       rc = shot(&s, sim_screen_names[k], p);
     }
   } else {

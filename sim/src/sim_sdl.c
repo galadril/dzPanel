@@ -1,4 +1,5 @@
 /* Interactive window. Round: the window shows the circle only (outside is black). Square: the full panel with an outline. */
+#include "ru_geom.h"
 #include "sim_core.h"
 #include "screens.h"
 #include <SDL.h>
@@ -52,7 +53,7 @@ int sim_sdl_run(sim_t *s, const char *screen, int frames) {
         }
       }
     }
-    sim_pointer(mx, my, down);
+    sim_pointer_panel(mx, my, down); /* the window shows the panel: a turned screen turns the mouse back */
     lv_timer_handler();
     sim_masked_copy(s, masked);
     SDL_UpdateTexture(tex, NULL, masked, s->size * 4);

@@ -49,6 +49,13 @@ bool appfx_apply_scenes(appfx_t *f, const char *json);
  * HOME, content swipes go to ru_dzapp_swipe. Call detach before destroying the app. */
 void appfx_gestures_attach(ru_dzapp_t *a, int diameter, bool square);
 void appfx_gestures_detach(void);
+/* Preferences like the device's glue: START PAGE and ROTATION go through a ru_kv_mem store ("ui" namespace, ru_prefs); a rotation is
+ * applied live with sim_set_rotation (the window, the mouse and the PNGs turn, LVGL stays upright). The store lives for the process:
+ * a second app instance starts with what the first one chose. Attached to every app apps_demo_show builds. */
+void appfx_prefs_attach(ru_dzapp_t *a);
+void appfx_prefs_reset(void); /* forget everything stored and turn the screen back to 0 (tests) */
+/* the same drag as appfx_drag, but the points are PANEL pixels (a finger on a turned screen) */
+void appfx_drag_panel(int x0, int y0, int x1, int y1, int steps);
 /* a drag of `n` 16 ms steps from (x0,y0) to (x1,y1), through the pointer (and so through the gesture hook) */
 void appfx_drag(int x0, int y0, int x1, int y1, int steps);
 

@@ -9,6 +9,7 @@
 #include "apps_demo.h"
 #include "mini_test.h"
 #include "ru_apps.h"
+#include "ru_geom.h"
 
 #ifndef SHOT_DIR
 #define SHOT_DIR "."
@@ -1290,7 +1291,7 @@ static void settings_prefs(int size) {
   /* seven rows, all visible without scrolling, every one inside the circle */
   CHECK(ru_dzapp_home_rows(a) == 7);
   screen_ok(&s, a, "settings", size);
-  CHECK(shows(a, "START PAGE") && shows(a, "ROTATION") && shows(a, "CLOCK") && shows(a, "0\xC2\xB0"));
+  CHECK(shows(a, "START PAGE") && shows(a, "ROTATION") && shows(a, "FAVS") && shows(a, "0\xC2\xB0"));
   lv_obj_t *first = NULL, *last = NULL;
   {
     lv_obj_t *scr = ru_dzapp_screen(a);
@@ -1381,6 +1382,71 @@ static void settings_prefs(int size) {
   ru_dzapp_open_sub(a, RU_SUB_ROTATION);
   ru_dzapp_pick_rotation(a, 90);
   CHECK(ru_dzapp_rotation(a) == 0 && ru_dzapp_rotation_note(a)[0]);
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
+/* ---- a turned screen: the same gestures, given in PANEL pixels, do the same things ---- */
+
+static void rotated_gestures(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  int c = size / 2, R = size / 2;
+  appfx_t f;
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_MOCK, 600000, true);
+  appfx_gestures_attach(a, size, g_square);
+  static const int rots[3] = {90, 180, 270};
+  for (int r = 0; r < 3; r++) {
+    CHECK(sim_set_rotation(rots[r]));
+    ru_dzapp_home(a);
+    ru_dzapp_show_section(a, RU_SEC_TEMP);
+    sim_render();
+    int lx = c - (int)(0.96f * (float)R), x0, y0, x1, y1;
+    /* the left rim swipe of the UI (logical) is BACK; the finger makes it at the turned position */
+    ru_rot_to_panel(rots[r], size, lx, c, &x0, &y0);
+    ru_rot_to_panel(rots[r], size, lx + 130, c, &x1, &y1);
+    appfx_drag_panel(x0, y0, x1, y1, 8);
+    CHECK(ru_dzapp_section(a) == RU_SEC_FAVS && ru_dzapp_view(a) == RU_VIEW_HOME);
+    /* a content swipe: finger (logically) to the left = the next section */
+    ru_rot_to_panel(rots[r], size, c + 90, c - 100, &x0, &y0);
+    ru_rot_to_panel(rots[r], size, c - 90, c - 100, &x1, &y1);
+    appfx_drag_panel(x0, y0, x1, y1, 8);
+    CHECK(ru_dzapp_section(a) == RU_SEC_LIGHTS);
+    /* the same finger path, unrotated, is a different logical gesture and not this one */
+    /* a tap on the first tile of a section: at its panel position */
+    ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+    sim_render();
+    ru_dzapp_row_info_t ri;
+    CHECK(ru_dzapp_row_info(a, 0, &ri) && ri.idx[0]);
+    int tx = c - ru_u(26.5f), ty = c - ru_u(12.0f), px, py; /* the centre of the first tile of the 3 x 2 grid */
+    ru_rot_to_panel(rots[r], size, tx, ty, &px, &py);
+    sim_pointer_panel(px, py, true); sim_advance(80); sim_pointer_panel(px, py, false); sim_advance(80);
+    CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL || ru_dzapp_view(a) == RU_VIEW_CONFIRM);
+    CHECK(ru_dzapp_back(a) || ru_dzapp_view(a) == RU_VIEW_HOME);
+    ru_dzapp_show_section(a, RU_SEC_LIGHTS);
+  }
+  /* rotation through the settings screen: the apps driver stores it and turns the output at once */
+  sim_set_rotation(0);
+  appfx_prefs_reset();
+  appfx_prefs_attach(a);
+  ru_dzapp_show_section(a, RU_SEC_SETTINGS);
+  ru_dzapp_open_sub(a, RU_SUB_ROTATION);
+  sim_render();
+  click_at(c - ru_u(25), c); /* the 90 chip, logical = panel while the screen is not yet turned */
+  CHECK(sim_rotation() == 90 && ru_dzapp_rotation(a) == 90 && ru_dzapp_view(a) == RU_VIEW_SUB);
+  ru_dzapp_home(a); /* the picture is turned now: a second app instance picks the stored rotation up */
+  ru_dzapp_t *b = ru_dzapp_create(&f.model, &f.client, true);
+  appfx_prefs_attach(b);
+  CHECK(ru_dzapp_rotation(b) == 90 && sim_rotation() == 90);
+  ru_dzapp_destroy(b);
+  /* the chip at the 0 position, tapped where a finger finds it on the turned panel, turns it back */
+  ru_dzapp_open_sub(a, RU_SUB_ROTATION);
+  sim_render();
+  int px, py;
+  ru_rot_to_panel(90, size, c, c - ru_u(21), &px, &py);
+  sim_pointer_panel(px, py, true); sim_advance(80); sim_pointer_panel(px, py, false); sim_advance(80);
+  CHECK(sim_rotation() == 0 && ru_dzapp_rotation(a) == 0);
+  appfx_prefs_reset();
   finish(&f, a);
   sim_shutdown(&s);
 }
@@ -1687,6 +1753,7 @@ int main(void) {
     clock_page(size);
     start_page(size);
     settings_prefs(size);
+    rotated_gestures(size);
     page_model(size);
     paging(size);
     swipes(size);
