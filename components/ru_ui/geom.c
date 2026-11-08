@@ -43,3 +43,27 @@ bool ru_geom_rect_in_safe(const ru_geom_t *g, ru_rect_t r) {
     }
   return true;
 }
+
+void ru_rot_to_panel(int rot, int D, int x, int y, int *ox, int *oy) {
+  int px, py;
+  switch (rot) {
+    case 90: px = y; py = D - 1 - x; break;
+    case 180: px = D - 1 - x; py = D - 1 - y; break;
+    case 270: px = D - 1 - y; py = x; break;
+    default: px = x; py = y; break;
+  }
+  *ox = px;
+  *oy = py;
+}
+
+void ru_rot_to_logical(int rot, int D, int x, int y, int *ox, int *oy) {
+  int lx, ly;
+  switch (rot) {
+    case 90: lx = D - 1 - y; ly = x; break;
+    case 180: lx = D - 1 - x; ly = D - 1 - y; break;
+    case 270: lx = y; ly = D - 1 - x; break;
+    default: lx = x; ly = y; break;
+  }
+  *ox = lx;
+  *oy = ly;
+}
