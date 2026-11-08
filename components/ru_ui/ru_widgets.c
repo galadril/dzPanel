@@ -322,6 +322,12 @@ void ru_ring_gauge_set_color(lv_obj_t *box, lv_color_t c) {
   if (g->ring.lit && !(g->ring.applied && g->ring.a_lit && lv_color_eq(g->ring.a_color, c))) ring_set_lit(&g->ring, true, c, true);
 }
 
+void ru_ring_gauge_set_value_font(lv_obj_t *box, const lv_font_t *f) {
+  gauge_t *g = wd_get(box);
+  if (!g || !f || lv_obj_get_style_text_font(g->val, LV_PART_MAIN) == f) return;
+  lv_obj_set_style_text_font(g->val, f, 0);
+}
+
 void ru_ring_gauge_set(lv_obj_t *box, const ru_val_t *v, float min, float max, uint32_t now_ms) {
   gauge_t *g = wd_get(box);
   if (!g) return;

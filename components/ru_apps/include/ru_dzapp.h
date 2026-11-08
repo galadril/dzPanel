@@ -21,12 +21,12 @@
 
 typedef struct ru_dzapp ru_dzapp_t;
 
-/* The pages (sections), in the order of the Domoticz web UI: Favourites (RU_SEC_FAVS), Lights, Scenes/Groups,
- * Temperature, Weather, Utility, Energy, Settings. Each one is a ru_app_t in ru_apps_table.c. Every page except Home and
+/* The pages (sections): Clock (time, date, three gauges from the favourites), then in the order of the Domoticz web UI Favourites (RU_SEC_FAVS), Lights, Scenes/Groups,
+ * Temperature, Weather, Utility, Energy, Settings. Each one is a ru_app_t in ru_apps_table.c. Every page except Clock, Favourites and
  * Settings is hidden (not available) when the model has nothing for it. Membership of Lights / Temperature / Weather /
  * Utility comes from dz_device_t.tabs (dz_tabs_of), order from dz_model_order. */
 typedef enum {
-  RU_SEC_FAVS, RU_SEC_LIGHTS, RU_SEC_SCENES, RU_SEC_TEMP, RU_SEC_WEATHER, RU_SEC_UTILITY, RU_SEC_ENERGY, RU_SEC_SETTINGS,
+  RU_SEC_CLOCK, RU_SEC_FAVS, RU_SEC_LIGHTS, RU_SEC_SCENES, RU_SEC_TEMP, RU_SEC_WEATHER, RU_SEC_UTILITY, RU_SEC_ENERGY, RU_SEC_SETTINGS,
   RU_SEC_COUNT
 } ru_section_t;
 const char *ru_section_name(ru_section_t s);
@@ -94,6 +94,9 @@ lv_obj_t *ru_dzapp_screen(const ru_dzapp_t *a);
 lv_obj_t *ru_dzapp_light(const ru_dzapp_t *a);
 size_t ru_dzapp_home_rows(const ru_dzapp_t *a); /* tiles / rows of the current section screen (the current page) */
 const char *ru_dzapp_toast(const ru_dzapp_t *a); /* the visible result message, "" when none */
+/* What the Clock page shows ("--:--" and "" before the first server time), for tests. false when it is not the page on screen. */
+bool ru_dzapp_clock_text(const ru_dzapp_t *a, char hm[8], char date[12]);
+int ru_dzapp_clock_gauges(const ru_dzapp_t *a); /* gauges on the Clock page on screen (0..3) */
 /* Tap the n-th home row exactly as a finger would. */
 bool ru_dzapp_tap_row(ru_dzapp_t *a, size_t n);
 

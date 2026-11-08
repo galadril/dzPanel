@@ -38,6 +38,10 @@ typedef struct { struct ru_dzapp *app; char idx[12]; bool scene; int setting; } 
 /* one entry of the index list of a screen: sort key (group, server order) and the dz_model entry index */
 typedef struct { uint32_t key; uint16_t i; uint8_t st; } ix_t; /* st: ru_val_state_t at collection time */
 
+#define CLK_GAUGES 3
+/* one gauge of the Clock page: the favourite it shows (position in a->ix), its content and freshness */
+typedef struct { size_t k; char idx[12]; char name[40]; dz_cap_t cap; ru_gauge_view_t gv; ru_val_state_t st; } clk_pick_t;
+
 struct ru_dzapp {
   dz_model_t *model;
   dz_client_t *client;
@@ -83,6 +87,11 @@ struct ru_dzapp {
   char banner[56];
 
   int energy_sel;
+  /* the Clock page: its labels and gauges are updated in place; the chosen gauge devices are part of the structure signature */
+  lv_obj_t *clk_time, *clk_date, *clk_gauge[CLK_GAUGES];
+  char clk_hm[8], clk_dt[12]; /* what the two labels show ("" = nothing yet) */
+  int clk_n;
+  clk_pick_t clk[CLK_GAUGES];
   int page, pages;      /* the paged list on screen: current page (kept over detail and back) and page count */
   ix_t *ix;             /* index list of the current section, rebuilt for each screen build (one pass over the model) */
   size_t ix_n, ix_cap;
@@ -103,7 +112,7 @@ struct ru_dzapp {
   const char *name_ptrs[MAX_NAMES];
 };
 
-static const char *const k_sec_names[RU_SEC_COUNT] = { "FAVOURITES", "LIGHTS", "SCENES", "TEMPERATURE", "WEATHER", "UTILITY",
+static const char *const k_sec_names[RU_SEC_COUNT] = { "CLOCK", "FAVOURITES", "LIGHTS", "SCENES", "TEMPERATURE", "WEATHER", "UTILITY",
                                                        "ENERGY", "SETTINGS" };
 const char *ru_section_name(ru_section_t s) { return s < RU_SEC_COUNT ? k_sec_names[s] : "?"; }
 
@@ -164,6 +173,7 @@ static unsigned home_group(const dz_device_t *d, bool scene) {
 
 static bool sec_match(ru_section_t s, const dz_device_t *d, bool scene) {
   switch (s) {
+    case RU_SEC_CLOCK: /* the gauges come from the favourites */
     case RU_SEC_FAVS: return d->favorite;
     case RU_SEC_LIGHTS: return !scene && (d->tabs & DZ_TAB_LIGHT);
     case RU_SEC_SCENES: return scene;
@@ -190,7 +200,7 @@ static bool collect_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_
   ru_dzapp_t *a = c->a;
   if (i >= 0xFFFF || !sec_match(c->s, d, scene)) return true;
   if (a->ix_n >= a->ix_cap) { c->full = true; return false; }
-  a->ix[a->ix_n].key = c->s == RU_SEC_FAVS ? (home_group(d, scene) << 16) | order : order;
+  a->ix[a->ix_n].key = c->s == RU_SEC_FAVS || c->s == RU_SEC_CLOCK ? (home_group(d, scene) << 16) | order : order;
   a->ix[a->ix_n].i = (uint16_t)i;
   a->ix[a->ix_n].st = (uint8_t)st;
   a->ix_n++;
@@ -229,7 +239,7 @@ static bool ix_any_stale(const ru_dzapp_t *a) {
   return false;
 }
 
-/* Which sections have something to show: one pass, no copies, one bit each. Home and Settings are always there. */
+/* Which sections have something to show: one pass, no copies, one bit each. Clock, Favourites and Settings are always there. */
 static bool avail_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_t st, uint16_t order, void *ud) {
   (void)i; (void)st; (void)order;
   unsigned *m = ud;
@@ -238,13 +248,13 @@ static bool avail_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_t 
 }
 
 static unsigned avail_mask(ru_dzapp_t *a) {
-  unsigned m = (1u << RU_SEC_FAVS) | (1u << RU_SEC_SETTINGS);
+  unsigned m = (1u << RU_SEC_CLOCK) | (1u << RU_SEC_FAVS) | (1u << RU_SEC_SETTINGS);
   dz_model_foreach(a->model, a->now, avail_cb, &m);
   return m;
 }
 
 bool ru_dzapp_section_available(ru_dzapp_t *a, ru_section_t s) {
-  if (s == RU_SEC_FAVS || s == RU_SEC_SETTINGS) return true;
+  if (s == RU_SEC_CLOCK || s == RU_SEC_FAVS || s == RU_SEC_SETTINGS) return true;
   return s < RU_SEC_COUNT && (avail_mask(a) >> s & 1u);
 }
 
@@ -1021,6 +1031,114 @@ static lv_obj_t *build_energy(ru_dzapp_t *a) {
   return s;
 }
 
+/* ------------------------------------------------------------------ section: clock */
+
+/* The first CLK_GAUGES favourites that have a number worth a ring, in favourites order. a->ix must be the CLOCK index list.
+ * Fills a->clk / a->clk_n. */
+static void clock_pick(ru_dzapp_t *a) {
+  dz_units_t un;
+  get_units(a, &un);
+  a->clk_n = 0;
+  for (size_t k = 0; k < a->ix_n && a->clk_n < CLK_GAUGES; k++) {
+    dz_device_t d;
+    bool sc;
+    ru_val_state_t st;
+    if (!ix_get(a, k, &d, NULL, &st, &sc) || sc) continue;
+    ru_gauge_view_t gv;
+    if (!ru_dzv_gauge(&d, &un, &gv)) continue;
+    clk_pick_t *p = &a->clk[a->clk_n++];
+    p->k = k;
+    snprintf(p->idx, sizeof p->idx, "%s", d.idx);
+    snprintf(p->name, sizeof p->name, "%s", d.name);
+    p->cap = d.cap;
+    p->gv = gv;
+    p->st = st;
+  }
+}
+
+/* The three gauges share one value font: the title font when every text is short, else the body font (a long text such as
+ * "22.2 C" must stay inside the ring). */
+static const lv_font_t *clock_gauge_font(const ru_dzapp_t *a) {
+  for (int i = 0; i < a->clk_n; i++) if (strlen(a->clk[i].gv.text) > 4) return ru_font_body();
+  return ru_font_title();
+}
+
+static void clock_gauges_set(const ru_dzapp_t *a) {
+  const lv_font_t *f = clock_gauge_font(a);
+  for (int i = 0; i < a->clk_n; i++) {
+    const clk_pick_t *p = &a->clk[i];
+    ru_ring_gauge_set_value_font(a->clk_gauge[i], f);
+    ru_ring_gauge_set_display(a->clk_gauge[i], p->gv.text, p->gv.frac, p->gv.known ? p->st : RU_VAL_UNKNOWN);
+  }
+}
+
+/* Time and date from the server clock. Unknown (nothing committed yet): "--:--" and no date, never a made-up time. */
+static void clock_time_update(ru_dzapp_t *a) {
+  const ru_theme_t *t = ru_theme();
+  char hm[8] = "--:--", dt[12] = "";
+  int64_t ep;
+  bool known = dz_model_server_now(a->model, a->now, &ep);
+  if (known) { ru_dzv_clock_text(ep, hm); ru_dzv_date_text(ep, dt); }
+  if (strcmp(hm, a->clk_hm) != 0) {
+    char rich[48];
+    if (known) snprintf(rich, sizeof rich, "%.2s:#%06x %.2s#", hm, (unsigned)(lv_color_to_u32(t->accent) & 0xFFFFFFu), hm + 3);
+    else snprintf(rich, sizeof rich, "%s", hm);
+    lv_obj_set_style_text_color(a->clk_time, known ? t->text : t->stale, 0);
+    lv_label_set_text(a->clk_time, rich);
+    snprintf(a->clk_hm, sizeof a->clk_hm, "%s", hm);
+  }
+  if (strcmp(dt, a->clk_dt) != 0) {
+    lv_label_set_text(a->clk_date, dt);
+    snprintf(a->clk_dt, sizeof a->clk_dt, "%s", dt);
+  }
+}
+
+static void cb_clock_gauge(lv_event_t *e) {
+  row_t *r = lv_event_get_user_data(e);
+  lv_obj_t *w = lv_event_get_target(e);
+  if (!tap_valid(r->app, w)) return;
+  ru_dzapp_open(r->app, r->idx, false);
+}
+
+static lv_obj_t *build_clock(ru_dzapp_t *a) {
+  const ru_theme_t *t = ru_theme();
+  dz_conn_state_t cs = conn(a);
+  build_ix(a, RU_SEC_CLOCK);
+  bool any_stale = ix_any_stale(a);
+  lv_obj_t *s = section_screen(a, any_stale);
+  conn_banner(a, s, cs, -38);
+  a->clk_hm[0] = 0;
+  a->clk_dt[0] = 0;
+  a->clk_time = label_u(s, "--:--", ru_font_hero(), t->text, 0, -24);
+  lv_label_set_recolor(a->clk_time, true);
+  a->clk_date = label_u(s, "", ru_font_title(), t->text_dim, 0, -8);
+  clock_time_update(a);
+  clock_pick(a);
+  static const float x3[3] = { -25.0f, 0.0f, 25.0f }, x2[2] = { -13.0f, 13.0f }, x1[1] = { 0.0f };
+  const float *xs = a->clk_n >= 3 ? x3 : a->clk_n == 2 ? x2 : x1;
+  for (int i = 0; i < a->clk_n; i++) {
+    const clk_pick_t *p = &a->clk[i];
+    char cap[12];
+    ru_dzv_upper(cap, sizeof cap, p->gv.caption);
+    lv_obj_t *g = ru_ring_gauge_create(s, ru_u(20), cap);
+    lv_obj_align(g, LV_ALIGN_CENTER, ru_u(xs[i]), ru_u(20));
+    ru_ring_gauge_set_color(g, p->gv.kind == RU_GAUGE_TEMP ? t->info : p->gv.kind == RU_GAUGE_POWER ? t->accent : p->gv.kind == RU_GAUGE_PERCENT ? t->ok : t->text);
+    a->clk_gauge[i] = g;
+    if (a->nrows < MAX_ROWS) {
+      row_t *r = &a->rows[a->nrows];
+      r->app = a; r->scene = false; r->setting = -1;
+      snprintf(r->idx, sizeof r->idx, "%s", p->idx);
+      lv_obj_add_flag(g, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_add_event_cb(g, cb_press, LV_EVENT_PRESSED, a);
+      lv_obj_add_event_cb(g, cb_clock_gauge, LV_EVENT_CLICKED, r);
+      a->row_tiles[a->nrows++] = g;
+    }
+  }
+  clock_gauges_set(a);
+  pager_dots(a, s);
+  return s;
+}
+
 /* ------------------------------------------------------------------ section: settings */
 
 static void cb_setting(lv_obj_t *w, void *ud) {
@@ -1645,6 +1763,8 @@ static bool grid_view(const ru_dzapp_t *a) {
   }
 }
 
+static bool clock_view(const ru_dzapp_t *a) { return a->view == RU_VIEW_HOME && a->section == RU_SEC_CLOCK; }
+
 /* What the user (or the connection) changed, as opposed to the data: a change here rebuilds at once. */
 static uint64_t imm_sig(const ru_dzapp_t *a) {
   uint64_t h = 1469598103934665603ULL;
@@ -1733,6 +1853,25 @@ static uint64_t struct_sig(ru_dzapp_t *a) {
   return h;
 }
 
+/* The STRUCTURE of the Clock page: which favourites are gauges (idx, name, capability, ring kind: the colour is chosen on
+ * build), the sections that exist. The time and the values are updated in place. Leaves a->ix and a->clk current. */
+static uint64_t clock_sig(ru_dzapp_t *a) {
+  uint64_t h = imm_sig(a);
+  build_ix(a, RU_SEC_CLOCK);
+  clock_pick(a);
+  unsigned mask = avail_mask(a);
+  h = fnv(h, &mask, sizeof mask);
+  h = fnv(h, &a->clk_n, sizeof a->clk_n);
+  for (int i = 0; i < a->clk_n; i++) {
+    const clk_pick_t *p = &a->clk[i];
+    h = fnv(h, p->idx, strlen(p->idx));
+    h = fnv(h, p->name, strlen(p->name));
+    h = fnv(h, &p->cap, sizeof p->cap);
+    h = fnv(h, &p->gv.kind, sizeof p->gv.kind);
+  }
+  return h;
+}
+
 static uint64_t screen_sig(ru_dzapp_t *a) {
   STAT_T0();
   uint64_t h;
@@ -1743,6 +1882,7 @@ static uint64_t screen_sig(ru_dzapp_t *a) {
     /* the light page: structure only, values go in place */
     h = get_entry(a, a->cur_idx, a->cur_scene, &ld, &lv_, &lst) ? light_struct_sig(a, &ld) : 1;
   } else if (grid_view(a)) h = struct_sig(a);
+  else if (clock_view(a)) h = clock_sig(a);
   else {
     fullsig_t f = { a, imm_sig(a) };
     dz_model_foreach(a->model, a->now, fullsig_cb, &f);
@@ -1779,6 +1919,7 @@ static void build_and_show(ru_dzapp_t *a) {
         case RU_SEC_UTILITY: s = build_rows_section(a, a->section); break;
         case RU_SEC_ENERGY: s = build_energy(a); break;
         case RU_SEC_SETTINGS: s = build_settings(a); break;
+        case RU_SEC_CLOCK: s = build_clock(a); break;
         default: s = build_home(a); break;
       }
   }
@@ -1807,6 +1948,14 @@ static void update_in_place(ru_dzapp_t *a) {
     if (a->section == RU_SEC_UTILITY) row_tile_update(a->row_tiles[r], &d, &un, st);
     else entry_tile_update(a, a->row_tiles[r], &d, sc, st);
   }
+}
+
+/* The Clock page, structure unchanged: the time, the date and the gauge values go into the existing labels (a->clk is current). */
+static void clock_in_place(ru_dzapp_t *a) {
+  STAT_INC(inplace);
+  if (a->rim) ru_status_rim_set_state(a->rim, rim_for(conn(a), ix_any_stale(a)));
+  clock_time_update(a);
+  clock_gauges_set(a);
 }
 
 /* ------------------------------------------------------------------ public UI API */
@@ -1930,6 +2079,12 @@ void ru_dzapp_ui_tick(ru_dzapp_t *a, uint32_t now_ms) {
   a->ctl = core;
   a->epoch = epoch;
   if (time_only && grid_view(a) && stale_sig(a) == a->stale_sig) return; /* only the clock moved and no state with it */
+  if (time_only && clock_view(a) && a->sig) { /* only time moved: the time label, and a gauge only if its state (fresh / stale) changed */
+    build_ix(a, RU_SEC_CLOCK);
+    bool same = true;
+    for (int i = 0; i < a->clk_n && same; i++) same = a->clk[i].k < a->ix_n && a->ix[a->clk[i].k].st == a->clk[i].st;
+    if (same) { STAT_INC(inplace); clock_time_update(a); return; }
+  }
   STAT_INC(evals);
   uint64_t sig = screen_sig(a);
   if (a->view == RU_VIEW_DETAIL && a->light && a->sig && sig == a->sig) { /* the light page: same structure, new values go in place */
@@ -1941,6 +2096,7 @@ void ru_dzapp_ui_tick(ru_dzapp_t *a, uint32_t now_ms) {
   if (grid_view(a)) a->stale_sig = stale_hash(a);
   if (a->sig && sig == a->sig) { /* same structure: new values go into the existing tiles */
     if (grid_view(a)) update_in_place(a);
+    else if (clock_view(a)) clock_in_place(a);
     return;
   }
   /* a change the user or the connection made rebuilds at once; a background change at most once per REBUILD_MIN_MS */
@@ -2029,6 +2185,7 @@ ru_dzapp_t *ru_dzapp_create(dz_model_t *model, dz_client_t *client, bool allow_c
   a->client = client;
   a->allow_control = allow_control;
   a->brightness = 80;
+  a->section = RU_SEC_FAVS;
   ru_fb_init(&a->fb);
   a->req_q = ru_queue_create(sizeof(req_msg_t), 8);
   a->res_q = ru_queue_create(sizeof(res_msg_t), 16);
@@ -2055,6 +2212,13 @@ const char *ru_dzapp_banner(const ru_dzapp_t *a) { return a->banner; }
 lv_obj_t *ru_dzapp_screen(const ru_dzapp_t *a) { return a->scr; }
 lv_obj_t *ru_dzapp_light(const ru_dzapp_t *a) { return a->light; }
 size_t ru_dzapp_home_rows(const ru_dzapp_t *a) { return a->nrows; }
+bool ru_dzapp_clock_text(const ru_dzapp_t *a, char hm[8], char date[12]) {
+  if (!clock_view(a)) return false;
+  snprintf(hm, 8, "%s", a->clk_hm);
+  snprintf(date, 12, "%s", a->clk_dt);
+  return true;
+}
+int ru_dzapp_clock_gauges(const ru_dzapp_t *a) { return clock_view(a) ? a->clk_n : 0; }
 const char *ru_dzapp_toast(const ru_dzapp_t *a) { return ru_fb_text(&a->fb); }
 const ru_fb_t *ru_dzapp_feedback(const ru_dzapp_t *a) { return &a->fb; }
 void ru_dzapp_set_conn(ru_dzapp_t *a, dz_conn_state_t s) { atomic_store(&a->conn, (int)s); }

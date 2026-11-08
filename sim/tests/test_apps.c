@@ -402,7 +402,7 @@ static void sections(int size) {
   }
   CHECK(ru_dzapp_section(a) == RU_SEC_SETTINGS && laps >= 3); /* no wrap: Settings is the end */
   while (ru_dzapp_step_section(a, -1)) {}
-  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);                  /* and Home the other end */
+  CHECK(ru_dzapp_section(a) == RU_SEC_CLOCK);                 /* and the Clock the other end */
 
   /* a swipe left pages to the next section, through the same recogniser as the device */
   ru_dzapp_show_section(a, RU_SEC_FAVS);
@@ -1099,15 +1099,121 @@ static void nav_back_tests(int size) {
 }
 
 
+/* ---- the Clock page ---- */
+
+static void clock_page(int size) {
+  sim_t s;
+  CHECK(init_sim(&s, size));
+  int c = size / 2;
+  char hm[8], dt[12];
+  appfx_t f;
+
+  /* three gauges from the first numeric favourites, the server time from the last commit */
+  ru_dzapp_t *a = start(&f, FIXTURE_DIR, APPFX_REAL, 600000, true);
+  dz_units_t un;
+  memset(&un, 0, sizeof un);
+  un.have_temp = true;
+  strcpy(un.temp, "C");
+  dz_model_set_units(&f.model, &un);
+  ru_dzapp_show_section(a, RU_SEC_CLOCK);
+  CHECK(ru_dzapp_section(a) == RU_SEC_CLOCK && ru_dzapp_view(a) == RU_VIEW_HOME);
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "13:07") && !strcmp(dt, "SAT 31 OCT"));
+  CHECK(shows(a, "SAT 31 OCT") && shows(a, "13:") && shows(a, "07"));
+  CHECK(ru_dzapp_clock_gauges(a) == 3 && ru_dzapp_home_rows(a) == 3);
+  screen_ok(&s, a, "clock", size);
+  lv_obj_t *scr = ru_dzapp_screen(a);
+
+  /* time moves on its own, in place: no rebuild of the screen */
+  f.T += 61000;
+  ru_dzapp_ui_tick(a, f.T);
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "13:08") && !strcmp(dt, "SAT 31 OCT"));
+  CHECK(ru_dzapp_screen(a) == scr);
+  f.T += 3 * 3600000u; /* the values go stale, the structure stays */
+  ru_dzapp_ui_tick(a, f.T);
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "16:08"));
+
+  /* a tap on a gauge opens that device, back returns to the clock */
+  ru_dzapp_row_info_t ri;
+  CHECK(ru_dzapp_row_info(a, 0, &ri) && ri.idx[0] && !ri.scene);
+  char idx0[12];
+  snprintf(idx0, sizeof idx0, "%s", ri.idx);
+  CHECK(ru_dzapp_tap_row(a, 0) && ru_dzapp_view(a) == RU_VIEW_DETAIL && !strcmp(ru_dzapp_current_idx(a), idx0));
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_CLOCK);
+  /* ... and a finger on the middle gauge does the same */
+  CHECK(ru_dzapp_row_info(a, 1, &ri));
+  sim_render();
+  click_at(c, c + ru_u(20));
+  CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL && !strcmp(ru_dzapp_current_idx(a), ri.idx));
+  finish(&f, a);
+
+  /* no ServerTime yet: "--:--" and no date, never a time that was made up */
+  a = start(&f, FIXTURE_DIR, APPFX_REAL_NOSYNC, 600000, true);
+  ru_dzapp_show_section(a, RU_SEC_CLOCK);
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "--:--") && !dt[0]);
+  CHECK(shows(a, "--:--") && !shows(a, "SAT") && !shows(a, "12:") && !shows(a, "13:"));
+  screen_ok(&s, a, "clock_nosync", size);
+  /* the first commit with a ServerTime fills it in, in place */
+  scr = ru_dzapp_screen(a);
+  const char *tick = "{\"status\":\"OK\",\"ServerTime\":\"2026-10-31 13:07:41\",\"result\":[]}";
+  CHECK(dz_model_apply(&f.model, tick, strlen(tick), DZ_COMMIT_DELTA, f.T, NULL, NULL) == DZ_OK);
+  f.T += 2000;
+  ru_dzapp_ui_tick(a, f.T);
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "13:07") && !strcmp(dt, "SAT 31 OCT") && ru_dzapp_screen(a) == scr);
+  finish(&f, a);
+
+  /* two gauges, centred; values go into the existing gauges; the picked devices are the structure */
+  a = start(&f, FIXTURE_DIR, APPFX_CLOCK_TWO, 600000, true);
+  dz_model_set_units(&f.model, &un);
+  ru_dzapp_show_section(a, RU_SEC_CLOCK);
+  CHECK(ru_dzapp_clock_gauges(a) == 2 && shows(a, "19.5" DEGC) && shows(a, "640W"));
+  screen_ok(&s, a, "clock_two", size);
+  scr = ru_dzapp_screen(a);
+  const char *upd = "{\"status\":\"OK\",\"ServerTime\":\"2026-10-31 13:08:41\",\"result\":["
+    "{\"idx\":\"1\",\"Name\":\"Hallway\",\"Type\":\"Temp\",\"SubType\":\"LaCrosse TX3\",\"Temp\":20.5,\"Data\":\"20.5 C\",\"Favorite\":1,\"LastUpdate\":\"2026-10-31 13:08:00\"},"
+    "{\"idx\":\"2\",\"Name\":\"Mains\",\"Type\":\"Usage\",\"SubType\":\"Electric\",\"Data\":\"2100 Watt\",\"Usage\":\"2100 Watt\",\"Favorite\":1,\"LastUpdate\":\"2026-10-31 13:08:00\"}]}";
+  f.T += 5000;
+  CHECK(dz_model_apply(&f.model, upd, strlen(upd), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
+  f.T += 1600;
+  ru_dzapp_ui_tick(a, f.T);
+  CHECK(ru_dzapp_screen(a) == scr && shows(a, "20.5" DEGC) && shows(a, "2.1kW") && !shows(a, "640W"));
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "13:08"));
+  /* a third numeric favourite changes the structure: the screen is rebuilt with three gauges */
+  const char *third = "{\"status\":\"OK\",\"ServerTime\":\"2026-10-31 13:08:50\",\"result\":["
+    "{\"idx\":\"4\",\"Name\":\"Cellar\",\"Type\":\"Humidity\",\"SubType\":\"LaCrosse TX3\",\"Humidity\":60,\"HumidityStatus\":\"Normal\",\"Data\":\"Humidity 60 %\",\"Favorite\":1}]}";
+  CHECK(dz_model_apply(&f.model, third, strlen(third), DZ_COMMIT_PARTIAL, f.T, NULL, NULL) == DZ_OK);
+  f.T += 1600;
+  ru_dzapp_ui_tick(a, f.T);
+  CHECK(ru_dzapp_clock_gauges(a) == 3 && shows(a, "60%"));
+  finish(&f, a);
+
+  /* no numeric favourite at all: the clock alone */
+  a = start(&f, FIXTURE_DIR, APPFX_MOCK_NOFAV, 600000, true);
+  ru_dzapp_show_section(a, RU_SEC_CLOCK);
+  CHECK(ru_dzapp_clock_gauges(a) == 0 && ru_dzapp_home_rows(a) == 0 && ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "12:00"));
+  screen_ok(&s, a, "clock_none", size);
+
+  /* the connection banner, and a pager that includes the clock */
+  ru_dzapp_set_conn(a, DZ_CS_OFFLINE);
+  f.T += 1000;
+  ru_dzapp_ui_tick(a, f.T);
+  CHECK(!strcmp(ru_dzapp_banner(a), "OFFLINE") && shows(a, "OFFLINE") && ru_dzapp_clock_text(a, hm, dt));
+  screen_ok(&s, a, "clock_offline", size);
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f.T + 1000);
+  CHECK(!shows(a, "OFFLINE"));
+  finish(&f, a);
+  sim_shutdown(&s);
+}
+
 /* ---- pages: order, membership, hidden sections, paging, swipes, return to the page ---- */
 
-static const char *const SEC_NAMES[RU_SEC_COUNT] = { "FAVOURITES", "LIGHTS", "SCENES", "TEMPERATURE", "WEATHER", "UTILITY", "ENERGY", "SETTINGS" };
+static const char *const SEC_NAMES[RU_SEC_COUNT] = { "CLOCK", "FAVOURITES", "LIGHTS", "SCENES", "TEMPERATURE", "WEATHER", "UTILITY", "ENERGY", "SETTINGS" };
 
 /* the sections the pager walks, forward from Home, as a bit mask */
 static unsigned walk_mask(ru_dzapp_t *a) {
-  unsigned m = 1u << ru_dzapp_section(a);
   ru_dzapp_home(a);
-  m = 1u;
+  while (ru_dzapp_step_section(a, -1)) {} /* the first section, whatever the start page is */
+  unsigned m = 1u << ru_dzapp_section(a);
   while (ru_dzapp_step_section(a, 1)) m |= 1u << ru_dzapp_section(a);
   ru_dzapp_home(a);
   return m;
@@ -1118,7 +1224,7 @@ static void page_model(int size) {
   CHECK(init_sim(&s, size));
   appfx_t f;
   const unsigned ALL = (1u << RU_SEC_COUNT) - 1;
-  const unsigned BASE = 1u << RU_SEC_FAVS | 1u << RU_SEC_SETTINGS;
+  const unsigned BASE = 1u << RU_SEC_CLOCK | 1u << RU_SEC_FAVS | 1u << RU_SEC_SETTINGS;
   CHECK(!strcmp(ru_section_name(RU_SEC_FAVS), "FAVOURITES") && !strcmp(ru_section_name(RU_SEC_TEMP), "TEMPERATURE"));
   for (int i = 0; i < RU_SEC_COUNT; i++) CHECK(!strcmp(ru_section_name((ru_section_t)i), SEC_NAMES[i]));
 
@@ -1140,7 +1246,7 @@ static void page_model(int size) {
   CHECK(last == RU_SEC_SETTINGS);
   for (int i = 0; i < RU_SEC_COUNT; i++) {
     ru_dzapp_show_section(a, (ru_section_t)i);
-    CHECK(i == RU_SEC_SETTINGS ? shows(a, "SETTINGS") : shows(a, SEC_NAMES[i]) || i == RU_SEC_ENERGY);
+    CHECK(i == RU_SEC_SETTINGS ? shows(a, "SETTINGS") : shows(a, SEC_NAMES[i]) || i == RU_SEC_ENERGY || i == RU_SEC_CLOCK); /* the clock has no title */
     screen_ok(&s, a, SEC_NAMES[i], size);
   }
   finish(&f, a);
@@ -1311,7 +1417,7 @@ static void swipes(int size) {
   ru_dzapp_home(a);
   sim_render();
 
-  /* finger left = next section, finger right = previous; Home has no previous (no wrap) */
+  /* finger left = next section, finger right = previous; the Clock has no previous (no wrap) */
   appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
   CHECK(ru_dzapp_section(a) == RU_SEC_LIGHTS);
   appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
@@ -1321,7 +1427,9 @@ static void swipes(int size) {
   appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
   CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);
   appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
-  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS); /* no wrap to Settings */
+  CHECK(ru_dzapp_section(a) == RU_SEC_CLOCK);
+  appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
+  CHECK(ru_dzapp_section(a) == RU_SEC_CLOCK); /* no wrap to Settings */
   /* to the last section and no further */
   for (int i = 0; i < 12; i++) appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
   CHECK(ru_dzapp_section(a) == RU_SEC_SETTINGS);
@@ -1396,6 +1504,7 @@ int main(void) {
     honesty(size);
     sections(size);
     backend_path(size);
+    clock_page(size);
     page_model(size);
     paging(size);
     swipes(size);

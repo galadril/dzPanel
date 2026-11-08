@@ -36,7 +36,7 @@ static bool replace_once(char **buf, size_t *n, const char *from, const char *to
 }
 
 /* NOUNITS only: an install that reports no unit anywhere (no getconfig, and the devices carry no vunit either). */
-static bool g_strip_vunit, g_strip_fav;
+static bool g_strip_vunit, g_strip_fav, g_strip_time;
 
 /* Load a fixture file, apply up to two textual Status tweaks (test data only), commit it to the model. */
 static bool apply_file(appfx_t *f, const char *dir, const char *name, dz_commit_t mode, const char *from1, const char *to1,
@@ -50,6 +50,7 @@ static bool apply_file(appfx_t *f, const char *dir, const char *name, dz_commit_
   if (from1) ok = replace_once(&b, &n, from1, to1);
   if (ok && from2) ok = replace_once(&b, &n, from2, to2);
   while (ok && g_strip_vunit && replace_once(&b, &n, "\"vunit\"", "\"xunit\"")) {}
+  while (ok && g_strip_time && replace_once(&b, &n, "\"ServerTime\"", "\"XServerTime\"")) {}
   while (ok && g_strip_fav && replace_once(&b, &n, "\"Favorite\":1", "\"Favorite\":0")) {}
   int changed = 0;
   ok = ok && dz_model_apply(&f->model, b, n, mode, f->T, NULL, &changed) == DZ_OK;
@@ -79,6 +80,22 @@ bool appfx_load(appfx_t *f, const char *dir, appfx_set_t set, uint32_t ttl_ms) {
     case APPFX_REAL:
       return apply_file(f, dir, "real_getdevices.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL) &&
              apply_file(f, dir, "real_getscenes.json", DZ_COMMIT_FULL_SCENES, NULL, NULL, NULL, NULL);
+    case APPFX_REAL_NOSYNC: {
+      g_strip_time = true;
+      bool ok = apply_file(f, dir, "real_getdevices.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL) &&
+                apply_file(f, dir, "real_getscenes.json", DZ_COMMIT_FULL_SCENES, NULL, NULL, NULL, NULL);
+      g_strip_time = false;
+      return ok;
+    }
+    case APPFX_CLOCK_TWO: {
+      static const char doc[] =
+        "{\"status\":\"OK\",\"ServerTime\":\"2026-10-31 13:07:41\",\"result\":["
+        "{\"idx\":\"1\",\"Name\":\"Hallway\",\"Type\":\"Temp\",\"SubType\":\"LaCrosse TX3\",\"Temp\":19.5,\"Data\":\"19.5 C\",\"Favorite\":1,\"LastUpdate\":\"2026-10-31 13:07:00\"},"
+        "{\"idx\":\"2\",\"Name\":\"Mains\",\"Type\":\"Usage\",\"SubType\":\"Electric\",\"Data\":\"640 Watt\",\"Usage\":\"640 Watt\",\"Favorite\":1,\"LastUpdate\":\"2026-10-31 13:07:00\"},"
+        "{\"idx\":\"3\",\"Name\":\"Porch\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchType\":\"On/Off\",\"SwitchTypeVal\":0,\"Status\":\"Off\",\"Data\":\"Off\",\"Favorite\":1}"
+        "]}";
+      return dz_model_apply(&f->model, doc, sizeof doc - 1, DZ_COMMIT_FULL_DEVICES, f->T, NULL, NULL) == DZ_OK;
+    }
     case APPFX_MOCK:
       return apply_file(f, dir, "mock_getdevices.json", DZ_COMMIT_FULL_DEVICES, NULL, NULL, NULL, NULL) &&
              apply_file(f, dir, "mock_getscenes.json", DZ_COMMIT_FULL_SCENES, NULL, NULL, NULL, NULL);
@@ -162,6 +179,7 @@ void appfx_unload(appfx_t *f) {
 /* ------------------------------------------------------------------ screens */
 
 const char *const apps_demo_names[] = {
+  "clock", "clock_nosync", "clock_offline", "clock_stale", "clock_two", "clock_none",
   "home", "home_connecting", "home_offline", "home_token", "home_stale", "home_empty", "home_favs_many", "home_favs_none",
   "lights", "lights_many", "lights_types", "scenes", "scenes_mixed", "temperature", "weather", "utility", "energy", "energy_counter", "settings", "settings_conn",
   "settings_bright", "settings_about",
@@ -212,7 +230,9 @@ static appfx_set_t set_for(const char *n) {
       !strcmp(n, "detail_radiator") || !strcmp(n, "detail_evohome") || !strcmp(n, "detail_mode") || !strcmp(n, "confirm_setpoint"))
     return APPFX_CLIMATE_METRIC;
   if (!strcmp(n, "detail_ww") || !strncmp(n, "detail_color", 12)) return APPFX_LIGHTS;
-  if (!strcmp(n, "home_favs_none")) return APPFX_MOCK_NOFAV;
+  if (!strcmp(n, "home_favs_none") || !strcmp(n, "clock_none")) return APPFX_MOCK_NOFAV;
+  if (!strcmp(n, "clock_nosync")) return APPFX_REAL_NOSYNC;
+  if (!strcmp(n, "clock_two")) return APPFX_CLOCK_TWO;
   if (!strcmp(n, "home_favs_many")) return APPFX_MOCK;
   if (!strcmp(n, "lights_many")) return APPFX_MANY;
   if (!strcmp(n, "lights_types")) return APPFX_SWITCH_TYPES;
@@ -227,21 +247,29 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
   bool known = false;
   for (int i = 0; i < apps_demo_count; i++) if (!strcmp(n, apps_demo_names[i])) known = true;
   if (!known) return NULL;
-  bool stale = !strcmp(n, "home_stale") || !strcmp(n, "climate_stale");
+  bool stale = !strcmp(n, "home_stale") || !strcmp(n, "climate_stale") || !strcmp(n, "clock_stale");
   if (!appfx_load(f, dir, set_for(n), stale ? 300000u : 600000u)) return NULL;
+  if (!strncmp(n, "clock", 5)) { /* a configured install: getconfig has been read (Celsius) */
+    dz_units_t u;
+    memset(&u, 0, sizeof u);
+    u.have_temp = true;
+    strcpy(u.temp, "C");
+    dz_model_set_units(&f->model, &u);
+  }
   ru_dzapp_t *a = ru_dzapp_create(&f->model, &f->client, true);
   if (a) ru_dzapp_set_display_info(a, "sim", !sim_panel_square());
   if (!a) return NULL;
   /* "stale": the model was last confirmed 7 minutes before the UI looks at it */
   f->T += stale ? 420000u : 1000u;
-  ru_dzapp_set_conn(a, !strcmp(n, "home_connecting") ? DZ_CS_CONNECTING : !strcmp(n, "home_offline") ? DZ_CS_OFFLINE
+  ru_dzapp_set_conn(a, !strcmp(n, "home_connecting") ? DZ_CS_CONNECTING : !strcmp(n, "home_offline") || !strcmp(n, "clock_offline") ? DZ_CS_OFFLINE
                        : !strcmp(n, "home_token") ? DZ_CS_TOKEN_REJECTED : DZ_CS_OK);
   ru_dzapp_ui_tick(a, f->T);
   int c = ru_theme_geom()->diameter / 2;
   char idx[12];
   bool sc = false;
   ru_section_t sec = RU_SEC_FAVS;
-  if (!strncmp(n, "lights", 6)) sec = RU_SEC_LIGHTS;
+  if (!strncmp(n, "clock", 5)) sec = RU_SEC_CLOCK;
+  else if (!strncmp(n, "lights", 6)) sec = RU_SEC_LIGHTS;
   else if (!strncmp(n, "scenes", 6) || !strncmp(n, "fb_", 3)) sec = RU_SEC_SCENES;
   else if (!strcmp(n, "temperature")) sec = RU_SEC_TEMP;
   else if (!strcmp(n, "weather")) sec = RU_SEC_WEATHER;

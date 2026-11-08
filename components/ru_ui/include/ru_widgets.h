@@ -24,6 +24,8 @@ void ru_value_tile_on_tap(lv_obj_t *tile, ru_tap_cb_t cb, void *ud);
 lv_obj_t *ru_ring_gauge_create(lv_obj_t *parent, int d, const char *caption);
 void ru_ring_gauge_set(lv_obj_t *g, const ru_val_t *v, float min, float max, uint32_t now_ms);
 void ru_ring_gauge_set_color(lv_obj_t *g, lv_color_t c);
+/* The font of the centre text (default: the title font), for a long value in a small gauge. Does nothing when unchanged. */
+void ru_ring_gauge_set_value_font(lv_obj_t *g, const lv_font_t *f);
 /* Shows caller-formatted text (any unit) with the ring filled to frac (0..1). frac < 0: text only, ring unlit (the value
  * cannot be scaled). st UNKNOWN: "--". The widget itself never decides a unit. */
 void ru_ring_gauge_set_display(lv_obj_t *g, const char *text, float frac, ru_val_state_t st);

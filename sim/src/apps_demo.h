@@ -32,6 +32,8 @@ typedef enum {
   APPFX_MOCK_NOFAV,       /* as MOCK, no favourites at all */
   APPFX_SWITCH_TYPES,     /* generated: six Lights-tab tiles of other classes (blinds, lock, contact, smoke, push) */
   APPFX_LIGHTS,           /* tests/fixtures/mock_lights.json: colour and white lamps (idx 1 RGBWW orange, 2 RGB, 3 RGBW, 4 WW, 5 WW off, 6 RGBWW off, 7 RGBWW white, 8 protected, 9 plain) */
+  APPFX_REAL_NOSYNC,      /* as REAL, but without a ServerTime anywhere: the clock has nothing to show */
+  APPFX_CLOCK_TWO,        /* generated: two numeric favourites (a temperature and a power meter) and a ServerTime */
   APPFX_MANY              /* generated: 100 lights (the first 8 favourites), 30 temperature, 20 utility; idx 1..150 in that order */
 } appfx_set_t;
 

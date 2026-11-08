@@ -510,8 +510,63 @@ static void test_wx_tiles(void) {
   appfx_unload(&f);
 }
 
+static lv_obj_t *find_label(lv_obj_t *o, const char *needle) {
+  if (lv_obj_check_type(o, &lv_label_class) && strstr(lv_label_get_text(o), needle)) return o;
+  uint32_t n = lv_obj_get_child_count(o);
+  for (uint32_t i = 0; i < n; i++) {
+    lv_obj_t *r = find_label(lv_obj_get_child(o, (int32_t)i), needle);
+    if (r) return r;
+  }
+  return NULL;
+}
+
+/* the Clock page: a minute change redraws only the time label; ticks in between touch and copy nothing */
+static void test_clock_minute(void) {
+  appfx_t f;
+  CHECK(appfx_load(&f, FIXTURE_DIR, APPFX_REAL, 600000));
+  ru_dzapp_t *a = ru_dzapp_create(&f.model, &f.client, true);
+  CHECK(a != NULL);
+  ru_dzapp_set_display_info(a, "sim", false);
+  f.T += 1000;
+  ru_dzapp_set_conn(a, DZ_CS_OK);
+  ru_dzapp_ui_tick(a, f.T);
+  ru_dzapp_show_section(a, RU_SEC_CLOCK);
+  settle();
+  lv_obj_t *scr = lv_screen_active();
+  char hm[8], dt[12];
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "13:07"));
+  lv_obj_t *tl = find_label(scr, "13:");
+  CHECK(tl != NULL);
+  lv_area_t ar;
+  lv_obj_get_coords(tl, &ar);
+  long label_px = (long)(ar.x2 - ar.x1 + 1) * (ar.y2 - ar.y1 + 1);
+  /* ticks inside the same minute: nothing drawn, nothing copied */
+  tick(&f, a, 1600); /* the first look after a build evaluates everything once */
+  uint32_t c0 = dz_model_copies(&f.model);
+  sim_inv_reset();
+  for (int i = 0; i < 6; i++) tick(&f, a, 1600);
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "13:07"));
+  CHECK(sim_inv_pixels() == 0);
+  CHECK(dz_model_copies(&f.model) == c0);
+  CHECK(lv_screen_active() == scr);
+  /* the minute turns */
+  tick(&f, a, 70000);
+  sim_inv_reset();
+  tick(&f, a, 1600);
+  tick(&f, a, 1600);
+  CHECK(ru_dzapp_clock_text(a, hm, dt) && !strcmp(hm, "13:09"));
+  /* the label is redrawn, once per change and not outside its own box (a few px for glyph overhang) */
+  printf("  clock minute change: %ld px, label %ld px, %ld areas\n", sim_inv_pixels(), label_px, sim_inv_count());
+  CHECK(lv_screen_active() == scr && find_label(scr, "09") == tl);
+  CHECK(sim_inv_pixels() > 0 && sim_inv_pixels() <= label_px + label_px / 4);
+  CHECK(dz_model_copies(&f.model) == c0);
+  ru_dzapp_destroy(a);
+  appfx_unload(&f);
+}
+
 int main(void) {
   CHECK(sim_init(&S, 480));
+  test_clock_minute();
   test_setters_idempotent();
   test_offscreen_change();
   test_visible_change();

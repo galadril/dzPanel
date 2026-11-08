@@ -31,6 +31,7 @@ static void visible(void *p, bool v) {
   static ru_err_t create_##fn(const ru_app_env_t *e, void **o) { return create_sec(e, o, sec); } \
   static const ru_app_t k_##fn = { id, name, icon, RU_MEM_LIGHT, create_##fn, destroy, NULL, visible, NULL };
 
+SEC_APP(clock, RU_SEC_CLOCK, RU_APP_ID_CLOCK, "Clock", 0)
 SEC_APP(home, RU_SEC_FAVS, RU_APP_ID_HOME, "Favourites", 1)
 SEC_APP(lights, RU_SEC_LIGHTS, RU_APP_ID_LIGHTS, "Lights", 2)
 SEC_APP(scenes, RU_SEC_SCENES, RU_APP_ID_SCENES, "Scenes", 3)
@@ -40,7 +41,7 @@ SEC_APP(utility, RU_SEC_UTILITY, RU_APP_ID_UTILITY, "Utility", 6)
 SEC_APP(energy, RU_SEC_ENERGY, RU_APP_ID_ENERGY, "Energy", 7)
 SEC_APP(settings, RU_SEC_SETTINGS, RU_APP_ID_SETTINGS, "Settings", 8)
 
-static const ru_app_t *const k_table[RU_SEC_COUNT] = { &k_home, &k_lights, &k_scenes, &k_temp, &k_weather, &k_utility, &k_energy, &k_settings };
+static const ru_app_t *const k_table[RU_SEC_COUNT] = { &k_clock, &k_home, &k_lights, &k_scenes, &k_temp, &k_weather, &k_utility, &k_energy, &k_settings };
 
 const ru_app_t *ru_apps_descriptor(ru_section_t s) { return s < RU_SEC_COUNT ? k_table[s] : NULL; }
 
