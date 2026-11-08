@@ -228,7 +228,7 @@ The shell lives on LVGL's top layer, above any app, so apps never see it.
 ```
                  [ Quick settings ]        swipe down from top edge
                          ▲
- [Favourites] ◂▸ [Lights] ◂▸ [Scenes] ◂▸ [Temperature] ◂▸ [Weather] ◂▸ [Utility] ◂▸ [Energy] ◂▸ [Settings]
+ [Clock] ◂▸ [Favourites] ◂▸ [Lights] ◂▸ [Scenes] ◂▸ [Temperature] ◂▸ [Weather] ◂▸ [Utility] ◂▸ [Energy] ◂▸ [Settings]
                                                    swipe left / right (no wrap); empty pages hidden
                   swipe up / down: the pages of a list ("2/4"), 3x2 tiles a page (Lights, Scenes, Temperature, Weather, Favourites) or 4 rows (Utility)
                          ▼
@@ -247,7 +247,8 @@ Edge gestures start in an **annulus** (outer ~8–10% of the radius), not a squa
 
 | Part | Notes |
 |---|---|
-| **Home** | A watch-face with one hero (time) and up to three complications on the ring. Four faces planned: Classic, Orbit, Data, Contour (always-on). |
+| **Home** | The Clock page, the first page and the default start page (Settings > START PAGE can make Favourites the start page instead): the time (24 h, from the Domoticz server's clock, `--:--` until the first sync) in the hero font, the date, and up to three round gauges from the first numeric favourites. Four faces planned beyond this one: Classic, Orbit, Data, Contour (always-on). |
+| **Rotation** | Settings > ROTATION turns the picture by 0 / 90 / 180 / 270 degrees (the device is turned clockwise and the picture stays upright). The UI always draws and reads touch in logical coordinates; the board port turns the picture (panel scan direction on the 1.75", the display adapter with tear avoidance and three PSRAM frame buffers on the Guition) and `ru_hal` maps touch back (`ru_rot_to_logical`, LVGL's convention). A change is stored in the `ui` namespace and applied at the next start ("RESTART TO APPLY" hold). A board lists what it can do in `ru_board_t.rotations`. Unverified on hardware. |
 | **Launcher** | Circular carousel for up to 7 apps, honeycomb beyond that. |
 | **Status rim** | A hairline ring carrying Wi-Fi, battery and notification state as arc segments. State is never colour alone. |
 | **Notifications** | A card stack. Banner for normal priority, full-screen takeover only for critical. |

@@ -55,6 +55,7 @@ The simulator renders the real UI code with LVGL 9.4.0 on the host, so screens c
 build/sim/dzpanel_sim --list                                  # screens
 build/sim/dzpanel_sim --screen home                           # interactive window (left/right = screen, p = save PNG)
 build/sim/dzpanel_sim --size 480 --shape square --all /tmp/s  # headless PNGs of every screen
+build/sim/dzpanel_sim --rotate 90 --app clock --shot /tmp/c.png  # an app screen as a device turned by 90 degrees shows it
 cmake --build build --target screenshots                      # refresh sim/screenshots
 ```
 

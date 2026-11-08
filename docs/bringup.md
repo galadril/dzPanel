@@ -60,6 +60,19 @@ Check by eye and record:
 3. Colours, flicker, tearing, brightness.
 4. Does it reboot by itself? (Boot-loop detection is a simple counter: three failed boots lead to a "safe mode".)
 
+### Step 3b: rotation (new, unverified on hardware)
+
+Settings > ROTATION stores a rotation and asks for a restart; the panel driver applies it at the next start. Nothing here has been seen on a real panel. With the device not yet set up the Settings screen is not reachable, so provision it first (step 4), or store the value by hand: the `ui` namespace key `rot` holds `0`, `90`, `180` or `270`.
+
+For each of 90, 180 and 270 (the device is turned clockwise by that angle, the picture should end up upright):
+
+1. Settings > ROTATION, tap the chip, hold "RESTART TO APPLY". After the restart is the picture upright when you turn the device by that angle? If it is upside down or sideways the wrong way, write down which angle gave which picture.
+2. Is the picture complete and centred? On the AMOLED 1.75 look for a shift of a few pixels or a cut-off edge (the CO5300 window offsets may not follow the scan direction). On the Guition look for a shear or wrong colours.
+3. **Touch.** Tap each of the four edges and the centre: the response must land under the finger. Swipe in from the left edge of the picture (the edge that is the left of the upright picture): that must be BACK. A mirrored or swapped touch is the first thing to report.
+4. Tearing or flicker while a value changes (Guition: the three frame buffers and the tear-avoid mode are new), and the free PSRAM in the boot log (three 480 x 480 x 2 byte buffers are taken at start).
+5. Back to 0: the same checks, and `Settings` still lists 0 as the one in force.
+6. Factory reset clears the rotation and the start page (erases the `ui` namespace).
+
 ## Step 4: connecting it to Wi-Fi and Domoticz (option B chosen)
 
 The device needs Wi-Fi credentials and a Domoticz address plus token. The paths in the design, and where each stands:

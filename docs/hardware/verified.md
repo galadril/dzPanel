@@ -33,6 +33,13 @@ Consequences to decide (proposed ADR-008):
 - The "ring" idiom still works on the square, but there is room for square-friendly layouts. One layout per shape, not pixel constants in apps.
 - Corner radius is still unmeasured. The mockups use 9% of the width as a stand-in.
 
+## Added later, unverified on hardware
+
+These come from reading the BSP and adapter sources, not from a board.
+
+- **Screen rotation, AMOLED 1.75.** `bsp_display_rotation_set` writes MADCTL (`0x60` for 90, `0xC0` for 180, `0xA0` for 270). Working through MV / MX / MY, that is the same mapping as `ru_rot_to_panel` (`ru_geom.h`, LVGL's convention). Not seen on the panel: whether the CO5300 column/row window offsets follow the scan direction (a shift of a few pixels would show), and whether the touch controller reports the same coordinates after the change (we assume it does: touch stays in panel coordinates and `ru_hal` maps them).
+- **Screen rotation, Guition 4848S040.** `esp_lv_adapter` rotates in software and refuses a rotation under `TEAR_AVOID_MODE_NONE`, so a rotated start uses `TRIPLE_PARTIAL` and 3 frame buffers in PSRAM (`esp_lv_adapter_get_required_frame_buffer_count`). The adapter's `ROTATE_90` maps logical (x, y) to panel (D-1-y, x), which is our 270 (the names are swapped in `ru_board_guition_4848s040.c`). Unverified: that the RGB panel with its bounce buffer runs with three PSRAM buffers, tearing, and the PSRAM cost (1.3 MB). If it does not, set `.rotations = 0x1` for that board and the Settings screen offers only the rotation in force.
+
 ## Still open
 
 - 2.16" flash size (8 vs 16 MB) and whether it has a TCA9554: needs the schematic PDF (`schematic/*.pdf`) or a board.
