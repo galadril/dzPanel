@@ -93,12 +93,16 @@ target_link_libraries(dz_live_check int_domoticz ru_data ru_core)
 # ===== END Client agent =====
 
 # ===== BEGIN fw-net agent (ru_cfg, ru_net, dz_service) =====
-add_library(ru_cfg components/ru_cfg/ru_cfg.c components/ru_cfg/ru_kv_mem.c)
+add_library(ru_cfg components/ru_cfg/ru_cfg.c components/ru_cfg/ru_kv_mem.c components/ru_cfg/ru_prefs.c)
 target_include_directories(ru_cfg PUBLIC components/ru_cfg/include)
 add_executable(test_cfg tests/test_cfg.c)
 target_include_directories(test_cfg PRIVATE tests)
 target_link_libraries(test_cfg ru_cfg)
 add_test(NAME cfg COMMAND test_cfg)
+add_executable(test_prefs tests/test_prefs.c)
+target_include_directories(test_prefs PRIVATE tests)
+target_link_libraries(test_prefs ru_cfg)
+add_test(NAME prefs COMMAND test_prefs)
 add_library(ru_net components/ru_net/ru_cfgline.c components/ru_net/ru_improv.c components/ru_net/ru_console.c
   components/ru_net/ru_wifi_sm.c)
 target_include_directories(ru_net PUBLIC components/ru_net/include)

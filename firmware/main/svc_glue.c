@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "heap_log.h"
 #include "ru_cfg.h"
+#include "ru_prefs.h"
 #include "ru_console_esp.h"
 #include "ru_wifi_esp.h"
 
@@ -228,6 +229,7 @@ void svc_start(void) {
 void svc_factory_reset(void) {
   if (g_svc) dz_service_clear_config(g_svc);
   (void)ru_cfg_clear(g_kv);
+  (void)ru_prefs_clear(g_kv); /* rotation and start page */
   ru_wifi_esp_forget();
   (void)ru_wifi_creds_clear(g_kv);
   atomic_store(&g_cfg_set, false);
