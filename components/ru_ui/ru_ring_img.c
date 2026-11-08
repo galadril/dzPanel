@@ -14,9 +14,13 @@ static void *big_alloc_raw(size_t n) { return malloc(n); }
 #define big_free free
 #endif
 
+#ifdef RU_TEST_HOOKS /* host / simulator targets only, never the ESP-IDF build */
 static bool s_fail_alloc;
 void ru_ring_img_test_fail_alloc(bool fail) { s_fail_alloc = fail; }
 static void *big_alloc(size_t n) { return s_fail_alloc ? NULL : big_alloc_raw(n); }
+#else
+#define big_alloc big_alloc_raw
+#endif
 
 #define PI_F 3.14159265f
 

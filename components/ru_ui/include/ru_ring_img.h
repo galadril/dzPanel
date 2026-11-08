@@ -22,4 +22,6 @@ uint32_t ru_ring_img_generations(void);
 /* frees the buffer (tests, low memory); the next get regenerates */
 void ru_ring_img_free(void);
 /* tests: make the buffer allocation fail (true) or work again (false) */
+#ifdef RU_TEST_HOOKS
 void ru_ring_img_test_fail_alloc(bool fail);
+#endif

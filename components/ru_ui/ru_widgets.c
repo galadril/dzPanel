@@ -19,12 +19,17 @@ static void free_on_delete(lv_event_t *e) {
   lv_free(d);
 }
 
+#ifdef RU_TEST_HOOKS /* host / simulator targets only, never the ESP-IDF build */
 static bool s_fail_attach;
 void ru_widgets_test_fail_attach(bool fail) { s_fail_attach = fail; }
+#define ATTACH_FAILS s_fail_attach
+#else
+#define ATTACH_FAILS false
+#endif
 bool ru_widget_ok(const lv_obj_t *o) { return o && lv_obj_get_user_data((lv_obj_t *)o) != NULL; }
 
 static void *wd_attach(lv_obj_t *o, size_t sz) {
-  void *d = s_fail_attach ? NULL : lv_malloc_zeroed(sz);
+  void *d = ATTACH_FAILS ? NULL : lv_malloc_zeroed(sz);
   if (!d) return NULL; /* heap exhausted: the caller returns the bare object, every setter tolerates NULL */
   lv_obj_set_user_data(o, d);
   lv_obj_add_event_cb(o, free_on_delete, LV_EVENT_DELETE, NULL);

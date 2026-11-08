@@ -168,7 +168,9 @@ lv_obj_t *ru_light_create(lv_obj_t *parent, int d, const ru_light_cfg_t *cfg);
 /* A creator returns the bare container when it cannot allocate its state (every setter then does nothing): false for such an object */
 bool ru_widget_ok(const lv_obj_t *o);
 /* tests: make the widget state allocation fail (true) or work again (false) */
+#ifdef RU_TEST_HOOKS
 void ru_widgets_test_fail_attach(bool fail);
+#endif
 void ru_light_set(lv_obj_t *w, const ru_light_state_t *s);
 void ru_light_set_feedback(lv_obj_t *w, ru_light_fb_t st, const char *text);
 /* not controllable / protected / stale: rings cannot be touched, knobs lose their border, chips are hidden, the caption shows text in warn */

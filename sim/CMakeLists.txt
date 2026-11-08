@@ -23,6 +23,7 @@ add_library(ru_ui_lvgl
   ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_ring_img.c
   ${CMAKE_SOURCE_DIR}/components/ru_ui/ru_splash.c)
 target_include_directories(ru_ui_lvgl PUBLIC ${CMAKE_SOURCE_DIR}/components/ru_ui/include)
+target_compile_definitions(ru_ui_lvgl PUBLIC RU_TEST_HOOKS=1) # failure-injection hooks exist only in host/sim builds
 target_link_libraries(ru_ui_lvgl PUBLIC lvgl_core ru_ui ru_data)
 
 # Simulator core (display, circular mask, PNG writer) and demo screens
