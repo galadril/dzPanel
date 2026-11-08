@@ -32,3 +32,11 @@ Done: all deliverables below compile and are tested.
 - Dial screens (dimmer, selector, thermostat, blinds): the device name doubles as BACK (no room for a BACK label).
 Commands: see final report. Screenshots: sim/screenshots/app_*_{466,480}.png (+ regenerated demo set).
 Open: see report "Requests".
+
+## Clock page and start page (wave 3)
+- New first section RU_SEC_CLOCK (app id org.dzpanel.clock, always available like Settings): time (hero font, minutes accent), date, up to three ring gauges from the first numeric favourites (ru_dzv_gauge in ru_dzview.c). RU_SEC_HOME was renamed RU_SEC_FAVS.
+- Time comes from dz_model_server_now (server_epoch_s + monotonic delta, PARTIAL commits do not move it). Unknown: "--:--", no date. Day arithmetic is local to ru_dzview.c (ru_dzv_clock_text, ru_dzv_date_text), no libc time, no zone or DST rules: the digits are the server's.
+- In place: the time label is a fixed-width box (a size change would redraw twice); a minute change redraws only that label (test_dzflicker test_clock_minute). Ticks inside a minute copy nothing from the model (time-only path in ru_dzapp_ui_tick); gauges update through ru_ring_gauge_set_display; the structure signature (clock_sig) covers which devices are gauges, their capability and ring kind.
+- Start page: ru_dzapp_set_home_section(CLOCK | FAVS), default CLOCK. Home, back (false on the start page), the first screen and the runtime's home app follow it. Tests that are about the Favourites grid set FAVS explicitly in their start helpers.
+- Sim screens: clock, clock_nosync, clock_offline, clock_stale, clock_two, clock_none (clock demos set Celsius units).
+- Note: the first commit of the Clock code (8de7213, "..") was a sweep of work in progress made outside this series; commit 13f4a0a adds its tests.

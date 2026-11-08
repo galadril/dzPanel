@@ -478,6 +478,8 @@ y=440            ▁▁▁               home pill
 ```
 Face B "Orbit": seconds bead around rim, time smaller, the day progress as faint arc. Face C "Data": time on top 1/3, big temperature and solar in lower 2/3 with mini chart. Face D "Contour": outline digits, AOD default.
 
+**As built (Clock page, v0.1).** The Clock is the first page and the default start page; Favourites is the second and can be chosen as the start page in Settings (START PAGE). Time in the hero font at -24u (hours text colour, minutes accent), the date "SAT 31 OCT" at -8u in the title size and dimmed, up to three round gauges (20u) at x = -25u, 0, +25u and y = +20u: the first three numeric favourites in favourites order (a number worth a ring: temperature 0..40 C or 32..104 F, power W/kW on a 1-2-5 range, humidity and other percent 0..100, anything else numeric as text with an unlit ring). Captions are the device name in capitals cut to 8 characters. One or two gauges are centred; none leaves the clock alone. 24 hour only. The time is the Domoticz server's clock (ServerTime of the last commit plus the monotonic time since), so it shows "--:--" and no date until the first sync, never a made-up time. A tap on a gauge opens that device; back returns to the Clock. The connection banner and the rim dot work as on every page; the page dots include the Clock. Seconds, Orbit, Data and Contour faces are not built.
+
 ### 10.4 Domoticz overview
 ```
         ‹  Domoticz  ● live          title band; ● = ok glyph + "live"; stale -> ◷
