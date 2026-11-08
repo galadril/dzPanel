@@ -314,7 +314,7 @@ static void honesty(int size) {
   CHECK(ru_dzapp_tap_row(a, 0));
   ru_dzapp_ui_tick(a, f.T);
   CHECK(ru_dzapp_view(a) == RU_VIEW_HOME && SPY.n == 0 && shows(a, "DATA IS STALE"));
-  ru_dzapp_show_section(a, RU_SEC_HOME); /* old data is told by the rim dot only: no subtitle, the connection banner stays empty */
+  ru_dzapp_show_section(a, RU_SEC_FAVS); /* old data is told by the rim dot only: no subtitle, the connection banner stays empty */
   CHECK(!shows(a, "STALE DATA") && !strcmp(ru_dzapp_banner(a), ""));
   finish(&f, a);
 
@@ -369,7 +369,7 @@ static void sections(int size) {
   CHECK(shows(a, "EXPORT") && shows(a, "1.2") && shows(a, "kW") && shows(a, "TODAY 3.2") && shows(a, "kWh"));
   CHECK(!ru_dzapp_section_available(a, RU_SEC_WEATHER)); /* no weather device: the app is hidden */
   ru_dzapp_show_section(a, RU_SEC_WEATHER);
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);
   CHECK(!ru_dzapp_section_available(a, RU_SEC_SCENES));
   ru_dzapp_destroy(a);
   appfx_unload(&f);
@@ -377,7 +377,7 @@ static void sections(int size) {
   /* nothing at all: energy hidden too, home says so honestly */
   a = start(&f, FIXTURE_DIR, APPFX_EMPTY, 600000, true);
   CHECK(!ru_dzapp_section_available(a, RU_SEC_ENERGY));
-  ru_dzapp_show_section(a, RU_SEC_HOME);
+  ru_dzapp_show_section(a, RU_SEC_FAVS);
   CHECK(shows(a, "NO FAVOURITES"));
   ru_dzapp_destroy(a);
   appfx_unload(&f);
@@ -394,7 +394,7 @@ static void sections(int size) {
   CHECK(!shows(a, TOKEN));
   ru_dzapp_open_sub(a, RU_SUB_ABOUT);
   CHECK(shows(a, "LVGL 9.4") && !shows(a, TOKEN));
-  ru_dzapp_show_section(a, RU_SEC_HOME);
+  ru_dzapp_show_section(a, RU_SEC_FAVS);
   int laps = 0;
   while (ru_dzapp_step_section(a, 1)) {
     CHECK(ru_dzapp_section_available(a, ru_dzapp_section(a)));
@@ -402,10 +402,10 @@ static void sections(int size) {
   }
   CHECK(ru_dzapp_section(a) == RU_SEC_SETTINGS && laps >= 3); /* no wrap: Settings is the end */
   while (ru_dzapp_step_section(a, -1)) {}
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME);                  /* and Home the other end */
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);                  /* and Home the other end */
 
   /* a swipe left pages to the next section, through the same recogniser as the device */
-  ru_dzapp_show_section(a, RU_SEC_HOME);
+  ru_dzapp_show_section(a, RU_SEC_FAVS);
   int c = size / 2;
   appfx_gestures_attach(a, size, g_square);
   appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
@@ -424,7 +424,7 @@ static void sections(int size) {
   CHECK(ru_dzapp_feedback(a)->st == RU_FB_PENDING);
 
   /* connection states are honest on home */
-  ru_dzapp_show_section(a, RU_SEC_HOME);
+  ru_dzapp_show_section(a, RU_SEC_FAVS);
   ru_dzapp_set_conn(a, DZ_CS_OFFLINE);   ru_dzapp_ui_tick(a, f.T); CHECK(!strcmp(ru_dzapp_banner(a), "OFFLINE") && shows(a, "OFFLINE"));
   ru_dzapp_set_conn(a, DZ_CS_TOKEN_REJECTED); ru_dzapp_ui_tick(a, f.T); CHECK(!strcmp(ru_dzapp_banner(a), "TOKEN REJECTED"));
   ru_dzapp_set_conn(a, DZ_CS_CONNECTING); ru_dzapp_ui_tick(a, f.T); CHECK(!strcmp(ru_dzapp_banner(a), "CONNECTING..."));
@@ -436,7 +436,7 @@ static void sections(int size) {
   ru_runtime_t rt;
   ru_runtime_init(&rt, &heap, NULL, NULL);
   CHECK(ru_apps_register(&rt, a) == RU_OK);
-  CHECK(ru_runtime_go_home(&rt) == RU_OK && ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(ru_runtime_go_home(&rt) == RU_OK && ru_dzapp_section(a) == RU_SEC_FAVS);
   CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_SCENES) == RU_OK && ru_dzapp_section(a) == RU_SEC_SCENES);
   CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_ENERGY) == RU_OK && ru_dzapp_section(a) == RU_SEC_ENERGY);
   CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_SETTINGS) == RU_OK && ru_dzapp_section(a) == RU_SEC_SETTINGS);
@@ -444,7 +444,7 @@ static void sections(int size) {
   CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_TEMP) == RU_OK && ru_dzapp_section(a) == RU_SEC_TEMP);
   CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_UTILITY) == RU_OK && ru_dzapp_section(a) == RU_SEC_UTILITY);
   CHECK(ru_runtime_switch_to(&rt, RU_APP_ID_LIGHTS) == RU_OK && ru_dzapp_section(a) == RU_SEC_LIGHTS);
-  CHECK(ru_apps_available(RU_SEC_HOME) && ru_apps_available(RU_SEC_WEATHER));
+  CHECK(ru_apps_available(RU_SEC_FAVS) && ru_apps_available(RU_SEC_WEATHER));
   ru_runtime_shutdown(&rt);
   ru_apps_unbind();
   CHECK(heap.live == 0); /* every app state was freed */
@@ -479,7 +479,7 @@ static void climate_units(int size) {
     {APPFX_CLIMATE_IMPERIAL, {DEGF, "mph", NULL}, {DEGC, "m/s", NULL}},
     {APPFX_CLIMATE_NOUNITS, {"21.5", "3.4", NULL}, {DEGF, DEGC, "mph"}},
   };
-  static const ru_section_t pages[] = {RU_SEC_HOME, RU_SEC_TEMP, RU_SEC_WEATHER, RU_SEC_UTILITY};
+  static const ru_section_t pages[] = {RU_SEC_FAVS, RU_SEC_TEMP, RU_SEC_WEATHER, RU_SEC_UTILITY};
   for (size_t r = 0; r < 3; r++) {
     appfx_t f;
     ru_dzapp_t *a = start(&f, FIXTURE_DIR, runs[r].set, 600000, true);
@@ -566,7 +566,7 @@ static void climate_pages(int size) {
   dz_units_t u = {.have_temp = true, .temp = "C", .have_wind = true, .wind = "m/s"};
   dz_model_set_units(&f.model, &u);
   ru_dzapp_ui_tick(a, f.T + 1);
-  ru_dzapp_show_section(a, RU_SEC_HOME);
+  ru_dzapp_show_section(a, RU_SEC_FAVS);
   CHECK(!shows(a, "12.5") && !shows(a, "19.5"));
   ru_dzapp_show_section(a, RU_SEC_WEATHER);
   CHECK(!shows(a, "19.5" DEGC) && row_of(a, "2") >= 0);
@@ -1005,9 +1005,9 @@ static void nav_back_tests(int size) {
 
   /* logic */
   ru_dzapp_home(a);
-  CHECK(!ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_HOME); /* Home: nowhere to go */
+  CHECK(!ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_FAVS); /* Home: nowhere to go */
   ru_dzapp_show_section(a, RU_SEC_TEMP);
-  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_FAVS);
   ru_dzapp_show_section(a, RU_SEC_UTILITY);
   ru_dzapp_open(a, "118", false);
   CHECK(ru_dzapp_view(a) == RU_VIEW_DETAIL);
@@ -1026,7 +1026,7 @@ static void nav_back_tests(int size) {
   CHECK(ru_dzapp_view(a) == RU_VIEW_CONFIRM);
   CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_SUB);                     /* confirm -> sub */
   CHECK(ru_dzapp_back(a) && ru_dzapp_view(a) == RU_VIEW_HOME && ru_dzapp_section(a) == RU_SEC_SETTINGS); /* sub -> Settings */
-  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(ru_dzapp_back(a) && ru_dzapp_section(a) == RU_SEC_FAVS);
   CHECK(!ru_dzapp_back(a));
 
   /* the other device's feedback line does not show on an open detail */
@@ -1118,8 +1118,8 @@ static void page_model(int size) {
   CHECK(init_sim(&s, size));
   appfx_t f;
   const unsigned ALL = (1u << RU_SEC_COUNT) - 1;
-  const unsigned BASE = 1u << RU_SEC_HOME | 1u << RU_SEC_SETTINGS;
-  CHECK(!strcmp(ru_section_name(RU_SEC_HOME), "FAVOURITES") && !strcmp(ru_section_name(RU_SEC_TEMP), "TEMPERATURE"));
+  const unsigned BASE = 1u << RU_SEC_FAVS | 1u << RU_SEC_SETTINGS;
+  CHECK(!strcmp(ru_section_name(RU_SEC_FAVS), "FAVOURITES") && !strcmp(ru_section_name(RU_SEC_TEMP), "TEMPERATURE"));
   for (int i = 0; i < RU_SEC_COUNT; i++) CHECK(!strcmp(ru_section_name((ru_section_t)i), SEC_NAMES[i]));
 
   /* order and hide-when-empty: nothing at all, one light, the full mock */
@@ -1186,7 +1186,7 @@ static void page_model(int size) {
   a = start(&f, FIXTURE_DIR, APPFX_EMPTY, 600000, true);
   CHECK(dz_model_apply(&f.model, cls, strlen(cls), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
   static const struct { ru_section_t sec; const char *in[2], *out[3]; } cm[] = {
-    { RU_SEC_HOME, {"1", "2"}, {"3", "4", NULL} },
+    { RU_SEC_FAVS, {"1", "2"}, {"3", "4", NULL} },
     { RU_SEC_LIGHTS, {"3", NULL}, {"1", "2", "4"} },
     { RU_SEC_TEMP, {"1", NULL}, {"2", "3", "4"} },
     { RU_SEC_WEATHER, {"1", NULL}, {"2", "3", "4"} },
@@ -1319,9 +1319,9 @@ static void swipes(int size) {
   appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
   CHECK(ru_dzapp_section(a) == RU_SEC_LIGHTS);
   appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);
   appfx_drag(c - 90, c - 100, c + 90, c - 100, 8);
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME); /* no wrap to Settings */
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS); /* no wrap to Settings */
   /* to the last section and no further */
   for (int i = 0; i < 12; i++) appfx_drag(c + 90, c - 100, c - 90, c - 100, 8);
   CHECK(ru_dzapp_section(a) == RU_SEC_SETTINGS);
@@ -1329,11 +1329,11 @@ static void swipes(int size) {
   /* vertical swipes: pages of a list (Home has 3 pages) */
   ru_dzapp_home(a);
   appfx_drag(c, c + 60, c, c - 60, 8);
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME && ru_dzapp_page(a) == 1);
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS && ru_dzapp_page(a) == 1);
   appfx_drag(c, c - 60, c, c + 60, 8);
   CHECK(ru_dzapp_page(a) == 0);
   appfx_drag(c, c - 60, c, c + 60, 8);
-  CHECK(ru_dzapp_page(a) == 0 && ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(ru_dzapp_page(a) == 0 && ru_dzapp_section(a) == RU_SEC_FAVS);
 
   /* a drag that starts on a tile and ends inside it is a swipe, not a tap */
   int tx, ty;
@@ -1346,7 +1346,7 @@ static void swipes(int size) {
 
   /* a swipe that starts in the rim is not a content swipe: refused by ru_dzapp_swipe itself, even if forwarded */
   int rx = c + (int)(0.95f * (float)R);
-  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, rx, c) && ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(!ru_dzapp_swipe(a, RU_DIR_LEFT, rx, c) && ru_dzapp_section(a) == RU_SEC_FAVS);
   CHECK(!ru_dzapp_swipe(a, RU_DIR_UP, c, c - (int)(0.92f * (float)R)));
   CHECK(ru_dzapp_swipe(a, RU_DIR_LEFT, c + (int)(0.80f * (float)R), c));
   ru_dzapp_home(a);
@@ -1356,10 +1356,10 @@ static void swipes(int size) {
   sim_render();
   int lx = c - (int)(0.96f * (float)R);
   appfx_drag(lx, c, lx + 130, c, 8);
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME && ru_dzapp_view(a) == RU_VIEW_HOME);
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS && ru_dzapp_view(a) == RU_VIEW_HOME);
   /* and on Home it does nothing at all */
   appfx_drag(lx, c, lx + 130, c, 8);
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);
 
   /* a swipe on a detail steps to the next or previous device of the list (it never leaves the detail or the section); the hold screen
    * does not swipe */

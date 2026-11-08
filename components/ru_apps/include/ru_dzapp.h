@@ -21,12 +21,12 @@
 
 typedef struct ru_dzapp ru_dzapp_t;
 
-/* The pages (sections), in the order of the Domoticz web UI: Favourites (RU_SEC_HOME), Lights, Scenes/Groups,
+/* The pages (sections), in the order of the Domoticz web UI: Favourites (RU_SEC_FAVS), Lights, Scenes/Groups,
  * Temperature, Weather, Utility, Energy, Settings. Each one is a ru_app_t in ru_apps_table.c. Every page except Home and
  * Settings is hidden (not available) when the model has nothing for it. Membership of Lights / Temperature / Weather /
  * Utility comes from dz_device_t.tabs (dz_tabs_of), order from dz_model_order. */
 typedef enum {
-  RU_SEC_HOME, RU_SEC_LIGHTS, RU_SEC_SCENES, RU_SEC_TEMP, RU_SEC_WEATHER, RU_SEC_UTILITY, RU_SEC_ENERGY, RU_SEC_SETTINGS,
+  RU_SEC_FAVS, RU_SEC_LIGHTS, RU_SEC_SCENES, RU_SEC_TEMP, RU_SEC_WEATHER, RU_SEC_UTILITY, RU_SEC_ENERGY, RU_SEC_SETTINGS,
   RU_SEC_COUNT
 } ru_section_t;
 const char *ru_section_name(ru_section_t s);

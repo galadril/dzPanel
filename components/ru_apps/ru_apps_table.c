@@ -31,7 +31,7 @@ static void visible(void *p, bool v) {
   static ru_err_t create_##fn(const ru_app_env_t *e, void **o) { return create_sec(e, o, sec); } \
   static const ru_app_t k_##fn = { id, name, icon, RU_MEM_LIGHT, create_##fn, destroy, NULL, visible, NULL };
 
-SEC_APP(home, RU_SEC_HOME, RU_APP_ID_HOME, "Favourites", 1)
+SEC_APP(home, RU_SEC_FAVS, RU_APP_ID_HOME, "Favourites", 1)
 SEC_APP(lights, RU_SEC_LIGHTS, RU_APP_ID_LIGHTS, "Lights", 2)
 SEC_APP(scenes, RU_SEC_SCENES, RU_APP_ID_SCENES, "Scenes", 3)
 SEC_APP(temp, RU_SEC_TEMP, RU_APP_ID_TEMP, "Temperature", 4)
@@ -49,7 +49,7 @@ bool ru_apps_available(ru_section_t s) { return g_shared && ru_dzapp_section_ava
 ru_err_t ru_apps_register(ru_runtime_t *rt, ru_dzapp_t *shared) {
   g_shared = shared;
   for (int i = 0; i < RU_SEC_COUNT; i++) {
-    ru_err_t e = ru_runtime_register(rt, k_table[i], i == RU_SEC_HOME);
+    ru_err_t e = ru_runtime_register(rt, k_table[i], i == RU_SEC_FAVS);
     if (e != RU_OK) return e;
   }
   return RU_OK;

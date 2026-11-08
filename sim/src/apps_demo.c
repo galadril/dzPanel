@@ -240,7 +240,7 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
   int c = ru_theme_geom()->diameter / 2;
   char idx[12];
   bool sc = false;
-  ru_section_t sec = RU_SEC_HOME;
+  ru_section_t sec = RU_SEC_FAVS;
   if (!strncmp(n, "lights", 6)) sec = RU_SEC_LIGHTS;
   else if (!strncmp(n, "scenes", 6) || !strncmp(n, "fb_", 3)) sec = RU_SEC_SCENES;
   else if (!strcmp(n, "temperature")) sec = RU_SEC_TEMP;

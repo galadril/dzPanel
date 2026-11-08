@@ -164,7 +164,7 @@ static unsigned home_group(const dz_device_t *d, bool scene) {
 
 static bool sec_match(ru_section_t s, const dz_device_t *d, bool scene) {
   switch (s) {
-    case RU_SEC_HOME: return d->favorite;
+    case RU_SEC_FAVS: return d->favorite;
     case RU_SEC_LIGHTS: return !scene && (d->tabs & DZ_TAB_LIGHT);
     case RU_SEC_SCENES: return scene;
     case RU_SEC_TEMP: return !scene && (d->tabs & DZ_TAB_TEMP);
@@ -190,7 +190,7 @@ static bool collect_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_
   ru_dzapp_t *a = c->a;
   if (i >= 0xFFFF || !sec_match(c->s, d, scene)) return true;
   if (a->ix_n >= a->ix_cap) { c->full = true; return false; }
-  a->ix[a->ix_n].key = c->s == RU_SEC_HOME ? (home_group(d, scene) << 16) | order : order;
+  a->ix[a->ix_n].key = c->s == RU_SEC_FAVS ? (home_group(d, scene) << 16) | order : order;
   a->ix[a->ix_n].i = (uint16_t)i;
   a->ix[a->ix_n].st = (uint8_t)st;
   a->ix_n++;
@@ -238,13 +238,13 @@ static bool avail_cb(size_t i, const dz_device_t *d, bool scene, ru_val_state_t 
 }
 
 static unsigned avail_mask(ru_dzapp_t *a) {
-  unsigned m = (1u << RU_SEC_HOME) | (1u << RU_SEC_SETTINGS);
+  unsigned m = (1u << RU_SEC_FAVS) | (1u << RU_SEC_SETTINGS);
   dz_model_foreach(a->model, a->now, avail_cb, &m);
   return m;
 }
 
 bool ru_dzapp_section_available(ru_dzapp_t *a, ru_section_t s) {
-  if (s == RU_SEC_HOME || s == RU_SEC_SETTINGS) return true;
+  if (s == RU_SEC_FAVS || s == RU_SEC_SETTINGS) return true;
   return s < RU_SEC_COUNT && (avail_mask(a) >> s & 1u);
 }
 
@@ -435,7 +435,7 @@ bool ru_dzapp_back(ru_dzapp_t *a) {
     case RU_VIEW_SUB: ru_dzapp_show_section(a, RU_SEC_SETTINGS); return true;
     default: break;
   }
-  if (a->section == RU_SEC_HOME) return false;
+  if (a->section == RU_SEC_FAVS) return false;
   ru_dzapp_home(a);
   return true;
 }
@@ -850,7 +850,7 @@ static void grid_page(ru_dzapp_t *a, lv_obj_t *s) {
 static lv_obj_t *build_home(ru_dzapp_t *a) {
   const ru_theme_t *t = ru_theme();
   dz_conn_state_t cs = conn(a);
-  build_ix(a, RU_SEC_HOME);
+  build_ix(a, RU_SEC_FAVS);
   bool any_stale = ix_any_stale(a);
   lv_obj_t *s = section_screen(a, any_stale);
   title(s, "FAVOURITES");
@@ -1640,7 +1640,7 @@ void ru_dzapp_stats(ru_dzapp_t *a, ru_dzapp_stats_t *out, bool reset) {
 static bool grid_view(const ru_dzapp_t *a) {
   if (a->view != RU_VIEW_HOME) return false;
   switch (a->section) {
-    case RU_SEC_HOME: case RU_SEC_LIGHTS: case RU_SEC_SCENES: case RU_SEC_TEMP: case RU_SEC_WEATHER: case RU_SEC_UTILITY: return true;
+    case RU_SEC_FAVS: case RU_SEC_LIGHTS: case RU_SEC_SCENES: case RU_SEC_TEMP: case RU_SEC_WEATHER: case RU_SEC_UTILITY: return true;
     default: return false;
   }
 }
@@ -1812,7 +1812,7 @@ static void update_in_place(ru_dzapp_t *a) {
 /* ------------------------------------------------------------------ public UI API */
 
 void ru_dzapp_show_section(ru_dzapp_t *a, ru_section_t s) {
-  if (s >= RU_SEC_COUNT || !ru_dzapp_section_available(a, s)) s = RU_SEC_HOME;
+  if (s >= RU_SEC_COUNT || !ru_dzapp_section_available(a, s)) s = RU_SEC_FAVS;
   /* the page is kept when the same section is shown again (back from a detail or a hold), reset when it changes */
   if (s != a->section) a->page = 0;
   a->section = s;
@@ -1823,7 +1823,7 @@ void ru_dzapp_show_section(ru_dzapp_t *a, ru_section_t s) {
 
 void ru_dzapp_home(ru_dzapp_t *a) {
   a->page = 0;
-  ru_dzapp_show_section(a, RU_SEC_HOME);
+  ru_dzapp_show_section(a, RU_SEC_FAVS);
 }
 ru_section_t ru_dzapp_section(const ru_dzapp_t *a) { return a->section; }
 int ru_dzapp_page(const ru_dzapp_t *a) { return a->page; }

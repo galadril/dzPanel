@@ -128,7 +128,7 @@ static void test_visible_change(void) {
   const long px = (long)S.size * S.size;
   /* Favourites: lamp 2 goes on */
   lv_obj_t *scr = lv_screen_active();
-  CHECK(ru_dzapp_section(a) == RU_SEC_HOME);
+  CHECK(ru_dzapp_section(a) == RU_SEC_FAVS);
   push(&f, lamp(2, "Lamp 002", "On", 1));
   sim_inv_reset();
   tick(&f, a, 300);
@@ -209,7 +209,7 @@ static void test_structure_change(void) {
 static void test_copy_budget(void) {
   appfx_t f;
   ru_dzapp_t *a = start_many(&f);
-  static const ru_section_t secs[] = { RU_SEC_HOME, RU_SEC_LIGHTS, RU_SEC_TEMP, RU_SEC_UTILITY };
+  static const ru_section_t secs[] = { RU_SEC_FAVS, RU_SEC_LIGHTS, RU_SEC_TEMP, RU_SEC_UTILITY };
   for (size_t i = 0; i < sizeof secs / sizeof secs[0]; i++) {
     uint32_t c0 = dz_model_copies(&f.model);
     ru_dzapp_show_section(a, secs[i]);
