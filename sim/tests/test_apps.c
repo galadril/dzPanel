@@ -1170,7 +1170,8 @@ static void clock_page(int size) {
   scr = ru_dzapp_screen(a);
   const char *upd = "{\"status\":\"OK\",\"ServerTime\":\"2026-10-31 13:08:41\",\"result\":["
     "{\"idx\":\"1\",\"Name\":\"Hallway\",\"Type\":\"Temp\",\"SubType\":\"LaCrosse TX3\",\"Temp\":20.5,\"Data\":\"20.5 C\",\"Favorite\":1,\"LastUpdate\":\"2026-10-31 13:08:00\"},"
-    "{\"idx\":\"2\",\"Name\":\"Mains\",\"Type\":\"Usage\",\"SubType\":\"Electric\",\"Data\":\"2100 Watt\",\"Usage\":\"2100 Watt\",\"Favorite\":1,\"LastUpdate\":\"2026-10-31 13:08:00\"}]}";
+    "{\"idx\":\"2\",\"Name\":\"Mains\",\"Type\":\"Usage\",\"SubType\":\"Electric\",\"Data\":\"2100 Watt\",\"Usage\":\"2100 Watt\",\"Favorite\":1,\"LastUpdate\":\"2026-10-31 13:08:00\"},"
+    "{\"idx\":\"3\",\"Name\":\"Porch\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"SwitchType\":\"On/Off\",\"SwitchTypeVal\":0,\"Status\":\"On\",\"Data\":\"On\",\"Favorite\":1}]}";
   f.T += 5000;
   CHECK(dz_model_apply(&f.model, upd, strlen(upd), DZ_COMMIT_FULL_DEVICES, f.T, NULL, NULL) == DZ_OK);
   f.T += 1600;

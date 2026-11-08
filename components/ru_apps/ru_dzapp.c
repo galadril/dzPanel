@@ -1111,6 +1111,15 @@ static lv_obj_t *build_clock(ru_dzapp_t *a) {
   a->clk_dt[0] = 0;
   a->clk_time = label_u(s, "--:--", ru_font_hero(), t->text, 0, -24);
   lv_label_set_recolor(a->clk_time, true);
+  /* a fixed box, the text centred in it: a new minute changes pixels, never the size (a size change redraws twice) */
+  {
+    const lv_font_t *hf = ru_font_hero();
+    lv_point_t p0, p8;
+    lv_text_get_size(&p0, "00:00", hf, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&p8, "88:88", hf, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_set_width(a->clk_time, (p0.x > p8.x ? p0.x : p8.x) + ru_u(2));
+    lv_obj_set_style_text_align(a->clk_time, LV_TEXT_ALIGN_CENTER, 0);
+  }
   a->clk_date = label_u(s, "", ru_font_title(), t->text_dim, 0, -8);
   clock_time_update(a);
   clock_pick(a);
