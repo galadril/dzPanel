@@ -7,7 +7,9 @@
 typedef struct {
   lv_obj_t *scr;
   lv_obj_t *track, *ring, *bead;
-  lv_obj_t *name, *tagline, *version;
+  lv_obj_t *name, *name2, *tagline, *version; /* name2: the blue "Panel" of the two-tone logo, else NULL */
+  lv_point_precise_t house[6];
+  lv_obj_t *mark;                            /* house mark container inside the ring */
   lv_obj_t *code, *hint;
   int ring_r;       /* radius of the ring centreline, px */
   int cy;           /* ring centre offset from the screen centre, px (negative = up) */
@@ -46,6 +48,8 @@ static void draw(splash_t *s, int permille) {
   place_bead(s, (sweep * 360) / 1000);
   lv_obj_set_style_opa(s->bead, permille == 0 ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
   lv_obj_set_style_text_opa(s->name, ramp(permille, 750, 1000), 0);
+  if (s->name2) lv_obj_set_style_text_opa(s->name2, ramp(permille, 750, 1000), 0);
+  lv_obj_set_style_opa(s->mark, ramp(permille, 450, 800), 0);
   lv_obj_set_style_text_opa(s->tagline, ramp(permille, 800, 1000), 0);
   if (s->version) lv_obj_set_style_text_opa(s->version, ramp(permille, 750, 1000), 0);
   s->complete = permille >= 1000;
@@ -82,6 +86,46 @@ static void on_delete(lv_event_t *e) {
   splash_t *s = lv_event_get_user_data(e);
   lv_anim_delete(s, NULL);
   lv_free(s);
+}
+
+/* The house mark inside the ring, original artwork: a round-capped outline (roof, walls, floor) and a 2x2 window grid,
+ * all in brand blue. Units are u = D/100 around the ring centre; it stays well inside the ring's inner edge. */
+static void build_mark(splash_t *s, int d) {
+  const ru_theme_t *t = ru_theme();
+  int D = ru_theme_geom()->diameter;
+  s->mark = ru_cont_new(s->scr, D / 2 - d / 2, D / 2 + s->cy - d / 2, d, d);
+  int cx = d / 2, cy = d / 2 + ru_u(0.5f);
+  const float u[6][2] = { { -7.2f, 7.5f }, { -7.2f, -1.2f }, { 0, -7.8f }, { 7.2f, -1.2f }, { 7.2f, 7.5f }, { -7.2f, 7.5f } };
+  for (int i = 0; i < 6; i++) {
+    s->house[i].x = cx + ru_u(u[i][0]);
+    s->house[i].y = cy + ru_u(u[i][1]);
+  }
+  lv_obj_t *ln = lv_line_create(s->mark);
+  lv_line_set_points(ln, s->house, 6);
+  lv_obj_set_pos(ln, 0, 0);
+  lv_obj_set_style_line_width(ln, ru_u(1.6f), 0);
+  lv_obj_set_style_line_color(ln, t->brand, 0);
+  lv_obj_set_style_line_rounded(ln, true, 0);
+  int q = ru_u(2.6f), g = ru_u(1.0f);
+  for (int r = 0; r < 2; r++)
+    for (int c = 0; c < 2; c++) {
+      lv_obj_t *sq = lv_obj_create(s->mark);
+      lv_obj_remove_style_all(sq);
+      lv_obj_set_size(sq, q, q);
+      lv_obj_set_pos(sq, cx - q - g / 2 + c * (q + g), cy - q + r * (q + g) - ru_u(1.0f));
+      lv_obj_set_style_radius(sq, ru_u(0.6f), 0);
+      lv_obj_set_style_bg_color(sq, t->brand, 0);
+      lv_obj_set_style_bg_opa(sq, LV_OPA_COVER, 0);
+      lv_obj_remove_flag(sq, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    }
+}
+
+static lv_obj_t *two_tone_label(lv_obj_t *row, const char *text, const lv_font_t *f, lv_color_t c) {
+  lv_obj_t *l = lv_label_create(row);
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_font(l, f, 0);
+  lv_obj_set_style_text_color(l, c, 0);
+  return l;
 }
 
 static lv_obj_t *build(lv_obj_t *root, const ru_splash_cfg_t *cfg) {
@@ -128,7 +172,7 @@ static lv_obj_t *build(lv_obj_t *root, const ru_splash_cfg_t *cfg) {
   lv_arc_set_value(s->ring, 0);
   lv_obj_set_style_arc_opa(s->ring, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_arc_width(s->ring, w, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(s->ring, t->accent, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(s->ring, t->brand, LV_PART_INDICATOR);
   lv_obj_set_style_arc_rounded(s->ring, true, LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(s->ring, LV_OPA_TRANSP, LV_PART_KNOB);
   lv_obj_remove_flag(s->ring, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -138,12 +182,29 @@ static lv_obj_t *build(lv_obj_t *root, const ru_splash_cfg_t *cfg) {
   lv_obj_remove_style_all(s->bead);
   lv_obj_set_size(s->bead, bd, bd);
   lv_obj_set_style_radius(s->bead, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(s->bead, t->text, 0);
+  lv_obj_set_style_bg_color(s->bead, t->brand, 0);
   lv_obj_set_style_bg_opa(s->bead, LV_OPA_COVER, 0);
   lv_obj_remove_flag(s->bead, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-  s->name = ru_label_new(s->scr, name, ru_font_title(), t->text, mid, mid + ru_u(14));
-  s->tagline = ru_label_new(s->scr, tag, ru_font_small(), t->text_dim, mid, mid + ru_u(22));
+  build_mark(s, d);
+
+  /* "dzPanel" (or no name) is the two-tone logo in the 48 px face: "dz" in text colour, "Panel" in brand blue.
+   * Any other name is a plain label. */
+  const lv_font_t *lf = &lv_font_montserrat_48;
+  int wy = mid + ru_u(16);
+  if (strcmp(name, "dzPanel") == 0) {
+    lv_obj_t *row = lv_obj_create(s->scr);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    s->name = two_tone_label(row, "dz", lf, t->text);
+    s->name2 = two_tone_label(row, "Panel", lf, t->brand);
+    lv_obj_align(row, LV_ALIGN_CENTER, 0, wy - mid);
+  } else {
+    s->name = ru_label_new(s->scr, name, ru_font_title(), t->text, mid, wy);
+  }
+  s->tagline = ru_label_new(s->scr, tag, ru_font_small(), t->text_dim, mid, mid + ru_u(25));
   if (ver && ver[0]) s->version = ru_label_new(s->scr, ver, ru_font_small(), ru_dim(t->text_dim, 150), mid, mid + ru_u(40));
   draw(s, 0);
   return s->scr;
@@ -210,11 +271,13 @@ void ru_splash_set_error(lv_obj_t *splash, const char *code, const char *hint) {
   lv_obj_set_style_opa(s->bead, LV_OPA_COVER, 0);
   place_bead(s, 270);
   lv_obj_set_style_text_opa(s->name, LV_OPA_COVER, 0);
+  if (s->name2) lv_obj_set_style_text_opa(s->name2, LV_OPA_COVER, 0);
+  lv_obj_set_style_opa(s->mark, LV_OPA_COVER, 0);
   lv_obj_set_style_text_opa(s->tagline, LV_OPA_COVER, 0);
   if (s->version) lv_obj_add_flag(s->version, LV_OBJ_FLAG_HIDDEN); /* the error text takes its place */
-  if (!s->code && code && code[0]) s->code = ru_label_new(s->scr, code, ru_font_body(), t->error, ru_theme_geom()->diameter / 2, ru_theme_geom()->diameter / 2 + ru_u(30));
+  if (!s->code && code && code[0]) s->code = ru_label_new(s->scr, code, ru_font_body(), t->error, ru_theme_geom()->diameter / 2, ru_theme_geom()->diameter / 2 + ru_u(33));
   else if (s->code) lv_label_set_text(s->code, code ? code : "");
-  if (!s->hint && hint && hint[0]) s->hint = ru_label_new(s->scr, hint, ru_font_small(), t->text_dim, ru_theme_geom()->diameter / 2, ru_theme_geom()->diameter / 2 + ru_u(37));
+  if (!s->hint && hint && hint[0]) s->hint = ru_label_new(s->scr, hint, ru_font_small(), t->text_dim, ru_theme_geom()->diameter / 2, ru_theme_geom()->diameter / 2 + ru_u(40));
   else if (s->hint) lv_label_set_text(s->hint, hint ? hint : "");
 }
 

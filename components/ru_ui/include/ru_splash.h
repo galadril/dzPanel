@@ -1,10 +1,11 @@
-/* Boot splash (docs/research/ux.md 10.1): a thin ring draws clockwise while a bead leads it, then the wordmark
- * fades in. Original artwork only: a ring, plain text, no third-party logo. Depends on LVGL and ru_theme. */
+/* Boot splash (docs/research/ux.md 10.1): a thin brand-blue ring draws clockwise while a bead leads it, the
+ * house mark inside it and the two-tone wordmark ("dz" + blue "Panel") fade in. The mark is original artwork drawn
+ * with LVGL shapes; the tagline is plain text, no third-party logo. Depends on LVGL and ru_theme. */
 #pragma once
 #include "lvgl.h"
 
 typedef struct {
-  const char *name;     /* wordmark, default "dzPanel" */
+  const char *name;     /* wordmark, default "dzPanel" (two-tone logo; any other name is a plain label) */
   const char *tagline;  /* default "for Domoticz" (plain text, no logo) */
   const char *version;  /* small text at the bottom, NULL for none */
 } ru_splash_cfg_t;

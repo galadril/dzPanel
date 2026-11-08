@@ -32,7 +32,8 @@ static void run(int size) {
   CHECK(lv_obj_get_parent(o) == lv_layer_top());
   CHECK(lv_obj_has_flag(o, LV_OBJ_FLAG_CLICKABLE));
   sim_render();
-  CHECK(px(&s, c, c) == 0x000000);        /* covered: black, not the white underlay */
+  CHECK(px(&s, c, c) != 0xFFFFFF);        /* covered: not the white underlay (the house mark is unlit at 0) */
+  CHECK(px(&s, c, c) == 0x000000);        /* at progress 0 nothing is drawn yet */
   CHECK(px(&s, c / 2, c / 2) == 0x000000);
   CHECK(!ru_splash_is_complete(o));
   long lit0 = sim_count_lit(&s);
@@ -46,9 +47,19 @@ static void run(int size) {
   CHECK(ru_splash_is_complete(o));
   CHECK(sim_count_lit(&s) > lit0);
   CHECK(sim_count_outside_lit(&s) == 0);
+  {
+    /* the house mark (blue) is lit once complete: some pixel inside the ring is blue-dominant */
+    int blue = 0, cy = c - ru_u(9);
+    for (int y = cy - ru_u(8); y <= cy + ru_u(8); y++)
+      for (int x = c - ru_u(8); x <= c + ru_u(8); x++) {
+        uint32_t v = px(&s, x, y);
+        if ((v & 0xFF) > 0x80 && (v & 0xFF) > ((v >> 16) & 0xFF) + 0x60) blue++;
+      }
+    CHECK(blue > 50);
+  }
   sim_advance(5000); /* the bead keeps orbiting: still alive, still covering */
   sim_render();
-  CHECK(px(&s, c, c) == 0x000000 && sim_count_outside_lit(&s) == 0);
+  CHECK(px(&s, c, c) != 0xFFFFFF && sim_count_outside_lit(&s) == 0);
 
   /* dismiss with a fade: the underlay returns and nothing is left on the top layer */
   ru_splash_dismiss(o, 200);
