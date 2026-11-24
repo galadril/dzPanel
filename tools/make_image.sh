@@ -6,12 +6,12 @@
 #   tools/make_image.sh --clean <board>       only the cleanup (add --probe for the probe images)
 #   tools/make_image.sh --dry-run <board>     list what would be deleted, build and write nothing
 #   tools/make_image.sh --skip-build <board>  merge the existing build without building
-# Boards: amoled-175, guition-4848s040. The probe exists for guition-4848s040 only (firmware/bringup/guition-probe).
+# Boards: amoled-175, amoled-216, guition-4848s040. The probe exists for guition-4848s040 only (firmware/bringup/guition-probe).
 # The cleanup removes only dist/dzpanel-<board>-*-merged.bin, dist/dzpanel-<board>-merged.bin,
 # dist/roundos-<board>-*-merged.bin, dist/roundos-<board>-merged.bin (probe: dist/<board>-probe-*-merged.bin) and a
 # leftover .sha256 next to them. Names containing "factory" and every other file (recovery / reference images) are never touched.
 set -euo pipefail
-usage="usage: tools/make_image.sh [--probe] [--clean | --dry-run | --skip-build] <amoled-175|guition-4848s040>"
+usage="usage: tools/make_image.sh [--probe] [--clean | --dry-run | --skip-build] <amoled-175|amoled-216|guition-4848s040>"
 probe=0; mode=build; board=""
 for arg in "$@"; do
   case "$arg" in
@@ -25,7 +25,7 @@ for arg in "$@"; do
   esac
 done
 [ -n "$board" ] || { echo "$usage" >&2; exit 2; }
-case "$board" in amoled-175|guition-4848s040) ;; *) echo "make_image.sh: unknown board '$board'. $usage" >&2; exit 2;; esac
+case "$board" in amoled-175|amoled-216|guition-4848s040) ;; *) echo "make_image.sh: unknown board '$board'. $usage" >&2; exit 2;; esac
 if [ "$probe" = 1 ] && [ "$board" != guition-4848s040 ]; then echo "make_image.sh: no probe for '$board'" >&2; exit 2; fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dist="$root/dist"

@@ -3,10 +3,10 @@
 # IDF env: uses idf.py from PATH if the env is already exported, else sources /opt/esp/idf. The component manager needs a writable
 # IDF_TOOLS_PATH; on the read-only /opt/esp install a shadow dir of symlinks is used (docs/development-setup.md).
 set -euo pipefail
-usage="usage: tools/build_fw.sh <amoled-175|guition-4848s040> [idf.py args]"
+usage="usage: tools/build_fw.sh <amoled-175|amoled-216|guition-4848s040> [idf.py args]"
 [ $# -ge 1 ] || { echo "$usage" >&2; exit 2; }
 board="$1"; shift
-case "$board" in amoled-175|guition-4848s040) ;; *) echo "build_fw.sh: unknown board '$board'. $usage" >&2; exit 2;; esac
+case "$board" in amoled-175|amoled-216|guition-4848s040) ;; *) echo "build_fw.sh: unknown board '$board'. $usage" >&2; exit 2;; esac
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -d "$root/components/boards/$board" ] || { echo "build_fw.sh: unknown board '$board' (no components/boards/$board)" >&2; exit 2; }
 if ! command -v idf.py >/dev/null 2>&1; then

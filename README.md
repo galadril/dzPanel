@@ -25,7 +25,7 @@ dzPanel is unofficial display firmware for Domoticz on ESP32-S3 boards, round an
 |---|---|---|
 | Waveshare ESP32-S3-Touch-AMOLED 1.75" | round AMOLED, 466 x 466 | `amoled-175` |
 | Guition ESP32-S3-4848S040 | 4" square touchscreen, 480 x 480 | `guition-4848s040` |
-| Waveshare ESP32-S3-Touch-AMOLED 2.16" | AMOLED | named in the design; no build target yet |
+| Waveshare ESP32-S3-Touch-AMOLED 2.16" | rounded-square AMOLED, 480 x 480 | `amoled-216` |
 
 ## Quick start: build and test without hardware
 
@@ -41,6 +41,7 @@ Needs ESP-IDF 5.5 (see the setup doc):
 
 ```bash
 tools/build_fw.sh amoled-175           # Waveshare 1.75" AMOLED, build dir firmware/build-amoled-175
+tools/build_fw.sh amoled-216           # Waveshare 2.16" AMOLED (rounded square), build dir firmware/build-amoled-216
 tools/build_fw.sh guition-4848s040     # Guition 4" 480x480 square, build dir firmware/build-guition-4848s040
 tools/make_image.sh guition-4848s040   # build + merge into dist/dzpanel-guition-4848s040-latest.bin (+ .sha256, SHA256SUMS), old loose builds removed
 ```

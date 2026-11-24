@@ -65,9 +65,8 @@ jobs:
     if: needs.plan.outputs.skip != 'true'
     strategy:
       matrix:
-        # amoled-216 joins when its board profile exists. guition-4848s040 is built for every run but published to the
-        # nightly channel ONLY (see the publish steps) until the owner confirms the hardware bring-up on the real board.
-        board: [amoled-175, guition-4848s040]
+        # every board is built for every run and published to both channels
+        board: [amoled-175, amoled-216, guition-4848s040]
     runs-on: ubuntu-latest
     container: espressif/idf:v5.5.6      # unverified tag
     env:
@@ -152,8 +151,6 @@ jobs:
           set -euo pipefail
           for d in artifacts/firmware-*; do
             board="${d#artifacts/firmware-}"
-            # guition-4848s040 stays nightly-only until the user confirms its hardware bring-up
-            if [ "$board" = guition-4848s040 ] && [ "$CHANNEL" = stable ]; then echo "skip $board (nightly only)"; continue; fi
             bash tools/publish_site.sh --site site-out --board "$board" --channel "$CHANNEL" --version "$VERSION" \
               --merged "$d/dzpanel-${board}-${VERSION}-merged.bin" --vendor vendor --keep 5 --date "$(date -u +%F)"
           done
@@ -173,7 +170,6 @@ jobs:
         run: |
           set -euo pipefail
           pre=""; case "$VERSION" in *-*) pre="--prerelease" ;; esac
-          # no guition-4848s040 asset in a stable release (nightly-only until its bring-up is confirmed)
-          assets=$(ls -d artifacts/firmware-*/* | grep -v '/firmware-guition-4848s040/')
+          assets=$(ls -d artifacts/firmware-*/*)
           gh release create "$GITHUB_REF_NAME" $assets $pre \
             --title "dzPanel $VERSION" --generate-notes --verify-tag

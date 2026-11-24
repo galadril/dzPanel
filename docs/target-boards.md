@@ -9,13 +9,8 @@ Each board needs its own profile: `components/boards/<board>/ru_board/` and `fir
 | Board | Display | Touch | Status |
 |---|---|---|---|
 | Waveshare ESP32-S3-Touch-AMOLED-1.75 (`amoled-175`) | CO5300 AMOLED | CST9217 | Working |
-| Guition ESP32-S3-4848S040 (`guition-4848s040`) | ST7701 RGB 480x480 | GT911 | Working (nightly only until bring-up is confirmed) |
-
-## Planned
-
-| Board | Display | Touch | Status |
-|---|---|---|---|
-| Waveshare ESP32-S3-Touch-AMOLED-2.16 (`amoled-216`) | AMOLED (unverified) | unverified | No board profile yet |
+| Waveshare ESP32-S3-Touch-AMOLED-2.16 (`amoled-216`) | CO5300 AMOLED 480x480, rounded square | CST9220 via the CST9217 driver (the BSP does this) | Working |
+| Guition ESP32-S3-4848S040 (`guition-4848s040`) | ST7701 RGB 480x480 | GT911 | Working |
 
 ## Candidates: close to the Guition port (ST7701 RGB 480x480)
 

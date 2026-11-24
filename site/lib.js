@@ -3,7 +3,7 @@
 
 export const BOARDS = [
   { id: 'amoled-175', name: 'Waveshare ESP32-S3-Touch-AMOLED-1.75', size: 466, shape: 'round', panel: 'AMOLED', chip: 'ESP32-S3', esptoolChip: 'esp32s3' },
-  { id: 'amoled-216', name: 'Waveshare ESP32-S3-Touch-AMOLED-2.16', size: 480, shape: 'round', panel: 'AMOLED', chip: 'ESP32-S3', esptoolChip: 'esp32s3' },
+  { id: 'amoled-216', name: 'Waveshare ESP32-S3-Touch-AMOLED-2.16', size: 480, shape: 'rounded square', panel: 'AMOLED', chip: 'ESP32-S3', esptoolChip: 'esp32s3' },
   { id: 'guition-4848s040', name: 'Guition ESP32-S3-4848S040', size: 480, shape: 'square', panel: 'IPS LCD', chip: 'ESP32-S3', esptoolChip: 'esp32s3' },
 ];
 

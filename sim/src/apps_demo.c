@@ -149,6 +149,22 @@ bool appfx_load(appfx_t *f, const char *dir, appfx_set_t set, uint32_t ttl_ms) {
         "]}";
       return dz_model_apply(&f->model, doc, sizeof doc - 1, DZ_COMMIT_FULL_DEVICES, f->T, NULL, NULL) == DZ_OK;
     }
+    case APPFX_LONGNAMES: {
+      static const char doc[] =
+        "{\"status\":\"OK\",\"result\":["
+        "{\"idx\":\"1\",\"Name\":\"Woonkamer plafondlamp links\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\",\"Data\":\"Off\",\"Favorite\":1},"
+        "{\"idx\":\"2\",\"Name\":\"Keuken onderkast verlichting\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"On\",\"Data\":\"On\",\"Favorite\":1},"
+        "{\"idx\":\"3\",\"Name\":\"Slaapkamer Mark nachtlampje\",\"Type\":\"Light/Switch\",\"SubType\":\"Switch\",\"Status\":\"Off\",\"Data\":\"Off\",\"Favorite\":0},"
+        "{\"idx\":\"4\",\"Name\":\"Zwembad temperatuur buiten\",\"Type\":\"Temp + Humidity\",\"SubType\":\"LaCrosse TX3\",\"Temp\":18.5,\"Humidity\":82,\"Data\":\"18.5 C, 82 %\",\"Favorite\":0},"
+        "{\"idx\":\"5\",\"Name\":\"Zolder opslagruimte vloer\",\"Type\":\"Temp\",\"SubType\":\"LaCrosse TX3\",\"Temp\":-12.5,\"Data\":\"-12.5 C\",\"Favorite\":0},"
+        "{\"idx\":\"6\",\"Name\":\"Waterleiding druk hoofdkraan\",\"Type\":\"General\",\"SubType\":\"Pressure\",\"Data\":\"1.85 Bar\",\"Favorite\":0},"
+        "{\"idx\":\"7\",\"Name\":\"Laatste back-up Synology NAS\",\"Type\":\"General\",\"SubType\":\"Text\",\"Data\":\"2026-11-17 03:12:45 OK\",\"Favorite\":0},"
+        "{\"idx\":\"8\",\"Name\":\"Zonnepanelen opbrengst vandaag\",\"Type\":\"General\",\"SubType\":\"kWh\",\"Data\":\"12345.678 kWh\",\"Usage\":\"1250 Watt\",\"Favorite\":0},"
+        "{\"idx\":\"9\",\"Name\":\"Internet downloadsnelheid\",\"Type\":\"General\",\"SubType\":\"Custom Sensor\",\"Data\":\"943.27 Mbit/s\",\"Favorite\":0},"
+        "{\"idx\":\"10\",\"Name\":\"Raspberry Pi geheugengebruik\",\"Type\":\"General\",\"SubType\":\"Percentage\",\"Data\":\"82.35%\",\"Favorite\":0}"
+        "]}";
+      return dz_model_apply(&f->model, doc, sizeof doc - 1, DZ_COMMIT_FULL_DEVICES, f->T, NULL, NULL) == DZ_OK;
+    }
     case APPFX_MANY: {
       static char doc[60000];
       size_t n = (size_t)snprintf(doc, sizeof doc, "{\"status\":\"OK\",\"result\":[");
@@ -222,7 +238,7 @@ void appfx_prefs_reset(void) {
 const char *const apps_demo_names[] = {
   "clock", "clock_nosync", "clock_offline", "clock_stale", "clock_two", "clock_none",
   "home", "home_connecting", "home_offline", "home_token", "home_stale", "home_empty", "home_favs_many", "home_favs_none",
-  "lights", "lights_many", "lights_types", "scenes", "scenes_mixed", "temperature", "weather", "utility", "energy", "energy_counter", "settings", "settings_conn",
+  "lights", "lights_many", "lights_long", "temperature_long", "utility_long", "home_long", "lights_types", "scenes", "scenes_mixed", "temperature", "weather", "utility", "energy", "energy_counter", "settings", "settings_conn",
   "settings_bright", "settings_about", "settings_rot", "settings_rot_restart", "settings_rot_refused",
   "home_climate", "home_climate_f", "climate_temp", "climate_temp_hum_baro", "climate_hum", "climate_wind", "climate_rain", "climate_uv",
   "climate_lux", "climate_air", "climate_value", "climate_text", "climate_unseen",
@@ -276,6 +292,7 @@ static appfx_set_t set_for(const char *n) {
   if (!strcmp(n, "clock_two")) return APPFX_CLOCK_TWO;
   if (!strcmp(n, "home_favs_many")) return APPFX_MOCK;
   if (!strcmp(n, "lights_many")) return APPFX_MANY;
+  if (!strcmp(n, "lights_long") || !strcmp(n, "temperature_long") || !strcmp(n, "utility_long") || !strcmp(n, "home_long")) return APPFX_LONGNAMES;
   if (!strcmp(n, "lights_types")) return APPFX_SWITCH_TYPES;
   if (!strcmp(n, "scenes_mixed") || !strncmp(n, "confirm_group", 13) || !strncmp(n, "fb_", 3)) return APPFX_MOCK_MIXED;
   if (!strncmp(n, "detail_", 7) && strcmp(n, "detail_info") != 0) return APPFX_MOCK;
@@ -319,9 +336,9 @@ ru_dzapp_t *apps_demo_show(appfx_t *f, const char *dir, const char *n) {
   if (!strncmp(n, "clock", 5)) sec = RU_SEC_CLOCK;
   else if (!strncmp(n, "lights", 6)) sec = RU_SEC_LIGHTS;
   else if (!strncmp(n, "scenes", 6) || !strncmp(n, "fb_", 3)) sec = RU_SEC_SCENES;
-  else if (!strcmp(n, "temperature")) sec = RU_SEC_TEMP;
+  else if (!strncmp(n, "temperature", 11)) sec = RU_SEC_TEMP;
   else if (!strcmp(n, "weather")) sec = RU_SEC_WEATHER;
-  else if (!strcmp(n, "utility")) sec = RU_SEC_UTILITY;
+  else if (!strncmp(n, "utility", 7)) sec = RU_SEC_UTILITY;
   else if (!strncmp(n, "energy", 6)) sec = RU_SEC_ENERGY;
   else if (!strncmp(n, "settings", 8)) sec = RU_SEC_SETTINGS;
   ru_dzapp_show_section(a, sec);

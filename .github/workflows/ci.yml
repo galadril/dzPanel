@@ -54,11 +54,10 @@ jobs:
           path: sim/screenshots/*.png
 
   firmware:
-    # ESP-IDF v5.5.6 build per board. The image tag is unverified. guition-4848s040 is compile-checked only here;
-    # it stays nightly-only in the release workflow until the owner confirms the hardware bring-up.
+    # ESP-IDF v5.5.6 build per board. The image tag is unverified.
     strategy:
       matrix:
-        board: [amoled-175, guition-4848s040]
+        board: [amoled-175, amoled-216, guition-4848s040]
     runs-on: ubuntu-latest
     container: espressif/idf:v5.5.6
     steps:

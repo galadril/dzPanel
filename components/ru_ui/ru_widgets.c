@@ -191,18 +191,55 @@ typedef struct {
   ru_val_state_t state;
   ru_tap_cb_t tap;
   void *tap_ud;
+  char valtxt[48]; /* the full value text: a label in dots mode overwrites its own text with the cut one, so it cannot be read back */
+  int fit_w;       /* the tile width the texts were fitted for (0: not yet) */
 } tile_t;
+
+/* Keep both texts of a row inside the pill, on one line each. The value takes the largest font that leaves the name at least a third
+ * of the row (title, then body, then small) and is cut with dots if even the small font does not fit; the name gets what the value
+ * leaves and is cut with dots. Runs on every text change, so a value that grows later (an "Idle" that becomes "2026-11-17 03:12")
+ * cannot push the name under it or out of the pill. */
+static void tile_fit(lv_obj_t *tile, tile_t *d) {
+  int w = lv_obj_get_width(tile), h = lv_obj_get_height(tile);
+  int pad = h / 2 - ru_u(1), inner = w - 2 * pad, gap = ru_u(2);
+  if (w <= 0 || h <= 0 || inner <= 0) return; /* not sized yet: fitted again once it is */
+  const char *vt = d->valtxt;
+  d->fit_w = w;
+  int max_v = inner - gap - inner / 3;
+  const lv_font_t *fonts[3] = {ru_font_title(), ru_font_body(), ru_font_small()};
+  const lv_font_t *f = fonts[2];
+  lv_point_t sz = {0, 0};
+  for (int i = 0; i < 3; i++) {
+    lv_text_get_size(&sz, vt, fonts[i], 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (i == 2 || sz.x <= (i == 0 ? inner / 2 : max_v)) { f = fonts[i]; break; }
+  }
+  bool fits = sz.x <= max_v;
+  int vw = fits ? sz.x : max_v;
+  if (lv_obj_get_style_text_font(d->value, LV_PART_MAIN) != f) lv_obj_set_style_text_font(d->value, f, 0);
+  /* content width while it fits (a width equal to the measured text width makes LVGL cut the last pixels with dots) */
+  lv_label_set_long_mode(d->value, fits ? LV_LABEL_LONG_MODE_CLIP : LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(d->value, fits ? LV_SIZE_CONTENT : max_v, lv_font_get_line_height(f));
+  lv_obj_set_style_text_align(d->value, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_align(d->value, LV_ALIGN_RIGHT_MID, -pad, 0);
+  int nw = inner - vw - gap;
+  if (nw < ru_u(8)) nw = ru_u(8);
+  lv_label_set_long_mode(d->label, LV_LABEL_LONG_MODE_DOTS);
+  lv_obj_set_size(d->label, nw, lv_font_get_line_height(ru_font_body()));
+  lv_obj_align(d->label, LV_ALIGN_LEFT_MID, pad, 0);
+}
 
 static void tile_apply(lv_obj_t *tile, const char *text, ru_val_state_t st) {
   tile_t *d = wd_get(tile);
   if (!d) return;
   const ru_theme_t *t = ru_theme();
-  if (d->inited && d->state == st && lv_color_eq(d->applied_ok, d->ok_color) &&
-      !strcmp(lv_label_get_text(d->value), text)) return;
+  if (d->inited && d->state == st && lv_color_eq(d->applied_ok, d->ok_color) && d->fit_w == lv_obj_get_width(tile) &&
+      !strcmp(d->valtxt, text)) return;
+  snprintf(d->valtxt, sizeof d->valtxt, "%s", text);
   d->inited = true;
   d->applied_ok = d->ok_color;
   d->state = st;
-  set_label(d->value, text);
+  set_label(d->value, d->valtxt);
+  tile_fit(tile, d);
   lv_color_t c = st == RU_VAL_OK ? d->ok_color : t->stale;
   set_text_color(d->value, c);
   set_text_opa(d->value, st == RU_VAL_OK ? LV_OPA_COVER : (st == RU_VAL_STALE ? LV_OPA_70 : LV_OPA_COVER));

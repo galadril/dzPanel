@@ -29,8 +29,8 @@ endif()
 # Board selection (build time). Pass -DRU_BOARD=<board>, or use tools/build_fw.sh <board>. Each board has
 # components/boards/<board>/ (component "ru_board": profile + ru_hal_port.h implementation) and
 # firmware/boards/<board>/sdkconfig.defaults. Use one build directory per board: sdkconfig lives inside it.
-set(RU_BOARD amoled-175 CACHE STRING "Target board: amoled-175 | guition-4848s040")
-set(_ru_boards amoled-175 guition-4848s040)
+set(RU_BOARD amoled-175 CACHE STRING "Target board: amoled-175 | amoled-216 | guition-4848s040")
+set(_ru_boards amoled-175 amoled-216 guition-4848s040)
 if(NOT RU_BOARD IN_LIST _ru_boards)
   message(FATAL_ERROR "unknown RU_BOARD '${RU_BOARD}': want one of ${_ru_boards}")
 endif()

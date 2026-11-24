@@ -1,0 +1,10 @@
+# Waveshare ESP32-S3-Touch-AMOLED-2.16: 16 MB flash (the factory image header says 16 MB, 80 MHz), 8 MB octal PSRAM (from the
+# Waveshare vendor demo sdkconfig). Runs on a board (owner-tested).
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Recovery rules (DESIGN section 10): USB-Serial/JTAG console stays
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
